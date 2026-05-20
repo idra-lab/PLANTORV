@@ -1,0 +1,13 @@
+matplotlib
+scikit-image
+ultralytics
+numpy
+opencv-python
+torch
+torchvision
+Pillow
+segment-anything
+pyyaml
+python-dotenv
+openai
+dotenv
