@@ -6,7 +6,6 @@ from skimage.measure import regionprops
 from ultralytics import settings
 import pathlib
 import numpy as np
-import os
 import torch
 import cv2
 from PIL import Image
@@ -24,7 +23,11 @@ import json
 from typing import List, Optional, Sequence, Tuple
 from dataclasses import dataclass
 
-import dotenv
+
+def convert(o):
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    return o
 
 """SEGMENTATION"""
 class SAMModel:
@@ -95,6 +98,7 @@ class SAMModel:
         right_x = xs.max()+1
 
         mask_crop = masks[top_y:bot_y, left_x:right_x]
+        mask_crop = mask_crop.astype(np.uint8) * 255
         mask_crop = cv2.resize(mask_crop,None, fx=2,fy=2,interpolation=cv2.INTER_LANCZOS4)
         mask_crop = (mask_crop > 0).astype(np.uint8) * 255 #for being binary
         mask_rgb = rgb[top_y:bot_y, left_x:right_x, :]
@@ -135,7 +139,7 @@ class SAMModel:
             masked_np = np.array(masked)
             num_pixels = np.sum(masked_np > 0)
             area_mask = num_pixels*100/(H*W)
-            print(f'mask_{i}:{area_mask}')
+            # print(f'mask_{i}:{area_mask}')
             if area_mask<15:
                 print("delete")
                 del_id.append(i)
@@ -151,6 +155,42 @@ class SAMModel:
         print(f"BG mask obtained in {end-start}s")
 
         return masked_rgb,mask_bin
+
+    def filter_masks_by_iou(self,masks, iou_threshold=0.5):
+        """
+        Erases the redundant masks: if a mask is almost contained in another, the smaller one is removed.
+        """
+        keep = []
+        removed = set()
+
+        n = len(masks)
+
+        areas = [m.sum() for m in masks]
+
+        for i in range(n):
+            if i in removed:
+                continue
+
+            for j in range(i + 1, n):
+                if j in removed:
+                    continue
+
+                inter = np.logical_and(masks[i], masks[j]).sum()
+                union = np.logical_or(masks[i], masks[j]).sum()
+                iou = inter / union if union > 0 else 0
+                # print(f"Comparing mask {i} and {j}: IoU={iou:.4f}, area_i={areas[i]}, area_j={areas[j]}")
+                if iou > iou_threshold:
+                    if areas[i] >= areas[j]:
+                        removed.add(j)
+                    else:
+                        removed.add(i)
+                        break
+
+            if i not in removed:
+                keep.append(i)
+
+        return keep
+
 
     def individual_mask(self,mask_bin,mask_rgb,rgb,idx):
         """
@@ -169,13 +209,15 @@ class SAMModel:
         start = time.time()
         H,W = mask_rgb.shape[:2]
         masks_sam =self.mask_generator.generate(mask_rgb)
+
         all_masks = []
         all_bboxes = []
-        rgb_masks = []
-        masks_path = []
-        del_id = []
+
+        keep = []
         rgb = Image.open(rgb)
         mask_bin = mask_bin[...,0]
+
+
         for m in masks_sam:
             all_masks.append(m["segmentation"])
             all_bboxes.append(m["bbox"])
@@ -191,24 +233,36 @@ class SAMModel:
             num_pixels = np.sum(intersection > 0)
             # Image.fromarray(intersection).save(f"intersection_{idx}_{i}.png")
             area_mask = num_pixels*100/(H*W)
-            print(f'mask_{i}:{np.round(area_mask,5)}%, iou: {np.round(iou,5)}')
-            if area_mask<0.3 or area_mask>2 or iou<0.065:
-                del_id.append(i)
-                print("delete")
-            else:
-                save_path = f"final_fast_segmentation/mask{idx}_samrgbcrop_{i}.png"
-                masks_path.append(save_path)
-                mask_crop, rgb_crop = self.cropping_mask(masked,rgb)
-                rgb_masks.append(rgb_crop)
-                Image.fromarray(rgb_crop).save(save_path)
+            # print(f'mask_{i}:{np.round(area_mask,5)}%, iou: {np.round(iou,5)}')
+            
+            if (0.2<area_mask<1 or area_mask>10) and iou>0.013:
+                keep.append(i)       
 
-        bboxes = np.delete(all_bboxes, del_id, axis=0)
+        masks = [(i,all_masks[i]) for i in keep]
+        bboxes = [all_bboxes[i] for i in keep]
+        masks_only = [m[1] for m in masks]
+        valid = self.filter_masks_by_iou(masks_only, iou_threshold=0.01)
+
+        masks_filtered = [masks[i] for i in valid]
+        bboxes_filtered = [bboxes[i] for i in valid]
+
+        rgb_masks = []
+        masks_path = []
+
+        for i,(orig_idx,masked) in enumerate(masks_filtered):
+            save_path = f"outputs/image{idx}/crop_{orig_idx}.png"
+            masks_path.append(save_path)
+            mask_crop, rgb_crop = self.cropping_mask(masked,rgb)
+            rgb_masks.append(rgb_crop)
+            Image.fromarray(rgb_crop).save(save_path)
+
+
         end = time.time()
         print(f"Individual masks obtained in {end-start}s")
 
         # save_masks(mask_crop,idx,W,H)
 
-        return rgb_crop, bboxes,masks_path
+        return rgb_masks, bboxes_filtered,masks_path
 
 
 """Depth Estimation"""
@@ -700,6 +754,7 @@ def main_coords(rgb_path,depth_path, dict_objects):
             cy,
             max(0,1),
         )
+        print(f"Object {mask_id}: depth={depth_mm} mm, src_uv={src_uv}")
         dict_objects[mask_id]["coord_center&depth"]=[cx,cy,depth_mm]
 
     return dict_objects
@@ -728,14 +783,13 @@ class GPTModel:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         return f"data:{mime_type};base64,{encoded}"
 
-    def main_gpt(self,image,mask_path,masks, bboxes):
+    def main_gpt(self,image,mask_path, bboxes):
         """
         This function is defined to obtain the tagging and description of the objects that we are looking for.
         It applies GPT over the original RGB image and the cropped images of the objects obtained with SAM, and then it returns a dictionary with the tagging and description of each object.
         Inputs:
             - image: the original RGB image. String. Path of the original RGB image.
             - mask_path: the paths of the masks obtained. List of strings. Output is a list of length N where each element is the path of the mask obtained for each object.
-            - masks: the binary masks of the objects obtained.
             - bboxes: the bounding boxes of the objects obtained by SAM.
         Outputs:
             - dict_outputs: the dictionary with the tagging and description of each object. Dictionary. Output is a dictionary where each key is the name of the object (for example, "mask_0") and each value is another dictionary with the following keys:
@@ -753,8 +807,11 @@ class GPTModel:
         The second image shows the object and the first one gives the context of the image.
         Your task:
         - Describe the object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
-        - The tagging should be ultra-specific. For example, instead of saying "lego block", say "blue lego block with 4 studs". Add the colour in the tag.
+        - The tagging should be ultra-specific. For example, instead of saying "lego block", say "furthest blue lego block with 4 studs ". Add the colour in the tag.
         - Express me if the cropped image shows the full object or not.
+        Return ONLY raw JSON.
+        Do not use markdown code fences.
+        Do not write ```json.
         {
         "tag": "string",
         "description": "string",
@@ -799,16 +856,16 @@ class GPTModel:
 """Main Function"""
 def main(images,depth_path):
 
-    dotenv.load_dotenv()
+    load_dotenv()
 
     azure_endpoint = os.getenv("AZURE_ENDPOINT")
-    azure_key = os.getenv("AZURE_KEY")
+    azure_key = os.getenv("AZURE_API_KEY")
 
     masks_dic = {}
     bboxes_dic = {}
     full_dict = {}
 
-    sam = SAMModel("sam_vit_h_4b8939.pth")
+    sam = SAMModel("models/sam/sam_vit_h_4b8939.pth")
 
     endpoint = azure_endpoint
     model_name = "gpt-5.2-chat"
@@ -820,39 +877,45 @@ def main(images,depth_path):
     gpt = GPTModel(endpoint, model_name, deployment, subscription_key, api_version)
 
     for f,image in enumerate(images):
+        rute = f"outputs/image{f}"
+        os.makedirs(rute, exist_ok=True)
+
         masked_rgb,mask_bin = sam.obtain_bg(image,f)
-        masks, bboxes,masks_path= sam.individual_mask(mask_bin,masked_rgb,image,f)
+        rgb_masks, bboxes, masks_path= sam.individual_mask(mask_bin,masked_rgb,image,f)
+
         start_gpt = time.time()
-        full_dict[f"Image_{f}"]=gpt.main_gpt(image,masks_path,masks,bboxes)
+        full_dict[f"Image_{f}"]=gpt.main_gpt(image,masks_path,bboxes)
         end_gpt = time.time()
         print(f"GPT tagging and description for image {f+1} obtained in {end_gpt-start_gpt}s")
+
+
         start_coords = time.time()
         full_dict[f"Image_{f}"]=main_coords(image,depth_path[f],full_dict[f"Image_{f}"])
         end_coords = time.time()
         print(f"Coordinates and depth for image {f+1} obtained in {end_coords-start_coords}s")
-    
+
+
         print(f"Image {f+1}: {full_dict[f"Image_{f}"]}")
+    
+    with open("output_dic.json","w") as f:
+        json.dump(full_dict["Image_0"], f, indent=4, default=convert)
 
+if __name__=="__main__":
 
+    ruta = "outputs"
+    os.makedirs(ruta, exist_ok=True)
+    
+    start_all = time.time()
+    os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+    torch.cuda.empty_cache()
 
-ruta = "nombre_de_la_carpeta"
+    images = ["examples/rgb_final_test1.png"]
+    depth_path = ["examples/depth_final_test1.png"]
 
-os.makedirs(ruta, exist_ok=True)
+    main(images,depth_path)
+    end_all=time.time()
 
-start_all = time.time()
-os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
-torch.cuda.empty_cache()
-
-
-# images = ["images/phase2_capturableimages/rgb_test1.png","images/phase2_capturableimages/rgb_test2.png","images/phase2_capturableimages/rgb_test3.png","images/phase2_capturableimages/rgb_test4.png"]
-images = ["images/phase2_capturableimages/rgb_test2.png"]
-# depth_path = ["images/phase2_capturableimages/depth_test1.png","images/phase2_capturableimages/depth_test2.png","images/phase2_capturableimages/depth_test3.png","images/phase2_capturableimages/depth_test4.png"]
-depth_path = ["images/phase2_capturableimages/depth_test2.png"]
-
-main(images,depth_path)
-end_all=time.time()
-
-print(f"Total time image process: {end_all-start_all}s")
+    print(f"Total time image process: {end_all-start_all}s")
 
 
 

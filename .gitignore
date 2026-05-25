@@ -63,3 +63,5 @@ Thumbs.db
 
 
 *.pth
+*.sh.*
+*.json
