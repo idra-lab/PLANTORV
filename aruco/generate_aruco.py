@@ -33,10 +33,13 @@ def relative_to_output_dictionary(file_path, output_dictionary_path):
     return Path(relative_path).as_posix()
 
 
-def update_output_dictionary(output_dictionary_path, generated_file, marker_id):
+def update_output_dictionary(output_dictionary_path, generated_file, marker_id, description):
     output_dictionary = load_output_dictionary(output_dictionary_path)
     relative_file = relative_to_output_dictionary(generated_file, output_dictionary_path)
-    output_dictionary[relative_file] = marker_id
+    output_dictionary[relative_file] = {
+        "id": marker_id,
+        "description": description,
+    }
     save_output_dictionary(output_dictionary_path, output_dictionary)
 
 
@@ -45,12 +48,18 @@ def validate_output_dictionary(output_dictionary_path):
     missing_files = []
     invalid_entries = []
 
-    for relative_file, marker_id in output_dictionary.items():
+    for relative_file, marker_data in output_dictionary.items():
         if not isinstance(relative_file, str) or not relative_file or Path(relative_file).is_absolute():
             invalid_entries.append(relative_file)
             continue
 
-        if type(marker_id) is not int:
+        if type(marker_data) is int:
+            pass
+        elif (
+            not isinstance(marker_data, dict)
+            or type(marker_data.get("id")) is not int
+            or not isinstance(marker_data.get("description"), str)
+        ):
             invalid_entries.append(relative_file)
             continue
 
@@ -101,7 +110,13 @@ if __name__ == "__main__":
         "--output-dictionary",
         type=Path,
         default=Path(DEFAULT_OUTPUT_DICTIONARY),
-        help=f"JSON file mapping generated marker paths to IDs (default: {DEFAULT_OUTPUT_DICTIONARY})."
+        help=f"JSON file mapping generated marker paths to marker metadata (default: {DEFAULT_OUTPUT_DICTIONARY})."
+    )
+    argsparser.add_argument(
+        "--description",
+        type=str,
+        default="",
+        help="Description to store in the output dictionary for the generated marker."
     )
     argsparser.add_argument(
         "--validate",
@@ -131,4 +146,4 @@ if __name__ == "__main__":
         argsparser.error("marker_id is required unless --validate is used.")
 
     output_file = generate(args.marker_id, args.size, args.border, args.dictionary)
-    update_output_dictionary(args.output_dictionary, output_file, args.marker_id)
+    update_output_dictionary(args.output_dictionary, output_file, args.marker_id, args.description)
