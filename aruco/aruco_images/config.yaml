@@ -13,49 +13,49 @@ robot:
 
 objects:
   4:
-    name: Object 1
+    name: Wide blue Lego block 
     T_object_tag:
       [[1,0,0,0],
        [0,1,0,0],
        [0,0,1,0],
        [0,0,0,1]]
   5:
-    name: Object 2
+    name: Small blue Lego block
     T_object_tag:
       [[1,0,0,0],
        [0,1,0,0],
        [0,0,1,0],
        [0,0,0,1]]
   6:
-    name: Object 3
+    name: Yellow tower Lego block
     T_object_tag:
       [[1,0,0,0],
        [0,1,0,0],
        [0,0,1,0],
        [0,0,0,1]]
   7:
-    name: Object 4
+    name: Wide red Lego Block
     T_object_tag:
       [[1,0,0,0],
        [0,1,0,0],
        [0,0,1,0],
        [0,0,0,1]]
   8:
-    name: Object 5
+    name: Tall Green Lego block
     T_object_tag:
       [[1,0,0,0],
        [0,1,0,0],
        [0,0,1,0],
        [0,0,0,1]]
   9:
-    name: Object 6
+    name: Object 6 (scissors)
     T_object_tag:
       [[1,0,0,0],
        [0,1,0,0],
        [0,0,1,0],
        [0,0,0,1]]
   10:
-    name: Object 7
+    name: Tall red Lego block
     T_object_tag:
       [[1,0,0,0],
        [0,1,0,0],
@@ -97,7 +97,7 @@ objects:
        [0,0,1,0],
        [0,0,0,1]]
   16:
-    name: Object 13
+    name: Tall orange Lego block
     T_object_tag:
       [[1,0,0,0],
        [0,1,0,0],

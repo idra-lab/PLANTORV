@@ -807,7 +807,7 @@ class GPTModel:
         The second image shows the object and the first one gives the context of the image.
         Your task:
         - Describe the object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
-        - The tagging should be ultra-specific. For example, instead of saying "lego block", say "furthest blue lego block with 4 studs ". Add the colour in the tag.
+        - The tagging should be ultra-specific. For example, instead of saying "lego block", say "furthest tall blue lego block with 4 studs". Add the colour in the tag.
         - Express me if the cropped image shows the full object or not.
         Return ONLY raw JSON.
         Do not use markdown code fences.
