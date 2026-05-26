@@ -22,6 +22,7 @@ from openai import AzureOpenAI
 import json
 from typing import List, Optional, Sequence, Tuple
 from dataclasses import dataclass
+from dam.describe_anything_model import DescribeAnythingModel
 
 
 def convert(o):
@@ -141,7 +142,6 @@ class SAMModel:
             area_mask = num_pixels*100/(H*W)
             # print(f'mask_{i}:{area_mask}')
             if area_mask<15:
-                # print("delete")
                 del_id.append(i)
         masks = np.delete(all_masks, del_id, axis=0)
         h, w = masks[0].shape
@@ -248,11 +248,12 @@ class SAMModel:
 
         rgb_masks = []
         masks_path = []
-
+        mask_bin = []
         for i,(orig_idx,masked) in enumerate(masks_filtered):
             save_path = f"outputs/image{idx}/crop_{orig_idx}.png"
             masks_path.append(save_path)
             mask_crop, rgb_crop = self.cropping_mask(masked,rgb)
+            mask_bin.append(masked)
             rgb_masks.append(rgb_crop)
             Image.fromarray(rgb_crop).save(save_path)
 
@@ -262,7 +263,8 @@ class SAMModel:
 
         # save_masks(mask_crop,idx,W,H)
 
-        return rgb_masks, bboxes_filtered,masks_path
+        return rgb_masks, bboxes_filtered,masks_path, mask_bin
+
 
 
 """Depth Estimation"""
@@ -760,147 +762,105 @@ def main_coords(rgb_path,depth_path, dict_objects):
     return dict_objects
 
 
-"""GPT Model for tagging and description"""
+"""DAM Model for tagging and description"""
+class DAMModel:
+    def __init__(self,img, query):
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model_path = 'nvidia/DAM-3B'
+        self.conv_mode = 'v1'
+        self.prompt_mode = 'focal_prompt'
+        self.prompt_modes = {
+            "focal_prompt": "full+focal_crop",
+        }
 
-class GPTModel:
-    def __init__(self, endpoint, model_name, deployment, subscription_key, api_version):
-        self.client = AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=subscription_key,
-        )
-        self.deployment = deployment
+        self.query=query 
+        self.dam = DescribeAnythingModel(
+            model_path=self.model_path,
+            conv_mode=self.conv_mode,
+            prompt_mode=self.prompt_modes.get(self.prompt_mode, self.prompt_mode),
+        ).to(device) 
 
-    def encode_image_data_url(self,image_path) -> str:
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image file not found: {image_path}")
 
-        mime_type, _ = mimetypes.guess_type(str(image_path))
-        if mime_type is None:
-            mime_type = "application/octet-stream"
+    def sam_mask_to_pil(self,mask_bool):
+        mask_uint8 = (mask_bool.astype(np.uint8)) * 255
+        return Image.fromarray(mask_uint8)
+    
+    def main_dam(self,img,mask,temperature=0.6, top_p=0.5, num_beams=1, max_new_tokens=512):
+        for i, m in enumerate(mask):
+            mask_pil = sam_mask_to_pil(m)
 
-        image_bytes = image_path.read_bytes()
-        encoded = base64.b64encode(image_bytes).decode("ascii")
-        return f"data:{mime_type};base64,{encoded}"
-
-    def main_gpt(self,image,mask_path, bboxes):
-        """
-        This function is defined to obtain the tagging and description of the objects that we are looking for.
-        It applies GPT over the original RGB image and the cropped images of the objects obtained with SAM, and then it returns a dictionary with the tagging and description of each object.
-        Inputs:
-            - image: the original RGB image. String. Path of the original RGB image.
-            - mask_path: the paths of the masks obtained. List of strings. Output is a list of length N where each element is the path of the mask obtained for each object.
-            - bboxes: the bounding boxes of the objects obtained by SAM.
-        Outputs:
-            - dict_outputs: the dictionary with the tagging and description of each object. Dictionary. Output is a dictionary where each key is the name of the object (for example, "mask_0") and each value is another dictionary with the following keys:
-                - "tag": the tag of the object obtained by GPT. String.
-                - "description": the description of the object obtained by GPT. String.
-                - "full_object": boolean that expresses if the cropped image shows the full object or not.
-                - "mask": the path of the mask obtained for the object. String.
-                - "bbox": the bounding box of the object obtained by SAM. List of 4 integers [x_min, y_min, width, height].
-        """
-        image_path = Path(image)
-        image_data_url = self.encode_image_data_url(image_path)
-        dict_outputs = {}
-        question_2 = """You will receive:
-        1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image. 
-        The second image shows the object and the first one gives the context of the image.
-        Your task:
-        - Describe the object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
-        - The tagging should be ultra-specific. For example, instead of saying "lego block", say "furthest blue lego block with 4 studs ". Add the colour in the tag.
-        - Express me if the cropped image shows the full object or not.
-        Return ONLY raw JSON.
-        Do not use markdown code fences.
-        Do not write ```json.
-        {
-        "tag": "string",
-        "description": "string",
-        "full_object:"boolean"
-        }"""
-        for p in range(len(mask_path)):
-            crop_url = self.encode_image_data_url(Path(mask_path[p]))
-            response = self.client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant.",
-                    },
-                    {
-                        "role": "user",
-
-                        "content": [
-                            {"type": "text", "text": question_2},
-                            {"type": "text", "text": "Full image:"},
-                            {"type": "image_url", "image_url": {"url": image_data_url}, "detail": "auto"},
-                            {"type": "text", "text": "Cropped image:"},
-                            {"type": "image_url", "image_url": {"url": crop_url}, "detail": "auto"},
-                        ],
-
-                    }
-                ],
-                max_completion_tokens =16384,
-                model=self.deployment
+            output_mask = self.dam.get_description(
+                img,
+                mask_pil,
+                self.query,
+                temperature=0.6,
+                top_p=0.5,
+                num_beams=1,
+                max_new_tokens=512,
             )
-            raw = response.choices[0].message.content	
-            try:
-                dict_outputs[f"mask_{p}"] = json.loads(raw)
-            except json.JSONDecodeError:
-                print(f"Error decoding JSON for mask_{p}: {raw}")
-                dict_outputs[f"mask_{p}"] = {"tag": "unknown", "description": "unknown", "full_object": False}
-            dict_outputs[f"mask_{p}"]["mask"]=mask_path[p]
-            dict_outputs[f"mask_{p}"]["bbox"]=bboxes[p]
 
-        return dict_outputs
-
+            dict_masks[f"mask_{i}"]["description"] = output_mask
+            dict_outputs[f"mask_{i}"]["mask"]=mask_path[i]
+            dict_outputs[f"mask_{i}"]["bbox"]=bboxes[i]
+        
+        return dict_masks
 
 """Main Function"""
-def main(images,depth_path):
+def main(images,depth_path,query):
 
     load_dotenv()
 
     azure_endpoint = os.getenv("AZURE_ENDPOINT")
     azure_key = os.getenv("AZURE_API_KEY")
 
-    masks_dic = {}
-    bboxes_dic = {}
-    full_dict = {}
+    sam = SAMModel("sam_vit_h_4b8939.pth")
 
-    sam = SAMModel("models/sam/sam_vit_h_4b8939.pth")
+    dam = DAM(query)
 
-    endpoint = azure_endpoint
-    model_name = "gpt-5.2-chat"
-    deployment = "gpt-5.2-chat"
-
-    subscription_key = azure_key
-    api_version = "2024-12-01-preview"
-
-    gpt = GPTModel(endpoint, model_name, deployment, subscription_key, api_version)
+    dict_masks = {}
 
     for f,image in enumerate(images):
+        img = Image.open(image)
         rute = f"outputs/image{f}"
         os.makedirs(rute, exist_ok=True)
 
         masked_rgb,mask_bin = sam.obtain_bg(image,f)
-        rgb_masks, bboxes, masks_path= sam.individual_mask(mask_bin,masked_rgb,image,f)
+        rgb_masks, bboxes, masks_path,masks2= sam.individual_mask(mask_bin,masked_rgb,image,f)
+        
+        dict_masks[f"Image_{f+1}"] = dam.main_dam(img,masks2,query)
 
-        start_gpt = time.time()
-        full_dict[f"Image_{f}"]=gpt.main_gpt(image,masks_path,bboxes)
-        end_gpt = time.time()
-        print(f"GPT tagging and description for image {f+1} obtained in {end_gpt-start_gpt}s")
-
+        print(f"Descriptions for image {f+1} obtained in {time.time()-start_all}s: \n {dict_masks[f'Image_{f+1}']}")
 
         start_coords = time.time()
-        full_dict[f"Image_{f}"]=main_coords(image,depth_path[f],full_dict[f"Image_{f}"])
+        dict_masks[f"Image_{f}"]=main_coords(image,depth_path[f],dict_masks[f"Image_{f}"])
         end_coords = time.time()
         print(f"Coordinates and depth for image {f+1} obtained in {end_coords-start_coords}s")
 
-
-        print(f"Image {f+1}: {full_dict[f"Image_{f}"]}")
+        print(f"Image {f+1}: {dict_masks[f"Image_{f}"]}")
     
-    with open("output_dic.json","w") as f:
-        json.dump(full_dict["Image_0"], f, indent=4, default=convert)
+        with open(f"output_dic_image{f}.json","w") as j:
+            json.dump(dict_masks[f"Image_{f}"], j, indent=4, default=convert)
 
 if __name__=="__main__":
+
+    parser = argparse.ArgumentParser(description="SAM+DAM for image segmentation and description")
+    parser.add_argument('--image_path', type=str,
+                        required=True, help='Path to the image file', default="rgb_final_test1.png")
+    parser.add_argument('--depth_path', type=str,
+                        required=True, help='Path to the depth image file', default="depth_final_test1.png")
+    parser.add_argument(
+        '--query', type=str,
+        default="""<image>\nDescribe the masked region in detail. The first two words must define the object. Then use a comma and give the rest of the description. """, # The json sketch should be: {"type": "box_<box_id>", "value": "description"}
+        help='Prompt for the model')
+    parser.add_argument('--output_image_path', type=str, default=None,
+                        help='Path to save the output image with contour')
+    parser.add_argument('--normalized_coords', action='store_true',
+                        help='Interpret coordinates as normalized (0-1) values')
+    parser.add_argument('--no_stream', action='store_true',
+                        help='Disable streaming output')
+
+    args = parser.parse_args()
+
 
     ruta = "outputs"
     os.makedirs(ruta, exist_ok=True)
@@ -909,10 +869,10 @@ if __name__=="__main__":
     os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
     torch.cuda.empty_cache()
 
-    images = ["examples/rgb_final_test1.png"]
-    depth_path = ["examples/depth_final_test1.png"]
+    images = args.image_path.split(",") #["rgb_final_test1.png"]
+    depth_path = args.depth_path.split(",") #["depth_final_test1.png"]
 
-    main(images,depth_path)
+    main(images,depth_path,args.query)
     end_all=time.time()
 
     print(f"Total time image process: {end_all-start_all}s")
