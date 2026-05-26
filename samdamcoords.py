@@ -142,6 +142,7 @@ class SAMModel:
             area_mask = num_pixels*100/(H*W)
             # print(f'mask_{i}:{area_mask}')
             if area_mask<15:
+                print("delete")
                 del_id.append(i)
         masks = np.delete(all_masks, del_id, axis=0)
         h, w = masks[0].shape
@@ -756,7 +757,7 @@ def main_coords(rgb_path,depth_path, dict_objects):
             cy,
             max(0,1),
         )
-        # print(f"Object {mask_id}: depth={depth_mm} mm, src_uv={src_uv}")
+        print(f"Object {mask_id}: depth={depth_mm} mm, src_uv={src_uv}")
         dict_objects[mask_id]["coord_center&depth"]=[cx,cy,depth_mm]
 
     return dict_objects
@@ -764,7 +765,7 @@ def main_coords(rgb_path,depth_path, dict_objects):
 
 """DAM Model for tagging and description"""
 class DAMModel:
-    def __init__(self,img, query):
+    def __init__(self,query):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model_path = 'nvidia/DAM-3B'
         self.conv_mode = 'v1'
@@ -778,7 +779,7 @@ class DAMModel:
             model_path=self.model_path,
             conv_mode=self.conv_mode,
             prompt_mode=self.prompt_modes.get(self.prompt_mode, self.prompt_mode),
-        ).to(device) 
+        ).to(self.device) 
 
 
     def sam_mask_to_pil(self,mask_bool):
@@ -815,7 +816,7 @@ def main(images,depth_path,query):
 
     sam = SAMModel("sam_vit_h_4b8939.pth")
 
-    dam = DAM(query)
+    dam = DAMModel(query)
 
     dict_masks = {}
 
@@ -845,9 +846,9 @@ if __name__=="__main__":
 
     parser = argparse.ArgumentParser(description="SAM+DAM for image segmentation and description")
     parser.add_argument('--image_path', type=str,
-                        required=True, help='Path to the image file', default="rgb_final_test1.png")
+                        required=False, help='Path to the image file', default="rgb_final_test1.png")
     parser.add_argument('--depth_path', type=str,
-                        required=True, help='Path to the depth image file', default="depth_final_test1.png")
+                        required=False, help='Path to the depth image file', default="depth_final_test1.png")
     parser.add_argument(
         '--query', type=str,
         default="""<image>\nDescribe the masked region in detail. The first two words must define the object. Then use a comma and give the rest of the description. """, # The json sketch should be: {"type": "box_<box_id>", "value": "description"}
