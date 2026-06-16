@@ -166,7 +166,6 @@ class SAMModel:
         masked_rgb,mask_bin = self.preprocess_mask(union_mask,image_read,idx)
         end = time.time()
         print(f"BG mask obtained in {end-start}s")
-        Image.fromarray(mask_bin[...,0].astype("uint8")*255).save(f"ppt_outputs/bg_mask.png")
         return masked_rgb,mask_bin
 
     def filter_masks_by_iou(self,masks,index, robot_id, iou_threshold=0.01, iou_2objectthreshold=0.4, iou_maxthreshold=0.6, iou_robot_threshold = 0.95):#iou_maxthreshold=0.65 #iou_2objectthreshold=0.35 
@@ -271,8 +270,6 @@ class SAMModel:
             if (0.35<area_mask<6.5 or area_mask>10) and iou>0.02: #area min estaba 0.35
                 if area_mask>10: 
                     robot_id.append(i)
-                Image.fromarray(intersection.astype("uint8")*255).save(f"ppt_outputs/intersection_{i}.png")
-                Image.fromarray(union.astype("uint8")*255).save(f"ppt_outputs/union_{i}.png")
                 keep.append(i)  
                  
 
