@@ -13,5 +13,4 @@ module load CUDA/12.1.1
 
 source /home/i.delaossazarzuelo/venv12/bin/activate
 cd /home/i.delaossazarzuelo/PLANTORV
-python3 -u samgpt.py
-# python3 clip.py
+python3 -u aruco/aruco_detector.py  --clean_dir dataset/rgb_aruco --tag_dir dataset/rgb_aruco --out_dir output_aruco --camera_yaml aruco/camera.yaml --config_yaml aruco/config.yaml 

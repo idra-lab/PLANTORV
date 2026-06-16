@@ -1,0 +1,120 @@
+world_marker_id: 1
+marker_size_m: 0.095
+
+robot:
+  base_marker_id: 2
+  frame_name: robot base
+  end_effector_marker_id: 3
+  frame_name: end_effector
+  T_robot_tag:
+    [[1,0,0,0],
+     [0,1,0,0],
+     [0,0,1,0],
+     [0,0,0,1]]
+
+objects:
+  4:
+    name: Wide and large blue Lego block 
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  5:
+    name: Small blue Lego block
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  6:
+    name: Yellow Lego block
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  7:
+    name: Wide red Lego Block with 4 studs
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  8:
+    name: Green Lego block
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  9:
+    name: 2x2 Blue and red Lego block
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  10:
+    name: Tall red Lego block
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  11:
+    name: White and red box
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  12:
+    name: Blue and white small box
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  13:
+    name: Big Black Bottle
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  14:
+    name: Big White bottle
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  15:
+    name: Metallic Wrench
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  16:
+    name: Orange Lego block
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  17:
+    name: Orange small box
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  18:
+    name: White and green box
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]

@@ -22,7 +22,7 @@ from openai import AzureOpenAI
 import json
 from typing import List, Optional, Sequence, Tuple
 from dataclasses import dataclass
-
+import re
 
 def convert(o):
     if isinstance(o, np.ndarray):
@@ -31,7 +31,7 @@ def convert(o):
 
 """SEGMENTATION"""
 class SAMModel:
-    def __init__(self, sam_checkpoint, model_type="vit_h", device="cuda", points_per_side=36):
+    def __init__(self, sam_checkpoint, model_type="vit_h", device="cuda", points_per_side=32):#points_per_side=32
         self.sam_checkpoint = sam_checkpoint
         self.model_type = model_type
         self.device = device
@@ -73,7 +73,6 @@ class SAMModel:
         mask_bin = 1-mask_bin
         masked_rgb = rgb * mask_bin 
         ref_img = Image.fromarray(masked_rgb.astype("uint8"))
-        # ref_img.save(f"masked_rgb{f}.png")
         return masked_rgb, mask_bin
 
     def cropping_mask(self,masks,rgb, alpha = 1.4, beta = 25):
@@ -90,12 +89,28 @@ class SAMModel:
         """
         
         masks = np.array(masks)
+        mask = masks.astype(np.uint8) * 255
+        mask_bin = (mask > 0).astype(np.uint8)
+        mask_blur = cv2.GaussianBlur(mask_bin * 255, (7, 7), 4)
+        mask_blur = (mask_blur > 0).astype(np.uint8)
+
+        label_image = measure.label(mask_blur)
+
+        label_image = remove_small_objects(label_image, max_size=3500)
+
+        label_image = erosion(label_image, disk(9))
+        label_image = dilation(label_image, disk(3))
+
+        label_image = measure.label(label_image)
+        mask_clean = (label_image > 0).astype(np.uint8) * 255
+        masks = (mask_clean > 0).astype(np.uint8)
+
         rgb=np.array(rgb)
         ys,xs = np.where(masks > 0)
-        top_y = ys.min()
-        bot_y = ys.max()+1
-        left_x = xs.min()
-        right_x = xs.max()+1
+        top_y = ys.min()+3
+        bot_y = ys.max()+3
+        left_x = xs.min()+3
+        right_x = xs.max()+3
 
         mask_crop = masks[top_y:bot_y, left_x:right_x]
         mask_crop = mask_crop.astype(np.uint8) * 255
@@ -139,9 +154,7 @@ class SAMModel:
             masked_np = np.array(masked)
             num_pixels = np.sum(masked_np > 0)
             area_mask = num_pixels*100/(H*W)
-            # print(f'mask_{i}:{area_mask}')
             if area_mask<15:
-                # print("delete")
                 del_id.append(i)
         masks = np.delete(all_masks, del_id, axis=0)
         h, w = masks[0].shape
@@ -153,10 +166,10 @@ class SAMModel:
         masked_rgb,mask_bin = self.preprocess_mask(union_mask,image_read,idx)
         end = time.time()
         print(f"BG mask obtained in {end-start}s")
-
+        Image.fromarray(mask_bin[...,0].astype("uint8")*255).save(f"ppt_outputs/bg_mask.png")
         return masked_rgb,mask_bin
 
-    def filter_masks_by_iou(self,masks, iou_threshold=0.5):
+    def filter_masks_by_iou(self,masks,index, robot_id, iou_threshold=0.01, iou_2objectthreshold=0.4, iou_maxthreshold=0.6, iou_robot_threshold = 0.95):#iou_maxthreshold=0.65 #iou_2objectthreshold=0.35 
         """
         Erases the redundant masks: if a mask is almost contained in another, the smaller one is removed.
         """
@@ -178,13 +191,36 @@ class SAMModel:
                 inter = np.logical_and(masks[i], masks[j]).sum()
                 union = np.logical_or(masks[i], masks[j]).sum()
                 iou = inter / union if union > 0 else 0
-                # print(f"Comparing mask {i} and {j}: IoU={iou:.4f}, area_i={areas[i]}, area_j={areas[j]}")
-                if iou > iou_threshold:
-                    if areas[i] >= areas[j]:
-                        removed.add(j)
-                    else:
-                        removed.add(i)
-                        break
+                if i in robot_id:
+                    if j in robot_id:
+                        if areas[i] > areas[j]:
+                            removed.add(j)
+                    elif iou > iou_threshold:
+                        if areas[i] >= areas[j]:
+                            removed.add(j)
+                        else:
+                            removed.add(i)
+                            break
+                else:
+                    if iou > iou_2objectthreshold:  
+                        if iou > iou_maxthreshold: 
+                            if areas[j] > areas[i]:
+                                removed.add(j)
+                            else:
+                                removed.add(i)
+                                break
+                        else:
+                            if areas[i] < areas[j]:
+                                removed.add(j)
+                            else:
+                                removed.add(i)
+                                break
+                    elif iou > iou_threshold:
+                        if areas[i] >= areas[j]:
+                            removed.add(j)
+                        else:
+                            removed.add(i)
+                            break
 
             if i not in removed:
                 keep.append(i)
@@ -214,6 +250,7 @@ class SAMModel:
         all_bboxes = []
 
         keep = []
+        robot_id = []
         rgb = Image.open(rgb)
         mask_bin = mask_bin[...,0]
 
@@ -229,19 +266,21 @@ class SAMModel:
             intersection = np.logical_and(masked, mask_bin)
             union = np.logical_or(masked, mask_bin)
             iou = np.sum(intersection) / np.sum(union) if np.sum(union) > 0 else 0
-
             num_pixels = np.sum(intersection > 0)
-            # Image.fromarray(intersection).save(f"intersection_{idx}_{i}.png")
-            area_mask = num_pixels*100/(H*W)
-            # print(f'mask_{i}:{np.round(area_mask,5)}%, iou: {np.round(iou,5)}')
-            
-            if (0.2<area_mask<1 or area_mask>10) and iou>0.013:
-                keep.append(i)       
+            area_mask = num_pixels*100/(H*W)         
+            if (0.35<area_mask<6.5 or area_mask>10) and iou>0.02: #area min estaba 0.35
+                if area_mask>10: 
+                    robot_id.append(i)
+                Image.fromarray(intersection.astype("uint8")*255).save(f"ppt_outputs/intersection_{i}.png")
+                Image.fromarray(union.astype("uint8")*255).save(f"ppt_outputs/union_{i}.png")
+                keep.append(i)  
+                 
 
         masks = [(i,all_masks[i]) for i in keep]
         bboxes = [all_bboxes[i] for i in keep]
         masks_only = [m[1] for m in masks]
-        valid = self.filter_masks_by_iou(masks_only, iou_threshold=0.01)
+        index = [m[0] for m in masks]
+        valid = self.filter_masks_by_iou(masks_only,index, robot_id, iou_threshold=0.01)
 
         masks_filtered = [masks[i] for i in valid]
         bboxes_filtered = [bboxes[i] for i in valid]
@@ -250,7 +289,7 @@ class SAMModel:
         masks_path = []
 
         for i,(orig_idx,masked) in enumerate(masks_filtered):
-            save_path = f"outputs/image{idx}/crop_{orig_idx}.png"
+            save_path = f"ppt_outputs/image{idx+1}/crop_{orig_idx}.png"
             masks_path.append(save_path)
             mask_crop, rgb_crop = self.cropping_mask(masked,rgb)
             rgb_masks.append(rgb_crop)
@@ -259,8 +298,6 @@ class SAMModel:
 
         end = time.time()
         print(f"Individual masks obtained in {end-start}s")
-
-        # save_masks(mask_crop,idx,W,H)
 
         return rgb_masks, bboxes_filtered,masks_path
 
@@ -795,28 +832,41 @@ class GPTModel:
             - dict_outputs: the dictionary with the tagging and description of each object. Dictionary. Output is a dictionary where each key is the name of the object (for example, "mask_0") and each value is another dictionary with the following keys:
                 - "tag": the tag of the object obtained by GPT. String.
                 - "description": the description of the object obtained by GPT. String.
-                - "full_object": boolean that expresses if the cropped image shows the full object or not.
                 - "mask": the path of the mask obtained for the object. String.
                 - "bbox": the bounding box of the object obtained by SAM. List of 4 integers [x_min, y_min, width, height].
         """
         image_path = Path(image)
         image_data_url = self.encode_image_data_url(image_path)
         dict_outputs = {}
+        # question_2 = """You will receive:
+        # 1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image. 
+        # The second image shows the object and the first one gives the context of the image.
+        # Your task:
+        # - Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
+        # - The tagging should be ultra-specific. For example, instead of saying "lego block", say "furthest blue lego block with 4 studs ". Add the colour in the tag.
+        # Return ONLY raw JSON.
+        # Do not use markdown code fences.
+        # Do not write ```json.
+        # {
+        # "tag": "string",
+        # "description": "string"
+        # }
+        # """
         question_2 = """You will receive:
         1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image. 
         The second image shows the object and the first one gives the context of the image.
         Your task:
-        - Describe the object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
-        - The tagging should be ultra-specific. For example, instead of saying "lego block", say "furthest blue lego block with 4 studs ". Add the colour in the tag.
-        - Express me if the cropped image shows the full object or not.
+        - Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
+        - The tags should be ONLY one of the following ones: "Wide and large blue Lego block", "Small blue Lego block", "Yellow Lego block", "Wide red Lego Block with 4 studs", "Green Lego block", "2x2 Blue and red Lego block", "Tall red Lego block", " White and red box","Blue and white small box", "Big Black Bottle","Big White bottle", "Metallic Wrench", "Orange Lego block", "Orange small box", " White and green box", "Full robotic arm", "Partial robotic arm", "Unknown object". 
+        - Do not change the tags neither use other tags that are not in the list. If you are not sure about the tag, use "Unknown object". For the detection, you can use the context of the whole image.
         Return ONLY raw JSON.
         Do not use markdown code fences.
         Do not write ```json.
         {
         "tag": "string",
-        "description": "string",
-        "full_object:"boolean"
-        }"""
+        "description": "string"
+        }
+        """
         for p in range(len(mask_path)):
             crop_url = self.encode_image_data_url(Path(mask_path[p]))
             response = self.client.chat.completions.create(
@@ -877,42 +927,49 @@ def main(images,depth_path):
     gpt = GPTModel(endpoint, model_name, deployment, subscription_key, api_version)
 
     for f,image in enumerate(images):
-        rute = f"outputs/image{f}"
+        print(f"Processing image {f+1}/{len(images)}: {image}")
+        rute = f"ppt_outputs/image{f+1}"
         os.makedirs(rute, exist_ok=True)
 
         masked_rgb,mask_bin = sam.obtain_bg(image,f)
         rgb_masks, bboxes, masks_path= sam.individual_mask(mask_bin,masked_rgb,image,f)
 
-        start_gpt = time.time()
-        full_dict[f"Image_{f}"]=gpt.main_gpt(image,masks_path,bboxes)
-        end_gpt = time.time()
-        print(f"GPT tagging and description for image {f+1} obtained in {end_gpt-start_gpt}s")
+        # start_gpt = time.time()
+        # full_dict[f"Image_{f}"]=gpt.main_gpt(image,masks_path,bboxes)
+        # end_gpt = time.time()
+        # print(f"GPT tagging and description for image {f+1} obtained in {end_gpt-start_gpt}s")
 
 
-        start_coords = time.time()
-        full_dict[f"Image_{f}"]=main_coords(image,depth_path[f],full_dict[f"Image_{f}"])
-        end_coords = time.time()
-        print(f"Coordinates and depth for image {f+1} obtained in {end_coords-start_coords}s")
+        # start_coords = time.time()
+        # full_dict[f"Image_{f}"]=main_coords(image,depth_path[f],full_dict[f"Image_{f}"])
+        # end_coords = time.time()
+        # print(f"Coordinates and depth for image {f+1} obtained in {end_coords-start_coords}s")
 
 
-        print(f"Image {f+1}: {full_dict[f"Image_{f}"]}")
+        # # print(f"Image {f+1}: {full_dict[f"Image_{f}"]}")
     
-    with open("output_dic.json","w") as f:
-        json.dump(full_dict["Image_0"], f, indent=4, default=convert)
+        # with open(f"outputs_json_labeled/output_img{f+1}.json","w") as k:
+        #     json.dump(full_dict[f"Image_{f}"], k, indent=4, default=convert)
 
 if __name__=="__main__":
-
-    ruta = "outputs"
-    os.makedirs(ruta, exist_ok=True)
     
     start_all = time.time()
     os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
     torch.cuda.empty_cache()
 
-    images = ["examples/rgb_final_test1.png"]
-    depth_path = ["examples/depth_final_test1.png"]
+    rute = f"outputs_json_labeled"
+    os.makedirs(rute, exist_ok=True)
 
-    main(images,depth_path)
+    images = ["dataset/rgb/rgb_dataset_1.png"]
+    depth = ["dataset/depth/depth_dataset_1.png"]
+    
+    # path_img = Path.cwd() / "dataset/rgb"
+    # path_depth = Path.cwd() / "dataset/depth"
+
+    # images = sorted(path_img.glob("*.png"), key = lambda x: int(x.stem.split("_")[-1]))
+    # depth = sorted(path_depth.glob("*.png"), key = lambda x: int(x.stem.split("_")[-1]))
+   
+    main(images,depth)
     end_all=time.time()
 
     print(f"Total time image process: {end_all-start_all}s")
