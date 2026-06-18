@@ -76,6 +76,7 @@ def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_
         return detections, corners, ids
     ids = ids.flatten()
     for marker_corners, marker_id in zip(corners, ids):
+
         object_points = np.array([
             [-marker_size_m / 2,  marker_size_m / 2, 0],
             [ marker_size_m / 2,  marker_size_m / 2, 0],
@@ -90,9 +91,11 @@ def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_
             dist,
             flags=cv2.SOLVEPNP_IPPE_SQUARE
         )
+
         if not ok:
             print(" [WARN] solvePnP failed for marker ID {marker_id}")
             continue
+        cv2.drawFrameAxes(image, K, dist, rvec, tvec, 0.1)
         T_camera_tag = rvec_tvec_to_matrix(rvec, tvec)
         detections[int(marker_id)] = {
             "corners_px": image_points.tolist(),
@@ -100,7 +103,13 @@ def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_
             "tvec": tvec.reshape(3).tolist(),
             "T_camera_tag": T_camera_tag,
         }
+    
+    cv2.imshow("detections", image)
+    cv2.waitKey()
     return detections, corners, ids
+
+
+
 def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config,idx):
     clean_image = cv2.imread(str(clean_image_path))
     tag_image = cv2.imread(str(tag_image_path))
@@ -132,6 +141,8 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
         T_object_tag = np.array(obj_cfg.get("T_object_tag", np.eye(4)), dtype=np.float64)
         T_tag_object = invert_transform(T_object_tag)
         T_world_object = T_world_tag @ T_tag_object
+        T_m=T_camera_world @ T_world_object
+        print(f"{marker_id} T_m Z =", T_m[2,3]*1000)
         corners_px = np.array(detections[marker_id]["corners_px"], dtype=np.float32)
         x_min, y_min = corners_px.min(axis=0)
         x_max, y_max = corners_px.max(axis=0)
