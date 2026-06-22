@@ -68,14 +68,13 @@ def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_
     corners, ids, rejected = detector.detectMarkers(gray)
 
     cv2.aruco.drawDetectedMarkers(image, corners, ids)
-    # cv2.imshow("detections", image)
-    # cv2.waitKey()
 
     detections = {}
     if ids is None:
         return detections, corners, ids
     ids = ids.flatten()
     for marker_corners, marker_id in zip(corners, ids):
+
 
         object_points = np.array([
             [-marker_size_m / 2,  marker_size_m / 2, 0],
@@ -103,6 +102,22 @@ def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_
             "tvec": tvec.reshape(3).tolist(),
             "T_camera_tag": T_camera_tag,
         }
+
+        marker_corners_flattened = marker_corners.reshape(-1, 2)
+        for i, corner in enumerate(marker_corners_flattened):
+            cv2.circle(image, tuple(corner.astype(int)), 5, (0, 255, 0), -1)
+
+        for object_point, image_point in zip(object_points, image_points):
+            projected_point, _ = cv2.projectPoints(
+                object_point.reshape(1, 1, 3),
+                rvec, 
+                tvec,
+                K,
+                dist
+            )
+            print("Object Point:", object_point, "Image Point:", image_point, "Projected Point:", projected_point.flatten())
+            cv2.circle(image, tuple(projected_point.reshape(2).astype(int)), 5, (0, 0, 255), -1)
+            cv2.circle(image, tuple(image_point.astype(int)), 5, (255, 0, 0), -1)
     
     cv2.imshow("detections", image)
     cv2.waitKey()
@@ -125,10 +140,12 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
         dist,
         marker_size_m
     )
+   
 
     if world_marker_id not in detections:
         raise RuntimeError(f"World marker {world_marker_id} not detected in {tag_image_path}")
     T_camera_world = detections[world_marker_id]["T_camera_tag"]
+    print("T_camera_world:\n", T_camera_world)
     T_world_camera = invert_transform(T_camera_world)
     objects_out = []
     for marker_id_str, obj_cfg in config.get("objects", {}).items():
@@ -137,6 +154,7 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
             print(f"[WARN] Object marker {marker_id} not detected, skipping object '{obj_cfg['name']}'")
             continue
         T_camera_tag = detections[marker_id]["T_camera_tag"]
+        print("T_camera_tag:\n", T_camera_tag)
         T_world_tag = T_world_camera @ T_camera_tag
         T_object_tag = np.array(obj_cfg.get("T_object_tag", np.eye(4)), dtype=np.float64)
         T_tag_object = invert_transform(T_object_tag)
@@ -155,6 +173,7 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
                 float(x_max - x_min),
                 float(y_max - y_min)
             ],
+            "depth": float(T_m[2,3]*1000),
             "T_world_object": matrix_to_list(T_world_object),
             "T_world_tag": matrix_to_list(T_world_tag),
             "tag_corners_px": corners_px.tolist()
@@ -210,6 +229,7 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
     output_pathdebug = Path(output_path) / f"image{idx+1}_representation"
     debug_path = output_pathdebug.with_suffix(".debug.png")
     cv2.imwrite(str(debug_path), debug)
+
     return annotation
 
 def main():

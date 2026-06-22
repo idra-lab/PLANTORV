@@ -135,7 +135,8 @@ class SAMModel:
             - idx: index of the image, used for saving the masked RGB for visualization.
             Outputs:
             - masked_rgb: the RGB image with the background mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3)
-            - mask_bin: the binary background mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask."""
+            - mask_bin: the binary background mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask.
+        """
         start=time.time()
         image_read = Image.open(image)
         image_np = np.array(image_read)
@@ -168,7 +169,7 @@ class SAMModel:
         print(f"BG mask obtained in {end-start}s")
         return masked_rgb,mask_bin
 
-    def filter_masks_by_iou(self,masks,index, robot_id, iou_threshold=0.01, iou_2objectthreshold=0.4, iou_maxthreshold=0.6, iou_robot_threshold = 0.95):#iou_maxthreshold=0.65 #iou_2objectthreshold=0.35 
+    def filter_masks_by_iou(self,masks,index, robot_id, iou_threshold=0.01, iou_2objectthreshold=0.4, iou_maxthreshold=0.6, iou_robot_threshold = 0.95): 
         """
         Erases the redundant masks: if a mask is almost contained in another, the smaller one is removed.
         """
@@ -835,6 +836,7 @@ class GPTModel:
         image_path = Path(image)
         image_data_url = self.encode_image_data_url(image_path)
         dict_outputs = {}
+        # UNLABELED TEXT PROMPT
         # question_2 = """You will receive:
         # 1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image. 
         # The second image shows the object and the first one gives the context of the image.
@@ -849,6 +851,8 @@ class GPTModel:
         # "description": "string"
         # }
         # """
+
+        # LABELED PROMPT
         question_2 = """You will receive:
         1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image. 
         The second image shows the object and the first one gives the context of the image.
@@ -931,22 +935,22 @@ def main(images,depth_path):
         masked_rgb,mask_bin = sam.obtain_bg(image,f)
         rgb_masks, bboxes, masks_path= sam.individual_mask(mask_bin,masked_rgb,image,f)
 
-        # start_gpt = time.time()
-        # full_dict[f"Image_{f}"]=gpt.main_gpt(image,masks_path,bboxes)
-        # end_gpt = time.time()
-        # print(f"GPT tagging and description for image {f+1} obtained in {end_gpt-start_gpt}s")
+        start_gpt = time.time()
+        full_dict[f"Image_{f}"]=gpt.main_gpt(image,masks_path,bboxes)
+        end_gpt = time.time()
+        print(f"GPT tagging and description for image {f+1} obtained in {end_gpt-start_gpt}s")
 
 
-        # start_coords = time.time()
-        # full_dict[f"Image_{f}"]=main_coords(image,depth_path[f],full_dict[f"Image_{f}"])
-        # end_coords = time.time()
-        # print(f"Coordinates and depth for image {f+1} obtained in {end_coords-start_coords}s")
+        start_coords = time.time()
+        full_dict[f"Image_{f}"]=main_coords(image,depth_path[f],full_dict[f"Image_{f}"])
+        end_coords = time.time()
+        print(f"Coordinates and depth for image {f+1} obtained in {end_coords-start_coords}s")
 
 
-        # # print(f"Image {f+1}: {full_dict[f"Image_{f}"]}")
+        # print(f"Image {f+1}: {full_dict[f"Image_{f}"]}")
     
-        # with open(f"outputs_json_labeled/output_img{f+1}.json","w") as k:
-        #     json.dump(full_dict[f"Image_{f}"], k, indent=4, default=convert)
+        with open(f"outputs_json_labeled/output_img{f+1}.json","w") as k:
+            json.dump(full_dict[f"Image_{f}"], k, indent=4, default=convert)
 
 if __name__=="__main__":
     
@@ -957,14 +961,14 @@ if __name__=="__main__":
     rute = f"outputs_json_labeled"
     os.makedirs(rute, exist_ok=True)
 
-    images = ["dataset/rgb/rgb_dataset_1.png"]
-    depth = ["dataset/depth/depth_dataset_1.png"]
+    # images = ["dataset/rgb/rgb_dataset_1.png"]
+    # depth = ["dataset/depth/depth_dataset_1.png"]
     
-    # path_img = Path.cwd() / "dataset/rgb"
-    # path_depth = Path.cwd() / "dataset/depth"
+    path_img = Path.cwd() / "dataset/rgb"
+    path_depth = Path.cwd() / "dataset/depth"
 
-    # images = sorted(path_img.glob("*.png"), key = lambda x: int(x.stem.split("_")[-1]))
-    # depth = sorted(path_depth.glob("*.png"), key = lambda x: int(x.stem.split("_")[-1]))
+    images = sorted(path_img.glob("*.png"), key = lambda x: int(x.stem.split("_")[-1]))
+    depth = sorted(path_depth.glob("*.png"), key = lambda x: int(x.stem.split("_")[-1]))
    
     main(images,depth)
     end_all=time.time()
