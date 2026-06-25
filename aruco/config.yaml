@@ -118,3 +118,87 @@ objects:
        [0,1,0,0],
        [0,0,1,0],
        [0,0,0,1]]
+  19:
+    name: Blue meter
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  20:
+    name: Black wallet
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  21:
+    name: Voltimeter
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  22:
+    name: Calculator
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  23:
+    name: Blackberry purple and white box
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  24:
+    name: Ice tea peach white and orange box
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  25:
+    name: Passion fruit white purple yellow box
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  26:
+    name: Raspberry pink white box
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  27:
+    name: Green cup
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  28:
+    name: White ping-pong
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  29:
+    name: Orange ping-pong
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]
+  30:
+    name: End-effector with grappler
+    T_object_tag:
+      [[1,0,0,0],
+       [0,1,0,0],
+       [0,0,1,0],
+       [0,0,0,1]]

@@ -192,7 +192,7 @@ class SAMModel:
                 union = np.logical_or(masks[i], masks[j]).sum()
                 iou = inter / union if union > 0 else 0
                 if i in robot_id:
-                    if j in robot_id:
+                    if j in robot_id:  #erase for more than one robot, erase this if. This filters extra masks for an unique robot
                         if areas[i] > areas[j]:
                             removed.add(j)
                     elif iou > iou_threshold:
