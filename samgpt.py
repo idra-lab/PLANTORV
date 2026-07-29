@@ -62,7 +62,7 @@ class SAMModel:
 
         label_image = measure.label(mask_blur)
 
-        label_image = remove_small_objects(label_image, max_size=3500)
+        label_image = remove_small_objects(label_image, min_size=3500)
 
         label_image = erosion(label_image, disk(9))
         label_image = dilation(label_image, disk(3))
@@ -96,7 +96,7 @@ class SAMModel:
 
         label_image = measure.label(mask_blur)
 
-        label_image = remove_small_objects(label_image, max_size=3500)
+        label_image = remove_small_objects(label_image, min_size=3500)
 
         label_image = erosion(label_image, disk(9))
         label_image = dilation(label_image, disk(3))
