@@ -63,3 +63,8 @@ Thumbs.db
 
 
 *.pth
+
+output/
+dataset/
+
+*.log*

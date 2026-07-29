@@ -1,0 +1,44 @@
+line-length = 100
+target-version = "py310"
+
+extend-exclude = [
+    "venv",
+    ".venv",
+    "dataset",
+    "final_fast_segmentation",
+    "segmentation/checkpoints",
+]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+docstring-code-format = true
+
+[lint]
+select = [
+    "E4",
+    "E7",
+    "E9",
+    "F",
+    "I",
+    "D",
+    "ANN",
+]
+ignore = [
+    # Keep Ruff focused on existing docstring style, not full docstring coverage.
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D107",
+    "D203",
+    "D213",
+    # Pyright handles type quality; Ruff checks that annotations are present.
+    "ANN401",
+]
+
+[lint.pydocstyle]
+convention = "numpy"

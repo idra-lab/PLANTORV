@@ -1,0 +1,5 @@
+LLM_VERSION : "gpt-5.2-chat"
+API_KEY_NAME : "AZURE_OPENAI_API_KEY"
+ENDPOINT : "https://vlm-planning-resource.cognitiveservices.azure.com/"
+API_VERSION : "2024-12-01-preview"
+SYSTEM_FINGERPRINT : "None"
