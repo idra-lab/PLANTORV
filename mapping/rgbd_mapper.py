@@ -1,5 +1,5 @@
 
-from camera_reprojection.camera_model import *
+from mapping.camera_model import *
 
 
 class RGBDMapper():

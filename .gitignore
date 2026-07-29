@@ -67,3 +67,6 @@ Thumbs.db
 *.json
 *.csv
 *.zip
+
+models/*
+!models/.gitkeep
