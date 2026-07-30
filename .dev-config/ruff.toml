@@ -1,3 +1,6 @@
+# Referenced from ../pyproject.toml via [tool.ruff] extend.
+# NOTE: Ruff resolves relative paths against the PROJECT ROOT (where pyproject.toml
+# lives), not against this file - so paths here are written as plain root-relative.
 line-length = 100
 target-version = "py310"
 

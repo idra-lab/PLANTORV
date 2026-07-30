@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plantorv"
+version = "0.1.0"
+description = "Object segmentation, VLM tagging, and depth estimation pipeline."
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib",
+    "scikit-image",
+    "ultralytics",
+    "numpy",
+    "opencv-python",
+    "torch",
+    "torchvision",
+    "Pillow",
+    "segment-anything",
+    "pyyaml",
+    "python-dotenv",
+    "openai",
+    "loguru",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
+    "pyright",
+    "pre-commit",
+]
+
+[tool.setuptools]
+# This project is run in place (python3 samgpt.py, python3 aruco/aruco_detector.py, ...),
+# not imported as an installed library, so no packages need to be built/installed.
+packages = []
+
+# Linter/type-checker settings live in .dev-config/ to keep this file focused on
+# packaging. Both tools follow these pointers, so `ruff`/`pyright` still work with
+# no CLI flags (and editors/language servers pick them up too).
+[tool.ruff]
+extend = ".dev-config/ruff.toml"
+
+[tool.pyright]
+extends = ".dev-config/pyrightconfig.json"

@@ -1,0 +1,32 @@
+// Referenced from ../pyproject.toml via [tool.pyright] extends.
+// NOTE: unlike Ruff, Pyright resolves relative paths against THIS FILE's directory,
+// so every path below needs the ../ prefix to point back at the project root.
+// Without it Pyright silently analyzes 0 files and still exits 0.
+{
+  "include": [
+    "../samgpt.py",
+    "../samdamcoords.py",
+    "../segmentation",
+    "../mapping",
+    "../scene_understanding",
+    "../evaluation",
+    "../aruco",
+    "../utility"
+  ],
+  "exclude": [
+    "../**/__pycache__",
+    "../.venv",
+    "../venv",
+    "../dataset",
+    "../final_fast_segmentation",
+    "../segmentation/checkpoints"
+  ],
+  "pythonVersion": "3.10",
+  "typeCheckingMode": "standard",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownParameterType": "none"
+}

@@ -72,8 +72,10 @@ Thumbs.db
 outputs_json_labeled/
 ppt_outputs/
 output/
+build/
 
 models/*
 
 !models/.gitkeep
-!pyrightconfig.json
+# Dev tool configs (Ruff/Pyright) live here; keep them tracked despite *.json above.
+!.dev-config/pyrightconfig.json

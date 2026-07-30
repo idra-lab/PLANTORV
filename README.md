@@ -16,6 +16,7 @@ ArUco marker annotations.
 - `dataset/` - expected input images: `rgb/`, `depth/`, and `rgb_aruco/`.
 - `models/` - local model checkpoints, including the SAM checkpoint expected at `models/sam/sam_vit_h_4b8939.pth`.
 - `scripts/PBS/` - cluster job scripts (`generation.sh`, `evaluation.sh`, `aruco_detector.sh`).
+- `.dev-config/` - Ruff and Pyright settings, referenced from `pyproject.toml` (see [Development](#development)).
 - `outputs_json_labeled/`, `output_aruco/`, `results/`, `ppt_outputs/` - generated pipeline outputs.
 
 ## Requirements
@@ -32,8 +33,23 @@ ArUco marker annotations.
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+make install
 ```
+
+For development, use `install-dev` instead. It adds the linting/type-checking tools
+and enables the git hook in one step:
+
+```bash
+make install-dev
+```
+
+Both targets are thin wrappers, so the raw equivalents work too:
+
+| target | runs |
+| --- | --- |
+| `make install` | `pip install -e .` |
+| `make install-dev` | `pip install -e ".[dev]"` then `pre-commit install` |
+
 
 ### 2. Install the segmentation model (SAM checkpoint)
 
@@ -45,9 +61,6 @@ mkdir -p models/sam
 wget -O models/sam/sam_vit_h_4b8939.pth \
   https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
 ```
-
-(`curl -Lo <path> <url>` works too.) The file is ~2.4 GB and is git-ignored (`*.pth`).
-
 If you want a smaller/faster model, download a different checkpoint and pass the
 matching `model_type` when constructing `SAMModel`:
 
@@ -56,11 +69,6 @@ matching `model_type` when constructing `SAMModel`:
 | `vit_h`    | `sam_vit_h_4b8939.pth`     | https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth     |
 | `vit_l`    | `sam_vit_l_0b3195.pth`     | https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth     |
 | `vit_b`    | `sam_vit_b_01ec64.pth`     | https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth     |
-
-```python
-# example: use the smaller vit_b model
-SAMModel("models/sam/sam_vit_b_01ec64.pth", model_type="vit_b")
-```
 
 ### 3. Configure the `.env` file
 
@@ -120,6 +128,8 @@ Clean generated outputs if you want a fresh run:
 rm -rf outputs_json_labeled output_aruco results ppt_outputs
 ```
 
+## Development
+
 Format, lint, and type-check (via the `Makefile`):
 
 ```bash
@@ -128,3 +138,50 @@ make format     # ruff format .
 make lint       # ruff check .
 make typecheck  # pyright
 ```
+
+The same checks also run on commit via [pre-commit](https://pre-commit.com/).
+`make install-dev` enables the git hook for you; to enable it in an existing clone:
+
+```bash
+pre-commit install
+```
+
+Note the two are deliberately different, not redundant:
+
+- `make check` is **read-only** and covers the **whole repo** — use it to verify.
+- the commit hook **auto-fixes** (`ruff --fix`, `ruff-format`) and, apart from `pyright`,
+  only looks at **staged files**.
+
+Because of the auto-fix, `pre-commit run --all-files` will rewrite files; use
+`make check` when you want to inspect without changing anything.
+
+`pyright` runs against the environment that's active when `git commit` is run (not an
+isolated pre-commit env), so make sure `make install-dev` was run in the venv you
+commit from.
+
+### Tool configuration
+
+Ruff and Pyright settings live in [.dev-config/](.dev-config/) rather than in
+`pyproject.toml`, which only holds two pointers:
+
+```toml
+[tool.ruff]
+extend = ".dev-config/ruff.toml"
+
+[tool.pyright]
+extends = ".dev-config/pyrightconfig.json"
+```
+
+Both tools follow these on their own, so `ruff`, `pyright`, the `Makefile`, pre-commit,
+and editor language servers all work with no extra flags.
+
+⚠️ The two files resolve relative paths **differently**:
+
+| file | paths resolve against | so `include`/`exclude` are written as |
+| --- | --- | --- |
+| `.dev-config/ruff.toml` | the project root | `dataset`, `venv`, … |
+| `.dev-config/pyrightconfig.json` | **its own directory** | `../dataset`, `../venv`, … |
+
+If you drop the `../` prefixes in the Pyright config it will match nothing, analyze
+**zero files, and still exit 0** — a passing check that verified nothing. Keep the
+prefixes when editing that file.
