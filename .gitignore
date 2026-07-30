@@ -70,4 +70,6 @@ Thumbs.db
 *.log*
 
 models/*
+
 !models/.gitkeep
+!pyrightconfig.json

@@ -11,3 +11,5 @@ pyyaml
 python-dotenv
 openai
 dotenv
+ruff
+loguru
