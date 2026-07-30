@@ -30,3 +30,14 @@ typecheck:
 	$(PYRIGHT)
 
 check: format-check lint typecheck
+
+clean: clean_ruffy clean_pyright clean_output
+
+clean_ruffy:
+	if [ -d .ruff_cache ]; then rm -rf .ruff_cache; fi
+clean_pyright:
+	if [ -d .pyrightcache ]; then rm -rf .pyrightcache; fi
+clean_output: 
+	if [ -d output ]; then rm -rf output; fi
+	if [ -d ppt_outputs ]; then rm -rf ppt_outputs; fi
+	if [ -d outputs_json_labeled ]; then rm -rf outputs_json_labeled; fi
