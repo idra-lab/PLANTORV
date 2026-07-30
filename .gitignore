@@ -69,6 +69,10 @@ Thumbs.db
 *.zip
 *.log*
 
+outputs_json_labeled/
+ppt_outputs/
+output/
+
 models/*
 
 !models/.gitkeep

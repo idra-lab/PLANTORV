@@ -1,4 +1,3 @@
-
 import numpy as np
 import torch
 import time
@@ -11,6 +10,8 @@ from segmentation.sam_model import *
 from mapping.rgbd_mapper import *
 from scene_understanding.gpt_annotator import GPTAnnotator
 
+from utility.utility import logger
+
 def convert(o):
     if isinstance(o, np.ndarray):
         return o.tolist()
@@ -18,7 +19,9 @@ def convert(o):
 
 
 """Main Function"""
-def main(images,depth_path):
+
+
+def main(images, depth_path):
 
     load_dotenv()
 
@@ -40,33 +43,31 @@ def main(images,depth_path):
 
     gpt = GPTAnnotator(endpoint, model_name, deployment, subscription_key, api_version)
 
-    for f,image in enumerate(images):
-        print(f"Processing image {f+1}/{len(images)}: {image}")
-        rute = f"ppt_outputs/image{f+1}"
+    for f, image in enumerate(images):
+        logger.info(f"Processing image {f + 1}/{len(images)}: {image}")
+        rute = f"ppt_outputs/image{f + 1}"
         os.makedirs(rute, exist_ok=True)
 
-        masked_rgb,mask_bin = sam.obtain_bg(image,f)
-        rgb_masks, bboxes, masks_path= sam.individual_mask(mask_bin,masked_rgb,image,f)
+        masked_rgb, mask_bin = sam.obtain_bg(image, f)
+        rgb_masks, bboxes, masks_path = sam.individual_mask(mask_bin, masked_rgb, image, f)
 
         start_gpt = time.time()
-        full_dict[f"Image_{f}"]=gpt.main_gpt(image,masks_path,bboxes)
+        full_dict[f"Image_{f}"] = gpt.main_gpt(image, masks_path, bboxes)
         end_gpt = time.time()
-        print(f"GPT tagging and description for image {f+1} obtained in {end_gpt-start_gpt}s")
-
+        logger.info(f"GPT tagging and description for image {f + 1} obtained in {end_gpt - start_gpt}s")
 
         start_coords = time.time()
-        full_dict[f"Image_{f}"]=main_coords(image,depth_path[f],full_dict[f"Image_{f}"])
+        full_dict[f"Image_{f}"] = main_coords(image, depth_path[f], full_dict[f"Image_{f}"])
         end_coords = time.time()
-        print(f"Coordinates and depth for image {f+1} obtained in {end_coords-start_coords}s")
-
+        logger.info(f"Coordinates and depth for image {f + 1} obtained in {end_coords - start_coords}s")
 
         # print(f"Image {f+1}: {full_dict[f"Image_{f}"]}")
-    
-        with open(f"outputs_json_labeled/output_img{f+1}.json","w") as k:
+
+        with open(f"outputs_json_labeled/output_img{f + 1}.json", "w") as k:
             json.dump(full_dict[f"Image_{f}"], k, indent=4, default=convert)
 
-if __name__=="__main__":
-    
+
+if __name__ == "__main__":
     start_all = time.time()
     os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
     torch.cuda.empty_cache()
@@ -76,19 +77,14 @@ if __name__=="__main__":
 
     # images = ["dataset/rgb/rgb_dataset_1.png"]
     # depth = ["dataset/depth/depth_dataset_1.png"]
-    
+
     path_img = Path.cwd() / "dataset/rgb"
     path_depth = Path.cwd() / "dataset/depth"
 
-    images = sorted(path_img.glob("*.png"), key = lambda x: int(x.stem.split("_")[-1]))
-    depth = sorted(path_depth.glob("*.png"), key = lambda x: int(x.stem.split("_")[-1]))
-   
-    main(images,depth)
-    end_all=time.time()
+    images = sorted(path_img.glob("*.png"), key=lambda x: int(x.stem.split("_")[-1]))
+    depth = sorted(path_depth.glob("*.png"), key=lambda x: int(x.stem.split("_")[-1]))
 
-    print(f"Total time image process: {end_all-start_all}s")
+    main(images, depth)
+    end_all = time.time()
 
-
-
-
-
+    logger.info(f"Total time image process: {end_all - start_all}s")

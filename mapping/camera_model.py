@@ -3,8 +3,9 @@ from dataclasses import dataclass
 import numpy as np
 
 
-
 """Depth Estimation"""
+
+
 @dataclass(frozen=True)
 class Intrinsics:
     cx: float
@@ -13,6 +14,7 @@ class Intrinsics:
     fy: float
     width: int
     height: int
+
 
 @dataclass(frozen=True)
 class Distortion:
@@ -24,6 +26,7 @@ class Distortion:
     k6: float
     p1: float
     p2: float
+
 
 @dataclass(frozen=True)
 class CalibrationSet:
@@ -48,6 +51,7 @@ class AlignProfile:
     align_right: int
     align_bottom: int
     depth_scale: float
+
 
 _ROT = np.asarray(
     [
@@ -84,33 +88,49 @@ _RGB_DIST = Distortion(
 _HARDCODED_CALIBRATIONS: List[CalibrationSet] = [
     CalibrationSet(
         depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024),
+        depth_intrinsic=Intrinsics(
+            cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024
+        ),
         rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360),
+        rgb_intrinsic=Intrinsics(
+            cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360
+        ),
         rot=_ROT,
         trans=_TRANS,
     ),
     CalibrationSet(
         depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024),
+        depth_intrinsic=Intrinsics(
+            cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024
+        ),
         rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480),
+        rgb_intrinsic=Intrinsics(
+            cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480
+        ),
         rot=_ROT,
         trans=_TRANS,
     ),
     CalibrationSet(
         depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576),
+        depth_intrinsic=Intrinsics(
+            cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576
+        ),
         rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360),
+        rgb_intrinsic=Intrinsics(
+            cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360
+        ),
         rot=_ROT,
         trans=_TRANS,
     ),
     CalibrationSet(
         depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576),
+        depth_intrinsic=Intrinsics(
+            cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576
+        ),
         rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480),
+        rgb_intrinsic=Intrinsics(
+            cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480
+        ),
         rot=_ROT,
         trans=_TRANS,
     ),
@@ -141,7 +161,9 @@ _HARDCODED_PROFILES: List[AlignProfile] = [
 ]
 
 
-def _distort_normalized(x: np.ndarray, y: np.ndarray, d: Distortion) -> Tuple[np.ndarray, np.ndarray]:
+def _distort_normalized(
+    x: np.ndarray, y: np.ndarray, d: Distortion
+) -> Tuple[np.ndarray, np.ndarray]:
     r2 = x * x + y * y
     r4 = r2 * r2
     r6 = r4 * r2

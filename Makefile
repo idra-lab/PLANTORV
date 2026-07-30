@@ -17,6 +17,3 @@ typecheck:
 	$(PYRIGHT)
 
 check: format-check lint typecheck
-
-test:
-	$(PYTHON) -m unittest tests.test_segmentation tests.test_depth tests.test_vlm

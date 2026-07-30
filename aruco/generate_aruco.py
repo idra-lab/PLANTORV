@@ -49,7 +49,11 @@ def validate_output_dictionary(output_dictionary_path):
     invalid_entries = []
 
     for relative_file, marker_data in output_dictionary.items():
-        if not isinstance(relative_file, str) or not relative_file or Path(relative_file).is_absolute():
+        if (
+            not isinstance(relative_file, str)
+            or not relative_file
+            or Path(relative_file).is_absolute()
+        ):
             invalid_entries.append(relative_file)
             continue
 
@@ -76,12 +80,7 @@ def generate(marker_id, marker_size_px=800, border_bits=1, dictionary_name="DICT
     aruco = cv2.aruco
     dictionary = aruco.getPredefinedDictionary(getattr(aruco, dictionary_name))
 
-    img = aruco.generateImageMarker(
-        dictionary,
-        marker_id,
-        marker_size_px,
-        borderBits=border_bits
-    )
+    img = aruco.generateImageMarker(dictionary, marker_id, marker_size_px, borderBits=border_bits)
 
     output_file = Path(f"aruco_{marker_id}.png")
     if not cv2.imwrite(str(output_file), img):
@@ -92,36 +91,40 @@ def generate(marker_id, marker_size_px=800, border_bits=1, dictionary_name="DICT
 
 if __name__ == "__main__":
     argsparser = argparse.ArgumentParser(description="Generate ArUco marker images.")
-    argsparser.add_argument("marker_id", type=int, nargs="?", help="ID of the ArUco marker to generate.")
+    argsparser.add_argument(
+        "marker_id", type=int, nargs="?", help="ID of the ArUco marker to generate."
+    )
     argsparser.add_argument(
         "--size",
         type=int,
         default=800,
-        help="Size of the generated marker image in pixels (default: 800)."
+        help="Size of the generated marker image in pixels (default: 800).",
     )
-    argsparser.add_argument("--border", type=int, default=1, help="Number of bits in the marker border (default: 1).")
+    argsparser.add_argument(
+        "--border", type=int, default=1, help="Number of bits in the marker border (default: 1)."
+    )
     argsparser.add_argument(
         "--dictionary",
         type=str,
         default="DICT_6X6_250",
-        help="Predefined ArUco dictionary to use (default: DICT_6X6_250)."
+        help="Predefined ArUco dictionary to use (default: DICT_6X6_250).",
     )
     argsparser.add_argument(
         "--output-dictionary",
         type=Path,
         default=Path(DEFAULT_OUTPUT_DICTIONARY),
-        help=f"JSON file mapping generated marker paths to marker metadata (default: {DEFAULT_OUTPUT_DICTIONARY})."
+        help=f"JSON file mapping generated marker paths to marker metadata (default: {DEFAULT_OUTPUT_DICTIONARY}).",
     )
     argsparser.add_argument(
         "--description",
         type=str,
         default="",
-        help="Description to store in the output dictionary for the generated marker."
+        help="Description to store in the output dictionary for the generated marker.",
     )
     argsparser.add_argument(
         "--validate",
         action="store_true",
-        help="Validate that all files listed in the output dictionary still exist."
+        help="Validate that all files listed in the output dictionary still exist.",
     )
     args = argsparser.parse_args()
 

@@ -1,8 +1,11 @@
+from mapping.camera_model import CalibrationSet, AlignProfile, _HARDCODED_CALIBRATIONS, _HARDCODED_PROFILES, _undistort_pixels_to_normalized, _project_to_pixels
 
-from mapping.camera_model import *
+from typing import Optional, Sequence, Tuple
 
+import numpy as np
+import cv2
 
-class RGBDMapper():
+class RGBDMapper:
     """Depth<->RGB utility built from hardcoded Femto Mega calibration data."""
 
     def __init__(self, calibration: CalibrationSet, profile: Optional[AlignProfile] = None):
@@ -54,7 +57,6 @@ class RGBDMapper():
         raise ValueError(
             "No matching hardcoded calibration/profile found for requested color/depth resolution pair"
         )
-
 
     def align_depth_to_color_with_correspondence(
         self,
@@ -125,10 +127,7 @@ class RGBDMapper():
         v_i = np.rint(v_c).astype(np.int64)
 
         in_bounds = (
-            (u_i >= 0)
-            & (u_i < c.rgb_intrinsic.width)
-            & (v_i >= 0)
-            & (v_i < c.rgb_intrinsic.height)
+            (u_i >= 0) & (u_i < c.rgb_intrinsic.width) & (v_i >= 0) & (v_i < c.rgb_intrinsic.height)
         )
         if not np.any(in_bounds):
             out_shape = (c.rgb_intrinsic.height, c.rgb_intrinsic.width)
@@ -213,6 +212,7 @@ class RGBDMapper():
             return None
         return float(np.min(nonzero))
 
+
 def _find_depth_and_source(
     aligned_depth_mm: np.ndarray,
     src_u_map: np.ndarray,
@@ -256,6 +256,7 @@ def _find_depth_and_source(
 
     return best_d, best_uv
 
+
 def _depth_to_colormap(depth_image: np.ndarray) -> np.ndarray:
     if depth_image.ndim != 2:
         raise ValueError("Depth image for visualization must be single-channel")
@@ -274,34 +275,35 @@ def _depth_to_colormap(depth_image: np.ndarray) -> np.ndarray:
     return cv2.applyColorMap(vis, cv2.COLORMAP_JET)
 
 
-def main_coords(rgb_path,depth_path, dict_objects):
+def main_coords(rgb_path, depth_path, dict_objects):
 
-    rgb   = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
+    rgb = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
     depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)  # si es PNG de depth visual
 
-    color_size = (rgb.shape[1],rgb.shape[0])
-    depth_size = (depth.shape[1],depth.shape[0])
+    color_size = (rgb.shape[1], rgb.shape[0])
+    depth_size = (depth.shape[1], depth.shape[0])
 
-    mapper = RGBDMapper.from_hardcoded(color_size = color_size , depth_size=depth_size)
+    mapper = RGBDMapper.from_hardcoded(color_size=color_size, depth_size=depth_size)
     aligned_depth_mm, src_u_map, src_v_map = mapper.align_depth_to_color_with_correspondence(
         depth,
-        depth_unit_scale=1 #Scale from depth pixel units to milimeters
+        depth_unit_scale=1,  # Scale from depth pixel units to milimeters
     )
 
-    rgb_h,rgb_w = rgb.shape[:2]
+    rgb_h, rgb_w = rgb.shape[:2]
     if aligned_depth_mm.shape[1] != rgb_w or aligned_depth_mm.shape[0] != rgb_h:
-        aligned_depth_mm = cv2.resize(aligned_depth_mm, (rgb_w, rgb_h),interpolation = cv2.INTER_NEAREST)
-        src_u_map = cv2.resize(src_u_map,(rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
-        src_v_map = cv2.resize(src_v_map,(rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
+        aligned_depth_mm = cv2.resize(
+            aligned_depth_mm, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST
+        )
+        src_u_map = cv2.resize(src_u_map, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
+        src_v_map = cv2.resize(src_v_map, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
 
-   
     for mask_id in dict_objects.keys():
         coords = dict_objects[mask_id]["bbox"]
-        ix,iy,delta_x,delta_y= coords
-        fin_x = ix+delta_x
-        fin_y = iy+delta_y
-        cx = (ix+fin_x)//2
-        cy = (iy+fin_y)//2 
+        ix, iy, delta_x, delta_y = coords
+        fin_x = ix + delta_x
+        fin_y = iy + delta_y
+        cx = (ix + fin_x) // 2
+        cy = (iy + fin_y) // 2
 
         depth_mm, src_uv = _find_depth_and_source(
             aligned_depth_mm,
@@ -309,9 +311,9 @@ def main_coords(rgb_path,depth_path, dict_objects):
             src_v_map,
             cx,
             cy,
-            max(0,1),
+            max(0, 1),
         )
         # print(f"Object {mask_id}: depth={depth_mm} mm, src_uv={src_uv}")
-        dict_objects[mask_id]["coord_center&depth"]=[cx,cy,depth_mm]
+        dict_objects[mask_id]["coord_center&depth"] = [cx, cy, depth_mm]
 
     return dict_objects

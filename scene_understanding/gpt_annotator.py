@@ -7,6 +7,7 @@ import json
 
 """GPT Model for tagging and description"""
 
+
 class GPTAnnotator:
     def __init__(self, endpoint, model_name, deployment, subscription_key, api_version):
         self.client = AzureOpenAI(
@@ -16,7 +17,7 @@ class GPTAnnotator:
         )
         self.deployment = deployment
 
-    def encode_image_data_url(self,image_path) -> str:
+    def encode_image_data_url(self, image_path) -> str:
         if not image_path.exists():
             raise FileNotFoundError(f"Image file not found: {image_path}")
 
@@ -28,7 +29,7 @@ class GPTAnnotator:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         return f"data:{mime_type};base64,{encoded}"
 
-    def main_gpt(self,image,mask_path, bboxes):
+    def main_gpt(self, image, mask_path, bboxes):
         """
         This function is defined to obtain the tagging and description of the objects that we are looking for.
         It applies GPT over the original RGB image and the cropped images of the objects obtained with SAM, and then it returns a dictionary with the tagging and description of each object.
@@ -48,7 +49,7 @@ class GPTAnnotator:
         dict_outputs = {}
         # UNLABELED TEXT PROMPT
         # question_2 = """You will receive:
-        # 1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image. 
+        # 1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image.
         # The second image shows the object and the first one gives the context of the image.
         # Your task:
         # - Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
@@ -88,27 +89,33 @@ class GPTAnnotator:
                     },
                     {
                         "role": "user",
-
                         "content": [
                             {"type": "text", "text": question_2},
                             {"type": "text", "text": "Full image:"},
-                            {"type": "image_url", "image_url": {"url": image_data_url}, "detail": "auto"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": image_data_url},
+                                "detail": "auto",
+                            },
                             {"type": "text", "text": "Cropped image:"},
                             {"type": "image_url", "image_url": {"url": crop_url}, "detail": "auto"},
                         ],
-
-                    }
+                    },
                 ],
-                max_completion_tokens =16384,
-                model=self.deployment
+                max_completion_tokens=16384,
+                model=self.deployment,
             )
-            raw = response.choices[0].message.content	
+            raw = response.choices[0].message.content
             try:
                 dict_outputs[f"mask_{p}"] = json.loads(raw)
             except json.JSONDecodeError:
                 print(f"Error decoding JSON for mask_{p}: {raw}")
-                dict_outputs[f"mask_{p}"] = {"tag": "unknown", "description": "unknown", "full_object": False}
-            dict_outputs[f"mask_{p}"]["mask"]=mask_path[p]
-            dict_outputs[f"mask_{p}"]["bbox"]=bboxes[p]
+                dict_outputs[f"mask_{p}"] = {
+                    "tag": "unknown",
+                    "description": "unknown",
+                    "full_object": False,
+                }
+            dict_outputs[f"mask_{p}"]["mask"] = mask_path[p]
+            dict_outputs[f"mask_{p}"]["bbox"] = bboxes[p]
 
         return dict_outputs

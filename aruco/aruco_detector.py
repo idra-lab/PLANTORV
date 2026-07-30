@@ -5,6 +5,8 @@ import yaml
 import argparse
 import numpy as np
 from pathlib import Path
+
+
 def load_camera_calibration(path):
     with open(path, "r") as f:
         data = yaml.safe_load(f)
@@ -12,14 +14,20 @@ def load_camera_calibration(path):
     dist = np.array(data["dist_coeffs"], dtype=np.float64).reshape(-1, 1)
     # print(f"Loaded camera calibration from {path}:")
     return K, dist
+
+
 def rvec_tvec_to_matrix(rvec, tvec):
     R, _ = cv2.Rodrigues(rvec)
     T = np.eye(4)
     T[:3, :3] = R
     T[:3, 3] = np.asarray(tvec).reshape(3)
     return T
+
+
 def matrix_to_list(T):
     return [[float(v) for v in row] for row in T]
+
+
 def invert_transform(T):
     R = T[:3, :3]
     t = T[:3, 3]
@@ -27,6 +35,8 @@ def invert_transform(T):
     T_inv[:3, :3] = R.T
     T_inv[:3, 3] = -R.T @ t
     return T_inv
+
+
 def load_marker_config(path):
     """
     Example config:
@@ -59,6 +69,8 @@ def load_marker_config(path):
     # print(f"Loaded marker config from {path}")
     with open(path, "r") as f:
         return yaml.safe_load(f)
+
+
 def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_250"):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     aruco_dict_id = getattr(cv2.aruco, dictionary_name)
@@ -74,21 +86,18 @@ def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_
         return detections, corners, ids
     ids = ids.flatten()
     for marker_corners, marker_id in zip(corners, ids):
-
-
-        object_points = np.array([
-            [-marker_size_m / 2,  marker_size_m / 2, 0],
-            [ marker_size_m / 2,  marker_size_m / 2, 0],
-            [ marker_size_m / 2, -marker_size_m / 2, 0],
-            [-marker_size_m / 2, -marker_size_m / 2, 0],
-        ], dtype=np.float32)
+        object_points = np.array(
+            [
+                [-marker_size_m / 2, marker_size_m / 2, 0],
+                [marker_size_m / 2, marker_size_m / 2, 0],
+                [marker_size_m / 2, -marker_size_m / 2, 0],
+                [-marker_size_m / 2, -marker_size_m / 2, 0],
+            ],
+            dtype=np.float32,
+        )
         image_points = marker_corners.reshape(4, 2).astype(np.float32)
         ok, rvec, tvec = cv2.solvePnP(
-            object_points,
-            image_points,
-            K,
-            dist,
-            flags=cv2.SOLVEPNP_IPPE_SQUARE
+            object_points, image_points, K, dist, flags=cv2.SOLVEPNP_IPPE_SQUARE
         )
 
         if not ok:
@@ -109,23 +118,25 @@ def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_
 
         for object_point, image_point in zip(object_points, image_points):
             projected_point, _ = cv2.projectPoints(
-                object_point.reshape(1, 1, 3),
-                rvec, 
-                tvec,
-                K,
-                dist
+                object_point.reshape(1, 1, 3), rvec, tvec, K, dist
             )
-            print("Object Point:", object_point, "Image Point:", image_point, "Projected Point:", projected_point.flatten())
+            print(
+                "Object Point:",
+                object_point,
+                "Image Point:",
+                image_point,
+                "Projected Point:",
+                projected_point.flatten(),
+            )
             cv2.circle(image, tuple(projected_point.reshape(2).astype(int)), 5, (0, 0, 255), -1)
             cv2.circle(image, tuple(image_point.astype(int)), 5, (255, 0, 0), -1)
-    
+
     cv2.imshow("detections", image)
     cv2.waitKey()
     return detections, corners, ids
 
 
-
-def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config,idx):
+def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config, idx):
     clean_image = cv2.imread(str(clean_image_path))
     tag_image = cv2.imread(str(tag_image_path))
     if clean_image is None:
@@ -134,13 +145,7 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
         raise RuntimeError(f"Could not read tag image: {tag_image_path}")
     marker_size_m = float(config["marker_size_m"])
     world_marker_id = int(config["world_marker_id"])
-    detections, corners, ids = detect_aruco_poses(
-        tag_image,
-        K,
-        dist,
-        marker_size_m
-    )
-   
+    detections, corners, ids = detect_aruco_poses(tag_image, K, dist, marker_size_m)
 
     if world_marker_id not in detections:
         raise RuntimeError(f"World marker {world_marker_id} not detected in {tag_image_path}")
@@ -151,7 +156,9 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
     for marker_id_str, obj_cfg in config.get("objects", {}).items():
         marker_id = int(marker_id_str)
         if marker_id not in detections:
-            print(f"[WARN] Object marker {marker_id} not detected, skipping object '{obj_cfg['name']}'")
+            print(
+                f"[WARN] Object marker {marker_id} not detected, skipping object '{obj_cfg['name']}'"
+            )
             continue
         T_camera_tag = detections[marker_id]["T_camera_tag"]
         print("T_camera_tag:\n", T_camera_tag)
@@ -159,25 +166,27 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
         T_object_tag = np.array(obj_cfg.get("T_object_tag", np.eye(4)), dtype=np.float64)
         T_tag_object = invert_transform(T_object_tag)
         T_world_object = T_world_tag @ T_tag_object
-        T_m=T_camera_world @ T_world_object
-        print(f"{marker_id} T_m Z =", T_m[2,3]*1000)
+        T_m = T_camera_world @ T_world_object
+        print(f"{marker_id} T_m Z =", T_m[2, 3] * 1000)
         corners_px = np.array(detections[marker_id]["corners_px"], dtype=np.float32)
         x_min, y_min = corners_px.min(axis=0)
         x_max, y_max = corners_px.max(axis=0)
-        objects_out.append({
-            "name": obj_cfg["name"],
-            "marker_id": marker_id,
-            "bbox_from_tag_px": [
-                float(x_min),
-                float(y_min),
-                float(x_max - x_min),
-                float(y_max - y_min)
-            ],
-            "depth": float(T_m[2,3]*1000),
-            "T_world_object": matrix_to_list(T_world_object),
-            "T_world_tag": matrix_to_list(T_world_tag),
-            "tag_corners_px": corners_px.tolist()
-        })
+        objects_out.append(
+            {
+                "name": obj_cfg["name"],
+                "marker_id": marker_id,
+                "bbox_from_tag_px": [
+                    float(x_min),
+                    float(y_min),
+                    float(x_max - x_min),
+                    float(y_max - y_min),
+                ],
+                "depth": float(T_m[2, 3] * 1000),
+                "T_world_object": matrix_to_list(T_world_object),
+                "T_world_tag": matrix_to_list(T_world_tag),
+                "tag_corners_px": corners_px.tolist(),
+            }
+        )
 
     print(f"Detected {len(objects_out)} objects in {tag_image_path.name}")
     robot_out = None
@@ -193,9 +202,9 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
                 "marker_id": robot_marker_id,
                 "frame_name": config["robot"].get("frame_name", "robot"),
                 "T_world_robot": matrix_to_list(T_world_robot),
-                "T_world_tag": matrix_to_list(T_world_tag)
+                "T_world_tag": matrix_to_list(T_world_tag),
             }
-        else: 
+        else:
             print(f"[WARN] Robot marker {robot_marker_id} not detected, skipping robot annotation")
     print(str(clean_image_path.name))
     print(str(tag_image_path.name))
@@ -203,19 +212,13 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
     annotation = {
         "clean_image": str(clean_image_path.name),
         "tag_image": str(tag_image_path.name),
-        "camera": {
-            "camera_matrix": K.tolist(),
-            "dist_coeffs": dist.reshape(-1).tolist()
-        },
-        "world": {
-            "marker_id": world_marker_id,
-            "T_camera_world": matrix_to_list(T_camera_world)
-        },
+        "camera": {"camera_matrix": K.tolist(), "dist_coeffs": dist.reshape(-1).tolist()},
+        "world": {"marker_id": world_marker_id, "T_camera_world": matrix_to_list(T_camera_world)},
         "objects": objects_out,
-        "robot": robot_out
+        "robot": robot_out,
     }
     print(f"Saving annotation to {output_path}")
-    output_pathjson = Path(output_path) / f"aruco_pos_img{idx+1}.json"
+    output_pathjson = Path(output_path) / f"aruco_pos_img{idx + 1}.json"
     output_pathjson.parent.mkdir(parents=True, exist_ok=True)
     with open(output_pathjson, "w") as f:
         json.dump(annotation, f, indent=2)
@@ -226,11 +229,12 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
             rvec = np.array(det["rvec"], dtype=np.float64)
             tvec = np.array(det["tvec"], dtype=np.float64)
             cv2.drawFrameAxes(debug, K, dist, rvec, tvec, marker_size_m * 0.75)
-    output_pathdebug = Path(output_path) / f"image{idx+1}_representation"
+    output_pathdebug = Path(output_path) / f"image{idx + 1}_representation"
     debug_path = output_pathdebug.with_suffix(".debug.png")
     cv2.imwrite(str(debug_path), debug)
 
     return annotation
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -244,12 +248,16 @@ def main():
     args = parser.parse_args()
     clean_dir = Path(args.clean_dir)
     tag_dir = Path(args.tag_dir)
-    out_dir = Path(args.out_dir) 
+    out_dir = Path(args.out_dir)
     K, dist = load_camera_calibration(args.camera_yaml)
     config = load_marker_config(args.config_yaml)
-    clean_images = sorted(clean_dir.glob(f"*{args.clean_suffix}"), key = lambda x: int(x.stem.split("_")[-1]))
-    print(f"Found {len(clean_images)} clean images in {clean_dir} with suffix '{args.clean_suffix}'")
-    for i,clean_path in enumerate(clean_images):
+    clean_images = sorted(
+        clean_dir.glob(f"*{args.clean_suffix}"), key=lambda x: int(x.stem.split("_")[-1])
+    )
+    print(
+        f"Found {len(clean_images)} clean images in {clean_dir} with suffix '{args.clean_suffix}'"
+    )
+    for i, clean_path in enumerate(clean_images):
         stem = clean_path.name.replace(args.clean_suffix, "")
         tag_path = tag_dir / f"{stem}{args.tag_suffix}"
         out_path = out_dir / f"{stem}"
@@ -257,9 +265,11 @@ def main():
             print(f"[WARN] Missing tag image for {clean_path.name}")
             continue
         try:
-            annotate_pair(clean_path, tag_path, out_path, K, dist, config,i)
+            annotate_pair(clean_path, tag_path, out_path, K, dist, config, i)
             print(f"[OK] {clean_path.name} -> {out_path.name}")
         except Exception as e:
             print(f"[ERROR] {clean_path.name}: {e}")
+
+
 if __name__ == "__main__":
     main()

@@ -1,10 +1,5 @@
-import matplotlib.pyplot as plt
-from collections import defaultdict
-from skimage.morphology import erosion,dilation,remove_small_objects, disk
+from skimage.morphology import erosion, dilation, remove_small_objects, disk
 from skimage import measure
-from skimage.measure import regionprops
-from ultralytics import settings
-import pathlib
 import numpy as np
 import torch
 import cv2
@@ -13,16 +8,13 @@ from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 import time
 import os
 import argparse
-import base64
-import mimetypes
-from pathlib import Path
-import yaml
 from dotenv import load_dotenv
-from openai import AzureOpenAI
 import json
 from typing import List, Optional, Sequence, Tuple
 from dataclasses import dataclass
 from dam.describe_anything_model import DescribeAnythingModel
+
+from utiliity.utility import logger
 
 
 def convert(o):
@@ -30,7 +22,10 @@ def convert(o):
         return o.tolist()
     return o
 
+
 """SEGMENTATION"""
+
+
 class SAMModel:
     def __init__(self, sam_checkpoint, model_type="vit_h", device="cuda", points_per_side=36):
         self.sam_checkpoint = sam_checkpoint
@@ -40,21 +35,21 @@ class SAMModel:
         self.sam.to(device=device)
         self.mask_generator = SamAutomaticMaskGenerator(self.sam, points_per_side=points_per_side)
 
-    def sam_mask_to_pil(self,mask_bool) -> Image.Image:
+    def sam_mask_to_pil(self, mask_bool) -> Image.Image:
         mask_uint8 = (mask_bool.astype(np.uint8)) * 255
         return Image.fromarray(mask_uint8)
 
-    def preprocess_mask(self,mask,rgb,f) -> np.ndarray: 
+    def preprocess_mask(self, mask, rgb, f) -> np.ndarray:
         """
-            This function is to preprocess the RGB image before applying SAM for the second time.
-            This is done to obtain a better segmentation of the objects that we are looking for.
-            Inputs:
-            - mask: the mask that we want to apply over the RGB
-            - rgb: RGB image
-            - f: index of the image, used for saving the masked RGB for visualization.
-            Outputs:
-            - masked_rgb: the RGB image with the mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3) 
-            - mask_bin: the binary mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask.
+        This function is to preprocess the RGB image before applying SAM for the second time.
+        This is done to obtain a better segmentation of the objects that we are looking for.
+        Inputs:
+        - mask: the mask that we want to apply over the RGB
+        - rgb: RGB image
+        - f: index of the image, used for saving the masked RGB for visualization.
+        Outputs:
+        - masked_rgb: the RGB image with the mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3)
+        - mask_bin: the binary mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask.
         """
         mask = mask.astype(np.uint8) * 255
         mask_bin = (mask > 0).astype(np.uint8)
@@ -71,61 +66,59 @@ class SAMModel:
         label_image = measure.label(label_image)
         mask_clean = (label_image > 0).astype(np.uint8) * 255
         mask_bin = (mask_clean > 0).astype(np.uint8)[..., None]
-        mask_bin = 1-mask_bin
-        masked_rgb = rgb * mask_bin 
+        mask_bin = 1 - mask_bin
+        masked_rgb = rgb * mask_bin
         ref_img = Image.fromarray(masked_rgb.astype("uint8"))
         # ref_img.save(f"masked_rgb{f}.png")
         return masked_rgb, mask_bin
 
-    def cropping_mask(self,masks,rgb, alpha = 1.4, beta = 25):
+    def cropping_mask(self, masks, rgb, alpha=1.4, beta=25):
         """
-            This funciton is defined to crop and improve the masks out of the first filter.
-            Inputs:
-            - masks: filtered masks. #Three channels (1920,1080,3)
-            - rgb: rgb image. 
-            - alpha: contrast factor for improving the visualization of rgb
-            - beta: brightness factor
-            Outputs:
-            - mask_crop: cropped mask
-            - rgb_crop: cropped rgb
+        This funciton is defined to crop and improve the masks out of the first filter.
+        Inputs:
+        - masks: filtered masks. #Three channels (1920,1080,3)
+        - rgb: rgb image.
+        - alpha: contrast factor for improving the visualization of rgb
+        - beta: brightness factor
+        Outputs:
+        - mask_crop: cropped mask
+        - rgb_crop: cropped rgb
         """
-        
+
         masks = np.array(masks)
-        rgb=np.array(rgb)
-        ys,xs = np.where(masks > 0)
+        rgb = np.array(rgb)
+        ys, xs = np.where(masks > 0)
         top_y = ys.min()
-        bot_y = ys.max()+1
+        bot_y = ys.max() + 1
         left_x = xs.min()
-        right_x = xs.max()+1
+        right_x = xs.max() + 1
 
         mask_crop = masks[top_y:bot_y, left_x:right_x]
         mask_crop = mask_crop.astype(np.uint8) * 255
-        mask_crop = cv2.resize(mask_crop,None, fx=2,fy=2,interpolation=cv2.INTER_LANCZOS4)
-        mask_crop = (mask_crop > 0).astype(np.uint8) * 255 #for being binary
+        mask_crop = cv2.resize(mask_crop, None, fx=2, fy=2, interpolation=cv2.INTER_LANCZOS4)
+        mask_crop = (mask_crop > 0).astype(np.uint8) * 255  # for being binary
         mask_rgb = rgb[top_y:bot_y, left_x:right_x, :]
         rgb_crop = cv2.convertScaleAbs(mask_rgb, alpha=alpha, beta=beta)
-        KERNEL = np.array([[0, -1, 0],
-                    [-1, 5, -1],
-                    [0, -1, 0]])
+        KERNEL = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
         rgb_crop = cv2.resize(rgb_crop, None, fx=2, fy=2, interpolation=cv2.INTER_LANCZOS4)
-        rgb_crop = cv2.filter2D(rgb_crop,-1,KERNEL)
+        rgb_crop = cv2.filter2D(rgb_crop, -1, KERNEL)
 
         return mask_crop, rgb_crop
 
-    def obtain_bg(self,image,idx):
+    def obtain_bg(self, image, idx):
         """
-            This function is defined to obtain the background mask of the image.
-            It applies SAM over the original RGB image and then filters the masks obtained by area.
-            Inputs:
-            - image: the original RGB image.
-            - idx: index of the image, used for saving the masked RGB for visualization.
-            Outputs:
-            - masked_rgb: the RGB image with the background mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3)
-            - mask_bin: the binary background mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask."""
-        start=time.time()
+        This function is defined to obtain the background mask of the image.
+        It applies SAM over the original RGB image and then filters the masks obtained by area.
+        Inputs:
+        - image: the original RGB image.
+        - idx: index of the image, used for saving the masked RGB for visualization.
+        Outputs:
+        - masked_rgb: the RGB image with the background mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3)
+        - mask_bin: the binary background mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask."""
+        start = time.time()
         image_read = Image.open(image)
         image_np = np.array(image_read)
-        H,W,D = image_np.shape
+        H, W, D = image_np.shape
         masks_sam = self.mask_generator.generate(image_np)
         all_masks = []
         all_bboxes = []
@@ -134,14 +127,14 @@ class SAMModel:
             all_masks.append(m["segmentation"])
             all_bboxes.append(m["bbox"])
 
-        for i,mask in enumerate(all_masks):
+        for i, mask in enumerate(all_masks):
             masked = self.sam_mask_to_pil(mask)
-            masked = masked.resize((W,H))
+            masked = masked.resize((W, H))
             masked_np = np.array(masked)
             num_pixels = np.sum(masked_np > 0)
-            area_mask = num_pixels*100/(H*W)
+            area_mask = num_pixels * 100 / (H * W)
             # print(f'mask_{i}:{area_mask}')
-            if area_mask<15:
+            if area_mask < 15:
                 print("delete")
                 del_id.append(i)
         masks = np.delete(all_masks, del_id, axis=0)
@@ -151,13 +144,13 @@ class SAMModel:
         for m in masks:
             union_mask |= m
 
-        masked_rgb,mask_bin = self.preprocess_mask(union_mask,image_read,idx)
+        masked_rgb, mask_bin = self.preprocess_mask(union_mask, image_read, idx)
         end = time.time()
-        print(f"BG mask obtained in {end-start}s")
+        logger.debug(f"BG mask obtained in {end - start}s")
 
-        return masked_rgb,mask_bin
+        return masked_rgb, mask_bin
 
-    def filter_masks_by_iou(self,masks, iou_threshold=0.5):
+    def filter_masks_by_iou(self, masks, iou_threshold=0.5):
         """
         Erases the redundant masks: if a mask is almost contained in another, the smaller one is removed.
         """
@@ -192,54 +185,52 @@ class SAMModel:
 
         return keep
 
-
-    def individual_mask(self,mask_bin,mask_rgb,rgb,idx):
+    def individual_mask(self, mask_bin, mask_rgb, rgb, idx):
         """
-            This function is defined to obtain the individual masks of the objects that we are looking for. 
-            It applies SAM over the masked RGB image and then filters the masks obtained by area and IoU with the original mask.
-            Inputs:
-            - mask_bin: the binary mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask.
-            - mask_rgb: the RGB image with the mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3)
-            - rgb: the original RGB image.
-            - idx: index of the image, used for saving the masked RGB for visualization.
-            Outputs:
-            - rgb_crop: the cropped RGB image of the object. Numpy array. Output is a 3-channel uint8 image (H',W',3) where H' and W' are the height and width of the cropped image.
-            - bboxes: the bounding boxes of the objects. Numpy array. Output is a Nx4 array where N is the number of objects and each row is [x_min, y_min, width, height].
-            - masks_path: the paths of the masks obtained. List of strings. Output is a list of length N where each element is the path of the mask obtained for each object.
+        This function is defined to obtain the individual masks of the objects that we are looking for.
+        It applies SAM over the masked RGB image and then filters the masks obtained by area and IoU with the original mask.
+        Inputs:
+        - mask_bin: the binary mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask.
+        - mask_rgb: the RGB image with the mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3)
+        - rgb: the original RGB image.
+        - idx: index of the image, used for saving the masked RGB for visualization.
+        Outputs:
+        - rgb_crop: the cropped RGB image of the object. Numpy array. Output is a 3-channel uint8 image (H',W',3) where H' and W' are the height and width of the cropped image.
+        - bboxes: the bounding boxes of the objects. Numpy array. Output is a Nx4 array where N is the number of objects and each row is [x_min, y_min, width, height].
+        - masks_path: the paths of the masks obtained. List of strings. Output is a list of length N where each element is the path of the mask obtained for each object.
         """
         start = time.time()
-        H,W = mask_rgb.shape[:2]
-        masks_sam =self.mask_generator.generate(mask_rgb)
+        H, W = mask_rgb.shape[:2]
+        masks_sam = self.mask_generator.generate(mask_rgb)
 
         all_masks = []
         all_bboxes = []
 
         keep = []
         rgb = Image.open(rgb)
-        mask_bin = mask_bin[...,0]
-
+        mask_bin = mask_bin[..., 0]
 
         for m in masks_sam:
             all_masks.append(m["segmentation"])
             all_bboxes.append(m["bbox"])
 
-        for i,masked in enumerate(all_masks):
+        for i, masked in enumerate(all_masks):
             masked = self.sam_mask_to_pil(masked)
-            masked = masked.resize((W,H))
-            
+            masked = masked.resize((W, H))
+
             intersection = np.logical_and(masked, mask_bin)
             union = np.logical_or(masked, mask_bin)
             iou = np.sum(intersection) / np.sum(union) if np.sum(union) > 0 else 0
 
             num_pixels = np.sum(intersection > 0)
             # Image.fromarray(intersection).save(f"intersection_{idx}_{i}.png")
-            area_mask = num_pixels*100/(H*W)
+            area_mask = num_pixels * 100 / (H * W)
             # print(f'mask_{i}:{np.round(area_mask,5)}%, iou: {np.round(iou,5)}')
-            
-            if (0.2<area_mask<1 or area_mask>10) and iou>0.013:
-                keep.append(i)       
 
-        masks = [(i,all_masks[i]) for i in keep]
+            if (0.2 < area_mask < 1 or area_mask > 10) and iou > 0.013:
+                keep.append(i)
+
+        masks = [(i, all_masks[i]) for i in keep]
         bboxes = [all_bboxes[i] for i in keep]
         masks_only = [m[1] for m in masks]
         valid = self.filter_masks_by_iou(masks_only, iou_threshold=0.01)
@@ -250,25 +241,25 @@ class SAMModel:
         rgb_masks = []
         masks_path = []
         mask_bin = []
-        for i,(orig_idx,masked) in enumerate(masks_filtered):
+        for i, (orig_idx, masked) in enumerate(masks_filtered):
             save_path = f"outputs/image{idx}/crop_{orig_idx}.png"
             masks_path.append(save_path)
-            mask_crop, rgb_crop = self.cropping_mask(masked,rgb)
+            mask_crop, rgb_crop = self.cropping_mask(masked, rgb)
             mask_bin.append(masked)
             rgb_masks.append(rgb_crop)
             Image.fromarray(rgb_crop).save(save_path)
 
-
         end = time.time()
-        print(f"Individual masks obtained in {end-start}s")
+        logger.debug(f"Individual masks obtained in {end - start}s")
 
         # save_masks(mask_crop,idx,W,H)
 
-        return rgb_masks, bboxes_filtered,masks_path, mask_bin
-
+        return rgb_masks, bboxes_filtered, masks_path, mask_bin
 
 
 """Depth Estimation"""
+
+
 @dataclass(frozen=True)
 class Intrinsics:
     cx: float
@@ -277,6 +268,7 @@ class Intrinsics:
     fy: float
     width: int
     height: int
+
 
 @dataclass(frozen=True)
 class Distortion:
@@ -288,6 +280,7 @@ class Distortion:
     k6: float
     p1: float
     p2: float
+
 
 @dataclass(frozen=True)
 class CalibrationSet:
@@ -312,6 +305,7 @@ class AlignProfile:
     align_right: int
     align_bottom: int
     depth_scale: float
+
 
 _ROT = np.asarray(
     [
@@ -348,33 +342,49 @@ _RGB_DIST = Distortion(
 _HARDCODED_CALIBRATIONS: List[CalibrationSet] = [
     CalibrationSet(
         depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024),
+        depth_intrinsic=Intrinsics(
+            cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024
+        ),
         rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360),
+        rgb_intrinsic=Intrinsics(
+            cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360
+        ),
         rot=_ROT,
         trans=_TRANS,
     ),
     CalibrationSet(
         depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024),
+        depth_intrinsic=Intrinsics(
+            cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024
+        ),
         rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480),
+        rgb_intrinsic=Intrinsics(
+            cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480
+        ),
         rot=_ROT,
         trans=_TRANS,
     ),
     CalibrationSet(
         depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576),
+        depth_intrinsic=Intrinsics(
+            cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576
+        ),
         rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360),
+        rgb_intrinsic=Intrinsics(
+            cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360
+        ),
         rot=_ROT,
         trans=_TRANS,
     ),
     CalibrationSet(
         depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576),
+        depth_intrinsic=Intrinsics(
+            cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576
+        ),
         rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480),
+        rgb_intrinsic=Intrinsics(
+            cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480
+        ),
         rot=_ROT,
         trans=_TRANS,
     ),
@@ -404,7 +414,10 @@ _HARDCODED_PROFILES: List[AlignProfile] = [
     AlignProfile(2, 3840, 2160, 1024, 1024, 0, 0, 0, 0, 0, 6.0),
 ]
 
-def _distort_normalized(x: np.ndarray, y: np.ndarray, d: Distortion) -> Tuple[np.ndarray, np.ndarray]:
+
+def _distort_normalized(
+    x: np.ndarray, y: np.ndarray, d: Distortion
+) -> Tuple[np.ndarray, np.ndarray]:
     r2 = x * x + y * y
     r4 = r2 * r2
     r6 = r4 * r2
@@ -448,7 +461,7 @@ def _project_to_pixels(
     return u, v
 
 
-class DepthRgbMapper():
+class DepthRgbMapper:
     """Depth<->RGB utility built from hardcoded Femto Mega calibration data."""
 
     def __init__(self, calibration: CalibrationSet, profile: Optional[AlignProfile] = None):
@@ -500,7 +513,6 @@ class DepthRgbMapper():
         raise ValueError(
             "No matching hardcoded calibration/profile found for requested color/depth resolution pair"
         )
-
 
     def align_depth_to_color_with_correspondence(
         self,
@@ -571,10 +583,7 @@ class DepthRgbMapper():
         v_i = np.rint(v_c).astype(np.int64)
 
         in_bounds = (
-            (u_i >= 0)
-            & (u_i < c.rgb_intrinsic.width)
-            & (v_i >= 0)
-            & (v_i < c.rgb_intrinsic.height)
+            (u_i >= 0) & (u_i < c.rgb_intrinsic.width) & (v_i >= 0) & (v_i < c.rgb_intrinsic.height)
         )
         if not np.any(in_bounds):
             out_shape = (c.rgb_intrinsic.height, c.rgb_intrinsic.width)
@@ -659,6 +668,7 @@ class DepthRgbMapper():
             return None
         return float(np.min(nonzero))
 
+
 def _find_depth_and_source(
     aligned_depth_mm: np.ndarray,
     src_u_map: np.ndarray,
@@ -702,6 +712,7 @@ def _find_depth_and_source(
 
     return best_d, best_uv
 
+
 def _depth_to_colormap(depth_image: np.ndarray) -> np.ndarray:
     if depth_image.ndim != 2:
         raise ValueError("Depth image for visualization must be single-channel")
@@ -720,34 +731,35 @@ def _depth_to_colormap(depth_image: np.ndarray) -> np.ndarray:
     return cv2.applyColorMap(vis, cv2.COLORMAP_JET)
 
 
-def main_coords(rgb_path,depth_path, dict_objects):
+def main_coords(rgb_path, depth_path, dict_objects):
 
-    rgb   = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
+    rgb = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
     depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)  # si es PNG de depth visual
 
-    color_size = (rgb.shape[1],rgb.shape[0])
-    depth_size = (depth.shape[1],depth.shape[0])
+    color_size = (rgb.shape[1], rgb.shape[0])
+    depth_size = (depth.shape[1], depth.shape[0])
 
-    mapper = DepthRgbMapper.from_hardcoded(color_size = color_size , depth_size=depth_size)
+    mapper = DepthRgbMapper.from_hardcoded(color_size=color_size, depth_size=depth_size)
     aligned_depth_mm, src_u_map, src_v_map = mapper.align_depth_to_color_with_correspondence(
         depth,
-        depth_unit_scale=1 #Scale from depth pixel units to milimeters
+        depth_unit_scale=1,  # Scale from depth pixel units to milimeters
     )
 
-    rgb_h,rgb_w = rgb.shape[:2]
+    rgb_h, rgb_w = rgb.shape[:2]
     if aligned_depth_mm.shape[1] != rgb_w or aligned_depth_mm.shape[0] != rgb_h:
-        aligned_depth_mm = cv2.resize(aligned_depth_mm, (rgb_w, rgb_h),interpolation = cv2.INTER_NEAREST)
-        src_u_map = cv2.resize(src_u_map,(rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
-        src_v_map = cv2.resize(src_v_map,(rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
+        aligned_depth_mm = cv2.resize(
+            aligned_depth_mm, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST
+        )
+        src_u_map = cv2.resize(src_u_map, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
+        src_v_map = cv2.resize(src_v_map, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
 
-   
     for mask_id in dict_objects.keys():
         coords = dict_objects[mask_id]["bbox"]
-        ix,iy,delta_x,delta_y= coords
-        fin_x = ix+delta_x
-        fin_y = iy+delta_y
-        cx = (ix+fin_x)//2
-        cy = (iy+fin_y)//2 
+        ix, iy, delta_x, delta_y = coords
+        fin_x = ix + delta_x
+        fin_y = iy + delta_y
+        cx = (ix + fin_x) // 2
+        cy = (iy + fin_y) // 2
 
         depth_mm, src_uv = _find_depth_and_source(
             aligned_depth_mm,
@@ -755,38 +767,39 @@ def main_coords(rgb_path,depth_path, dict_objects):
             src_v_map,
             cx,
             cy,
-            max(0,1),
+            max(0, 1),
         )
         print(f"Object {mask_id}: depth={depth_mm} mm, src_uv={src_uv}")
-        dict_objects[mask_id]["coord_center&depth"]=[cx,cy,depth_mm]
+        dict_objects[mask_id]["coord_center&depth"] = [cx, cy, depth_mm]
 
     return dict_objects
 
 
 """DAM Model for tagging and description"""
+
+
 class DAMModel:
-    def __init__(self,query):
+    def __init__(self, query):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model_path = 'nvidia/DAM-3B'
-        self.conv_mode = 'v1'
-        self.prompt_mode = 'focal_prompt'
+        self.model_path = "nvidia/DAM-3B"
+        self.conv_mode = "v1"
+        self.prompt_mode = "focal_prompt"
         self.prompt_modes = {
             "focal_prompt": "full+focal_crop",
         }
 
-        self.query=query 
+        self.query = query
         self.dam = DescribeAnythingModel(
             model_path=self.model_path,
             conv_mode=self.conv_mode,
             prompt_mode=self.prompt_modes.get(self.prompt_mode, self.prompt_mode),
-        ).to(self.device) 
+        ).to(self.device)
 
-
-    def sam_mask_to_pil(self,mask_bool):
+    def sam_mask_to_pil(self, mask_bool):
         mask_uint8 = (mask_bool.astype(np.uint8)) * 255
         return Image.fromarray(mask_uint8)
-    
-    def main_dam(self,img,mask,temperature=0.6, top_p=0.5, num_beams=1, max_new_tokens=512):
+
+    def main_dam(self, img, mask, temperature=0.6, top_p=0.5, num_beams=1, max_new_tokens=512):
         for i, m in enumerate(mask):
             mask_pil = sam_mask_to_pil(m)
 
@@ -801,13 +814,16 @@ class DAMModel:
             )
 
             dict_masks[f"mask_{i}"]["description"] = output_mask
-            dict_outputs[f"mask_{i}"]["mask"]=mask_path[i]
-            dict_outputs[f"mask_{i}"]["bbox"]=bboxes[i]
-        
+            dict_outputs[f"mask_{i}"]["mask"] = mask_path[i]
+            dict_outputs[f"mask_{i}"]["bbox"] = bboxes[i]
+
         return dict_masks
 
+
 """Main Function"""
-def main(images,depth_path,query):
+
+
+def main(images, depth_path, query):
 
     load_dotenv()
 
@@ -820,65 +836,79 @@ def main(images,depth_path,query):
 
     dict_masks = {}
 
-    for f,image in enumerate(images):
+    for f, image in enumerate(images):
         img = Image.open(image)
         rute = f"outputs/image{f}"
         os.makedirs(rute, exist_ok=True)
 
-        masked_rgb,mask_bin = sam.obtain_bg(image,f)
-        rgb_masks, bboxes, masks_path,masks2= sam.individual_mask(mask_bin,masked_rgb,image,f)
-        
-        dict_masks[f"Image_{f+1}"] = dam.main_dam(img,masks2,query)
+        masked_rgb, mask_bin = sam.obtain_bg(image, f)
+        rgb_masks, bboxes, masks_path, masks2 = sam.individual_mask(mask_bin, masked_rgb, image, f)
 
-        print(f"Descriptions for image {f+1} obtained in {time.time()-start_all}s: \n {dict_masks[f'Image_{f+1}']}")
+        dict_masks[f"Image_{f + 1}"] = dam.main_dam(img, masks2, query)
+
+        logger.debug(
+            f"Descriptions for image {f + 1} obtained in {time.time() - start_all}s: \n {dict_masks[f'Image_{f + 1}']}"
+        )
 
         start_coords = time.time()
-        dict_masks[f"Image_{f}"]=main_coords(image,depth_path[f],dict_masks[f"Image_{f}"])
+        dict_masks[f"Image_{f}"] = main_coords(image, depth_path[f], dict_masks[f"Image_{f}"])
         end_coords = time.time()
-        print(f"Coordinates and depth for image {f+1} obtained in {end_coords-start_coords}s")
+        logger.debug(f"Coordinates and depth for image {f + 1} obtained in {end_coords - start_coords}s")
 
-        print(f"Image {f+1}: {dict_masks[f"Image_{f}"]}")
-    
-        with open(f"output_dic_image{f}.json","w") as j:
+        logger.info(f"Image {f + 1}: {dict_masks[f'Image_{f}']}")
+
+        with open(f"output_dic_image{f}.json", "w") as j:
             json.dump(dict_masks[f"Image_{f}"], j, indent=4, default=convert)
 
-if __name__=="__main__":
 
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SAM+DAM for image segmentation and description")
-    parser.add_argument('--image_path', type=str,
-                        required=False, help='Path to the image file', default="rgb_final_test1.png")
-    parser.add_argument('--depth_path', type=str,
-                        required=False, help='Path to the depth image file', default="depth_final_test1.png")
     parser.add_argument(
-        '--query', type=str,
-        default="""<image>\nDescribe the masked region in detail. The first two words must define the object. Then use a comma and give the rest of the description. """, # The json sketch should be: {"type": "box_<box_id>", "value": "description"}
-        help='Prompt for the model')
-    parser.add_argument('--output_image_path', type=str, default=None,
-                        help='Path to save the output image with contour')
-    parser.add_argument('--normalized_coords', action='store_true',
-                        help='Interpret coordinates as normalized (0-1) values')
-    parser.add_argument('--no_stream', action='store_true',
-                        help='Disable streaming output')
+        "--image_path",
+        type=str,
+        required=False,
+        help="Path to the image file",
+        default="rgb_final_test1.png",
+    )
+    parser.add_argument(
+        "--depth_path",
+        type=str,
+        required=False,
+        help="Path to the depth image file",
+        default="depth_final_test1.png",
+    )
+    parser.add_argument(
+        "--query",
+        type=str,
+        default="""<image>\nDescribe the masked region in detail. The first two words must define the object. Then use a comma and give the rest of the description. """,  # The json sketch should be: {"type": "box_<box_id>", "value": "description"}
+        help="Prompt for the model",
+    )
+    parser.add_argument(
+        "--output_image_path",
+        type=str,
+        default=None,
+        help="Path to save the output image with contour",
+    )
+    parser.add_argument(
+        "--normalized_coords",
+        action="store_true",
+        help="Interpret coordinates as normalized (0-1) values",
+    )
+    parser.add_argument("--no_stream", action="store_true", help="Disable streaming output")
 
     args = parser.parse_args()
 
-
     ruta = "outputs"
     os.makedirs(ruta, exist_ok=True)
-    
+
     start_all = time.time()
     os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
     torch.cuda.empty_cache()
 
-    images = args.image_path.split(",") #["rgb_final_test1.png"]
-    depth_path = args.depth_path.split(",") #["depth_final_test1.png"]
+    images = args.image_path.split(",")  # ["rgb_final_test1.png"]
+    depth_path = args.depth_path.split(",")  # ["depth_final_test1.png"]
 
-    main(images,depth_path,args.query)
-    end_all=time.time()
+    main(images, depth_path, args.query)
+    end_all = time.time()
 
-    print(f"Total time image process: {end_all-start_all}s")
-
-
-
-
-
+    print(f"Total time image process: {end_all - start_all}s")
