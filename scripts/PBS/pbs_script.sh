@@ -11,7 +11,22 @@ echo "Job started on $(date)"
 module load Python/3.12.3-GCCcore-13.3.0
 module load CUDA/12.1.1
 
-source /home/i.delaossazarzuelo/venv12/bin/activate
-cd /home/i.delaossazarzuelo/PLANTORV
+if [ -d $HOME/PLANTORV ]; then
+    cd $HOME/PLANTORV
+elif [ -d $HOME/plantorv ]; then
+    cd $HOME/plantorv
+else
+    echo "Directory $HOME/{PLANTORV,plantorv} does not exist. Exiting."
+    exit 1
+fi
+
+if [ -d ./venv12 ]; then
+    source ./venv12/bin/activate
+elif [ -d ./venv ]; then
+    source ./venv/bin/activate
+else
+    echo "Virtual environment $HOME/{PLANTORV,plantorv}/{venv12,venv} does not exist. Exiting."
+    exit 1
+fi
+
 python3 -u samgpt.py
-# python3 clip.py
