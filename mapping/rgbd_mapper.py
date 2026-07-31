@@ -440,7 +440,7 @@ def main_coords(rgb_path: str, depth_path: str, dict_objects: dict) -> dict:
             cy,
             max(0, 1),
         )
-        # print(f"Object {mask_id}: depth={depth_mm} mm, src_uv={src_uv}")
+        # logger.debug(f"Object {mask_id}: depth={depth_mm} mm, src_uv={src_uv}")
         dict_objects[mask_id]["coord_center&depth"] = [cx, cy, depth_mm]
 
     return dict_objects
