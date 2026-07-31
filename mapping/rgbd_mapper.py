@@ -1,14 +1,23 @@
-from mapping.camera_model import CalibrationSet, AlignProfile, _HARDCODED_CALIBRATIONS, _HARDCODED_PROFILES, _undistort_pixels_to_normalized, _project_to_pixels
-
 from typing import Optional, Sequence, Tuple
 
-import numpy as np
 import cv2
+import numpy as np
+
+from mapping.camera_model import (
+    _HARDCODED_CALIBRATIONS,
+    _HARDCODED_PROFILES,
+    AlignProfile,
+    CalibrationSet,
+    _project_to_pixels,
+    _undistort_pixels_to_normalized,
+)
+
 
 class RGBDMapper:
     """Depth<->RGB utility built from hardcoded Femto Mega calibration data."""
 
-    def __init__(self, calibration: CalibrationSet, profile: Optional[AlignProfile] = None):
+    def __init__(self, calibration: CalibrationSet, profile: Optional[AlignProfile] = None) -> None:
+        """Initialize the RGBDMapper with calibration and optional alignment profile."""
         self.calibration = calibration
         self.profile = profile
 
@@ -19,6 +28,22 @@ class RGBDMapper:
         depth_size: Tuple[int, int],
         align_type_preference: Sequence[int] = (1, 2),
     ) -> "RGBDMapper":
+        """Create an RGBDMapper from hardcoded calibration data.
+
+        Parameters
+        ----------
+        color_size : Tuple[int, int]
+            The (width, height) of the color image.
+        depth_size : Tuple[int, int]
+            The (width, height) of the depth image.
+        align_type_preference : Sequence[int], optional
+            Preferred alignment types to search for in the hardcoded profiles. Default is (1, 2).
+
+        Returns
+        -------
+        RGBDMapper
+            An instance of RGBDMapper initialized with the matching calibration and profile.
+        """
         calibrations = _HARDCODED_CALIBRATIONS
         profiles = _HARDCODED_PROFILES
         cw, ch = color_size
@@ -65,15 +90,22 @@ class RGBDMapper:
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Project raw depth image into the RGB camera image plane.
 
-        Args:
-            depth_image: HxW depth array from depth sensor.
-            depth_unit_scale: Converts depth_image units to millimeters (mm).
-                Example: 1.0 if already in mm, 0.1 if each unit is 0.1 mm.
+        Parameters
+        ----------
+        depth_image : np.ndarray
+            HxW depth array from depth sensor.
+        depth_unit_scale : float, optional
+            Converts depth_image units to millimeters (mm).
+            Example: 1.0 if already in mm, 0.1 if each unit is 0.1 mm.
 
-        Returns:
-            aligned_depth_mm: Hc x Wc float32 depth image in millimeters, aligned to RGB.
-            src_u_map: Hc x Wc int32 map of source depth-u for each RGB pixel (-1 if invalid).
-            src_v_map: Hc x Wc int32 map of source depth-v for each RGB pixel (-1 if invalid).
+        Returns
+        -------
+        aligned_depth_mm : np.ndarray
+            Hc x Wc float32 depth image in millimeters, aligned to RGB.
+        src_u_map : np.ndarray
+            Hc x Wc int32 map of source depth-u for each RGB pixel (-1 if invalid).
+        src_v_map : np.ndarray
+            Hc x Wc int32 map of source depth-v for each RGB pixel (-1 if invalid).
         """
         c = self.calibration
         if depth_image.ndim != 2:
@@ -170,6 +202,22 @@ class RGBDMapper:
         depth_image: np.ndarray,
         depth_unit_scale: float = 1.0,
     ) -> np.ndarray:
+        """
+        Project raw depth image into the RGB camera image plane.
+
+        Parameters
+        ----------
+        depth_image : np.ndarray
+            HxW depth array from depth sensor.
+        depth_unit_scale : float, optional
+            Converts depth_image units to millimeters (mm).
+            Example: 1.0 if already in mm, 0.1 if each unit is 0.1 mm.
+
+        Returns
+        -------
+        aligned : np.ndarray
+            Hc x Wc float32 depth image in millimeters, aligned to RGB.
+        """
         aligned, _, _ = self.align_depth_to_color_with_correspondence(
             depth_image,
             depth_unit_scale=depth_unit_scale,
@@ -184,9 +232,29 @@ class RGBDMapper:
         depth_unit_scale: float = 1.0,
         neighborhood: int = 1,
     ) -> Optional[float]:
-        """Return depth in mm at RGB pixel after D2C reprojection.
+        """
+        Return depth in mm at RGB pixel after D2C reprojection.
 
         If exact pixel has no value, searches a small square neighborhood.
+
+        Parameters
+        ----------
+        depth_image : np.ndarray
+            HxW depth array from depth sensor.
+        rgb_u : int
+            The x-coordinate (column) in the RGB image.
+        rgb_v : int
+            The y-coordinate (row) in the RGB image.
+        depth_unit_scale : float, optional
+            Converts depth_image units to millimeters (mm).
+            Example: 1.0 if already in mm, 0.1 if each unit is 0.1 mm.
+        neighborhood : int, optional
+            The radius of the square neighborhood to search for a valid depth value if the exact pixel has no value. A value of 0 means no neighborhood search.
+
+        Returns
+        -------
+        Optional[float]
+            The depth in millimeters at the specified RGB pixel, or None if no valid depth is found within the specified neighborhood.
         """
         aligned = self.align_depth_to_color(depth_image, depth_unit_scale=depth_unit_scale)
 
@@ -221,6 +289,31 @@ def _find_depth_and_source(
     rgb_v: int,
     neighborhood: int,
 ) -> Tuple[Optional[float], Optional[Tuple[int, int]]]:
+    """
+    Find the depth in millimeters and the corresponding source depth pixel coordinates for a given RGB pixel.
+
+    Parameters
+    ----------
+    aligned_depth_mm : np.ndarray
+        Hc x Wc float32 depth image in millimeters, aligned to RGB.
+    src_u_map : np.ndarray
+        Hc x Wc int32 map of source depth-u for each RGB pixel (-1 if invalid).
+    src_v_map : np.ndarray
+        Hc x Wc int32 map of source depth-v for each RGB pixel (-1 if invalid).
+    rgb_u : int
+        The x-coordinate (column) in the RGB image.
+    rgb_v : int
+        The y-coordinate (row) in the RGB image.
+    neighborhood : int
+        The radius of the square neighborhood to search for a valid depth value if the exact pixel has no value. A value of 0 means no neighborhood search.
+
+    Returns
+    -------
+    Tuple[Optional[float], Optional[Tuple[int, int]]]
+        A tuple containing:
+        - The depth in millimeters at the specified RGB pixel, or None if no valid depth is found within the specified neighborhood.
+        - A tuple of (source_u, source_v) coordinates in the depth image corresponding to the found depth value, or None if no valid depth is found.
+    """
     h, w = aligned_depth_mm.shape
     if rgb_u < 0 or rgb_u >= w or rgb_v < 0 or rgb_v >= h:
         return None, None
@@ -258,6 +351,19 @@ def _find_depth_and_source(
 
 
 def _depth_to_colormap(depth_image: np.ndarray) -> np.ndarray:
+    """
+    Convert a single-channel depth image to a color-mapped image for visualization.
+
+    Parameters
+    ----------
+    depth_image : np.ndarray
+        HxW single-channel depth image.
+
+    Returns
+    -------
+    np.ndarray
+        HxWx3 color-mapped image suitable for visualization.
+    """
     if depth_image.ndim != 2:
         raise ValueError("Depth image for visualization must be single-channel")
 
@@ -275,10 +381,31 @@ def _depth_to_colormap(depth_image: np.ndarray) -> np.ndarray:
     return cv2.applyColorMap(vis, cv2.COLORMAP_JET)
 
 
-def main_coords(rgb_path, depth_path, dict_objects):
+def main_coords(rgb_path: str, depth_path: str, dict_objects: dict) -> dict:
+    """
+    Given the paths to an RGB image and a depth image, along with a dictionary of objects containing their bounding boxes, this function aligns the depth image to the RGB image and retrieves the depth information for each object's center pixel.
 
+    Parameters
+    ----------
+    rgb_path : str
+        The file path to the RGB image.
+    depth_path : str
+        The file path to the depth image.
+    dict_objects : dict
+        A dictionary where each key is an object identifier and each value is another dictionary containing at least a "bbox" key with the bounding box coordinates [x_min, y_min, width, height].
+
+    Returns
+    -------
+    dict
+        The input dictionary of objects, updated with an additional key "coord_center&depth" for each object, containing a list [center_x, center_y, depth_mm] representing the center pixel coordinates and the corresponding depth in millimeters.
+    """
     rgb = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
     depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)  # si es PNG de depth visual
+
+    if rgb is None:
+        raise FileNotFoundError(f"RGB image not found at path: {rgb_path}")
+    if depth is None:
+        raise FileNotFoundError(f"Depth image not found at path: {depth_path}")
 
     color_size = (rgb.shape[1], rgb.shape[0])
     depth_size = (depth.shape[1], depth.shape[0])

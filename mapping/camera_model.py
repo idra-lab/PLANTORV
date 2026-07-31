@@ -1,7 +1,7 @@
-from typing import List, Optional, Sequence, Tuple
 from dataclasses import dataclass
-import numpy as np
+from typing import List, Tuple
 
+import numpy as np
 
 """Depth Estimation"""
 
@@ -164,6 +164,23 @@ _HARDCODED_PROFILES: List[AlignProfile] = [
 def _distort_normalized(
     x: np.ndarray, y: np.ndarray, d: Distortion
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Apply distortion to normalized coordinates (x, y) using the provided distortion parameters.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        The x-coordinates in normalized space.
+    y : np.ndarray
+        The y-coordinates in normalized space.
+    d : Distortion
+        The distortion parameters to apply.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        The distorted x and y coordinates as a tuple of numpy arrays.
+    """
     r2 = x * x + y * y
     r4 = r2 * r2
     r6 = r4 * r2
@@ -182,6 +199,27 @@ def _undistort_pixels_to_normalized(
     dist: Distortion,
     iters: int = 8,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Convert pixel coordinates (u, v) to normalized coordinates (x, y) by applying the inverse of the distortion model.
+
+    Parameters
+    ----------
+    u : np.ndarray
+        The x-coordinates in pixel space.
+    v : np.ndarray
+        The y-coordinates in pixel space.
+    intr : Intrinsics
+        The camera intrinsic parameters.
+    dist : Distortion
+        The distortion parameters to apply.
+    iters : int, optional
+        The number of iterations for the fixed-point refinement (default is 8).
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        The undistorted x and y coordinates as a tuple of numpy arrays.
+    """
     xd = (u - intr.cx) / intr.fx
     yd = (v - intr.cy) / intr.fy
 
@@ -201,6 +239,25 @@ def _project_to_pixels(
     intr: Intrinsics,
     dist: Distortion,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Project normalized coordinates (x, y) to pixel coordinates (u, v) using the provided camera intrinsics and distortion parameters.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        The x-coordinates in normalized space.
+    y : np.ndarray
+        The y-coordinates in normalized space.
+    intr : Intrinsics
+        The camera intrinsic parameters.
+    dist : Distortion
+        The distortion parameters to apply.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        The projected x and y coordinates as a tuple of numpy arrays.
+    """
     xd, yd = _distort_normalized(x, y, dist)
     u = intr.fx * xd + intr.cx
     v = intr.fy * yd + intr.cy
