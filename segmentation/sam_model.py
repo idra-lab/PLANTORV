@@ -1,44 +1,115 @@
-from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
-from PIL import Image
-import numpy as np
-import cv2
-
-from skimage.morphology import erosion, dilation, remove_small_objects, disk
-from skimage import measure
-from skimage.measure import regionprops
 import time
+from typing import Any, List, Optional, Tuple, Union, cast
+
+import cv2
+import numpy as np
+from PIL import Image
+from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
+from skimage import measure
+from skimage.morphology import dilation, disk, erosion, remove_small_objects
 
 from utility.utility import logger
 
 
-"""SEGMENTATION"""
-
-
 class SAMModel:
+    """Perform segmentation using the Segment Anything Model (SAM)."""
+
     def __init__(
-        self, sam_checkpoint, model_type="vit_h", device="cuda", points_per_side=32
-    ):  # points_per_side=32
-        self.sam_checkpoint = sam_checkpoint
-        self.model_type = model_type
-        self.device = device
+        self,
+        sam_checkpoint: str,
+        model_type: str = "vit_h",
+        device: str = "cuda",
+        **sam_kwargs: Any,
+    ) -> None:
+        """Initialize the SAM mask generator.
+
+        Parameters
+        ----------
+        sam_checkpoint : str
+            Path to the SAM checkpoint.
+        model_type : str
+            SAM model type. Expected values are ``"vit_b"``, ``"vit_l"``, or
+            ``"vit_h"``.
+        device : str
+            Device used for inference. Common values are ``"cuda"`` and
+            ``"cpu"``. Default is ``"cuda"``.
+        sam_kwargs : dict
+            Additional keyword arguments for the SAM mask generator. For example,
+            ``points_per_side`` can be specified to control the number of points
+            sampled per side of the image. See the SAM documentation for more details.
+        """
         self.sam = sam_model_registry[model_type](sam_checkpoint)
         self.sam.to(device=device)
-        self.mask_generator = SamAutomaticMaskGenerator(self.sam, points_per_side=points_per_side)
 
-    def sam_mask_to_pil(self, mask_bool) -> Image.Image:
+        if "points_per_side" not in sam_kwargs:
+            sam_kwargs["points_per_side"] = 32  # Default value if not provided
+
+        self.mask_generator = SamAutomaticMaskGenerator(self.sam, **sam_kwargs)
+
+    def sam_mask_to_pil(self, mask_bool: np.ndarray) -> Image.Image:
+        """Convert a SAM boolean mask to a grayscale PIL image.
+
+        Parameters
+        ----------
+        mask_bool : numpy.ndarray
+            Two-dimensional boolean SAM mask with shape ``(H, W)``.
+
+        Returns
+        -------
+        PIL.Image.Image
+            Grayscale mask image with pixel values ``0`` and ``255``.
+        """
         mask_uint8 = (mask_bool.astype(np.uint8)) * 255
         return Image.fromarray(mask_uint8)
 
-    def preprocess_mask(self, mask, rgb, f) -> np.ndarray:
+    def binary_mask_to_pil(self, mask_bin: np.ndarray) -> Image.Image:
+        """Convert a binary mask to a savable grayscale PIL image.
+
+        Parameters
+        ----------
+        mask_bin : numpy.ndarray
+            Binary mask with shape ``(H, W)`` or ``(H, W, 1)``. Values may be
+            ``0`` and ``1`` or ``0`` and ``255``.
+
+        Returns
+        -------
+        PIL.Image.Image
+            Two-dimensional grayscale mask image with values ``0`` and ``255``.
+
+        Raises
+        ------
+        ValueError
+            If ``mask_bin`` is a three-dimensional array with more than one
+            channel.
         """
-        This function is to preprocess the RGB image before applying SAM for the second time.
+        if mask_bin.ndim == 3:
+            if mask_bin.shape[2] != 1:
+                raise ValueError(f"Expected a single-channel mask, got shape {mask_bin.shape}")
+            mask_bin = mask_bin[:, :, 0]
+
+        mask_uint8 = (mask_bin > 0).astype(np.uint8) * 255
+        return Image.fromarray(mask_uint8)
+
+    def preprocess_mask(
+        self, mask: np.ndarray, rgb: Image.Image, f: Optional[Union[int, None]] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Preprocess the RGB image before applying SAM for the second time.
+
         This is done to obtain a better segmentation of the objects that we are looking for.
-        Inputs:
-        - mask: the mask that we want to apply over the RGB
-        - rgb: RGB image
-        - f: index of the image, used for saving the masked RGB for visualization.
-        Outputs:
-        - masked_rgb: the RGB image with the mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3)
+
+        Parameters
+        ----------
+        mask : numpy.ndarray
+            Binary mask to be applied over the RGB image.
+        rgb : PIL.Image.Image
+            RGB image.
+        f : int, optional
+            Index of the image, used for saving the masked RGB for visualization.
+
+        Returns
+        -------
+        numpy.ndarray
+            The RGB image with the mask applied. Output is a 3-channel uint8 image (H,W,3)
         - mask_bin: the binary mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask.
         """
         mask = mask.astype(np.uint8) * 255
@@ -46,48 +117,60 @@ class SAMModel:
         mask_blur = cv2.GaussianBlur(mask_bin * 255, (7, 7), 4)
         mask_blur = (mask_blur > 0).astype(np.uint8)
 
+        # Find groups of connected non-zero pixels in the mask and remove small objects
         label_image = measure.label(mask_blur)
-
         label_image = remove_small_objects(label_image, min_size=3500)
 
         label_image = erosion(label_image, disk(9))
         label_image = dilation(label_image, disk(3))
 
-        label_image = measure.label(label_image)
+        label_image = cast(np.ndarray, measure.label(label_image))
         mask_clean = (label_image > 0).astype(np.uint8) * 255
         mask_bin = (mask_clean > 0).astype(np.uint8)[..., None]
         mask_bin = 1 - mask_bin
-        masked_rgb = rgb * mask_bin
+        masked_rgb = np.asarray(rgb) * mask_bin
         ref_img = Image.fromarray(masked_rgb.astype("uint8"))
+        if f is not None:
+            ref_img.save(f"ppt_outputs/image{f + 1}/masked_rgb.png")
         return masked_rgb, mask_bin
 
-    def cropping_mask(self, masks, rgb, alpha=1.4, beta=25):
-        """
-        This funciton is defined to crop and improve the masks out of the first filter.
-        Inputs:
-        - masks: filtered masks. #Three channels (1920,1080,3)
-        - rgb: rgb image.
-        - alpha: contrast factor for improving the visualization of rgb
-        - beta: brightness factor
-        Outputs:
-        - mask_crop: cropped mask
-        - rgb_crop: cropped rgb
-        """
+    def cropping_mask(
+        self, masks: np.ndarray, rgb: np.ndarray, alpha: float = 1.4, beta: float = 25
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Crop a mask and matching RGB region, then upscale and sharpen it.
 
+        Parameters
+        ----------
+        masks : numpy.ndarray or PIL.Image.Image
+            Binary mask used to find the crop bounds.
+        rgb : numpy.ndarray or PIL.Image.Image
+            RGB image from which the matching crop is extracted.
+        alpha : float, optional
+            Contrast multiplier passed to ``cv2.convertScaleAbs``.
+        beta : float, optional
+            Brightness offset passed to ``cv2.convertScaleAbs``.
+
+        Returns
+        -------
+        mask_crop : numpy.ndarray
+            Cropped and upscaled binary mask with values ``0`` and ``255``.
+        rgb_crop : numpy.ndarray
+            Cropped, upscaled, contrast-adjusted, and sharpened RGB image.
+        """
         masks = np.array(masks)
         mask = masks.astype(np.uint8) * 255
         mask_bin = (mask > 0).astype(np.uint8)
         mask_blur = cv2.GaussianBlur(mask_bin * 255, (7, 7), 4)
         mask_blur = (mask_blur > 0).astype(np.uint8)
 
-        label_image = measure.label(mask_blur)
-
-        label_image = remove_small_objects(label_image, min_size=3500)
+        label_image = cast(np.ndarray, measure.label(mask_blur))
+        # Convert label_image to a binary mask and remove small objects
+        label_image = remove_small_objects((label_image > 0), min_size=3500)
 
         label_image = erosion(label_image, disk(9))
         label_image = dilation(label_image, disk(3))
 
-        label_image = measure.label(label_image)
+        label_image = cast(np.ndarray, measure.label(label_image))
         mask_clean = (label_image > 0).astype(np.uint8) * 255
         masks = (mask_clean > 0).astype(np.uint8)
 
@@ -110,16 +193,33 @@ class SAMModel:
 
         return mask_crop, rgb_crop
 
-    def obtain_bg(self, image, idx):
-        """
-        This function is defined to obtain the background mask of the image.
-        It applies SAM over the original RGB image and then filters the masks obtained by area.
-        Inputs:
-        - image: the original RGB image.
-        - idx: index of the image, used for saving the masked RGB for visualization.
-        Outputs:
-        - masked_rgb: the RGB image with the background mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3)
-        - mask_bin: the binary background mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask.
+    def obtain_bg(
+        self, image: str, idx: int, save_dir: Optional[str] = None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Remove the coarse SAM background region from an RGB image.
+
+        The method generates SAM masks on the full image, keeps masks whose
+        area is at least 15 percent of the image, unions them, cleans the union,
+        inverts the result, and applies that keep-mask to the RGB image.
+
+        Parameters
+        ----------
+        image_path : str
+            Path to the RGB image.
+        idx : int
+            Image index used when saving ``masked_rgb{idx}.png`` and
+            ``mask_bin{idx}.png``.
+        save_dir : str or None
+            Directory where the output images will be saved if not None.
+
+        Returns
+        -------
+        masked_rgb : numpy.ndarray
+            RGB image after applying the inverted keep-mask, with shape
+            ``(H, W, 3)``.
+        mask_bin : numpy.ndarray
+            Inverted binary keep-mask with shape ``(H, W, 1)`` and values
+            ``0`` and ``1``.
         """
         start = time.time()
         image_read = Image.open(image)
@@ -150,22 +250,33 @@ class SAMModel:
 
         masked_rgb, mask_bin = self.preprocess_mask(union_mask, image_read, idx)
         end = time.time()
+
+        if save_dir is not None:
+            logger.debug(
+                f"Saving applied background mask for image {idx} as {save_dir}/figure_{idx}_masked_rgb.png"
+            )
+            Image.fromarray(masked_rgb).save(f"{save_dir}/figure_{idx}_masked_rgb.png")
+
+        if save_dir is not None:
+            logger.debug(
+                f"Saving the binary background mask for image {idx} as {save_dir}/figure_{idx}_mask_bin.png"
+            )
+
         logger.debug(f"BG mask obtained in {end - start}s")
+
         return masked_rgb, mask_bin
 
     def filter_masks_by_iou(
         self,
-        masks,
-        index,
-        robot_id,
-        iou_threshold=0.01,
-        iou_2objectthreshold=0.4,
-        iou_maxthreshold=0.6,
-        iou_robot_threshold=0.95,
-    ):
-        """
-        Erases the redundant masks: if a mask is almost contained in another, the smaller one is removed.
-        """
+        masks: List[np.ndarray],
+        index: List[int],
+        robot_id: List[int],
+        iou_threshold: float = 0.01,
+        iou_2objectthreshold: float = 0.4,
+        iou_maxthreshold: float = 0.6,
+        iou_robot_threshold: float = 0.95,
+    ) -> List[int]:
+        """Erase the redundant masks: if a mask is almost contained in another, the smaller one is removed."""
         keep = []
         removed = set()
 
@@ -222,19 +333,38 @@ class SAMModel:
 
         return keep
 
-    def individual_mask(self, mask_bin, mask_rgb, rgb, idx):
-        """
-        This function is defined to obtain the individual masks of the objects that we are looking for.
-        It applies SAM over the masked RGB image and then filters the masks obtained by area and IoU with the original mask.
-        Inputs:
-        - mask_bin: the binary mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask.
-        - mask_rgb: the RGB image with the mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3)
-        - rgb: the original RGB image.
-        - idx: index of the image, used for saving the masked RGB for visualization.
-        Outputs:
-        - rgb_crop: the cropped RGB image of the object. Numpy array. Output is a 3-channel uint8 image (H',W',3) where H' and W' are the height and width of the cropped image.
-        - bboxes: the bounding boxes of the objects. Numpy array. Output is a Nx4 array where N is the number of objects and each row is [x_min, y_min, width, height].
-        - masks_path: the paths of the masks obtained. List of strings. Output is a list of length N where each element is the path of the mask obtained for each object.
+    def individual_mask(
+        self,
+        mask_bin: np.ndarray,
+        mask_rgb: np.ndarray,
+        rgb_path: str,
+        idx: int,
+        save_dir: Union[str, None] = None,
+    ) -> tuple[list[np.ndarray], list[list[int]], list[str]]:
+        """Generate and filter individual object masks inside the kept region.
+
+        Parameters
+        ----------
+        mask_bin : numpy.ndarray
+            Inverted binary keep-mask with shape ``(H, W, 1)``.
+        mask_rgb : numpy.ndarray
+            RGB image produced by :meth:`remove_bg`, with shape ``(H, W, 3)``.
+        rgb_path : str
+            Path to the original RGB image.
+        idx : int
+            Image index used in saved crop names.
+        save_dir : str or None
+            Directory where the output images will be saved if not None.
+
+        Returns
+        -------
+        rgb_masks : list[numpy.ndarray]
+            Cropped RGB images for accepted object masks.
+        bboxes : numpy.ndarray
+            Bounding boxes for accepted masks. Each row is
+            ``[x_min, y_min, width, height]``.
+        masks_path : list[str]
+            Paths where accepted cropped object images were saved.
         """
         start = time.time()
         H, W = mask_rgb.shape[:2]
@@ -245,7 +375,7 @@ class SAMModel:
 
         keep = []
         robot_id = []
-        rgb = Image.open(rgb)
+        rgb = np.asarray(Image.open(rgb_path))
         mask_bin = mask_bin[..., 0]
 
         for m in masks_sam:
@@ -255,6 +385,7 @@ class SAMModel:
         for i, masked in enumerate(all_masks):
             masked = self.sam_mask_to_pil(masked)
             masked = masked.resize((W, H))
+            masked = np.asarray(masked)
 
             intersection = np.logical_and(masked, mask_bin)
             union = np.logical_or(masked, mask_bin)
