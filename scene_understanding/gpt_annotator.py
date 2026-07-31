@@ -1,23 +1,70 @@
-from openai import AzureOpenAI
-import mimetypes
 import base64
-from pathlib import Path
 import json
+import mimetypes
+from pathlib import Path
 
+from openai import AzureOpenAI
+
+from utility.utility import logger
 
 """GPT Model for tagging and description"""
 
 
 class GPTAnnotator:
-    def __init__(self, endpoint, model_name, deployment, subscription_key, api_version):
+    def __init__(
+        self,
+        endpoint: str,
+        model_name: str,
+        deployment: str,
+        subscription_key: str,
+        api_version: str,
+        max_completion_tokens: int = 16384,
+    ) -> None:
+        """
+        Initialize the GPTAnnotator with Azure OpenAI client.
+
+        Parameters
+        ----------
+        endpoint : str
+            The Azure OpenAI endpoint URL.
+        model_name : str
+            The name of the GPT model to use.
+        deployment : str
+            The deployment name for the GPT model.
+        subscription_key : str
+            The subscription key for the Azure OpenAI service.
+        api_version : str
+            The API version for the Azure OpenAI service.
+        max_completion_tokens : int
+            The maximum number of tokens to generate in the completion. Default is 16384.
+        """
         self.client = AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
             api_key=subscription_key,
         )
         self.deployment = deployment
+        self.max_completion_tokens = max_completion_tokens
 
-    def encode_image_data_url(self, image_path) -> str:
+    def encode_image_data_url(self, image_path: Path) -> str:
+        """
+        Encode an image file as a base64 data URL.
+
+        Parameters
+        ----------
+        image_path : Path
+            The path to the image file to be encoded.
+
+        Returns
+        -------
+        str
+            A base64-encoded data URL representing the image.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the specified image file does not exist.
+        """
         if not image_path.exists():
             raise FileNotFoundError(f"Image file not found: {image_path}")
 
@@ -29,16 +76,25 @@ class GPTAnnotator:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         return f"data:{mime_type};base64,{encoded}"
 
-    def main_gpt(self, image, mask_path, bboxes):
+    def main_gpt(self, image: str, mask_path: list[Path], bboxes: list[list[int]]) -> dict:
         """
-        This function is defined to obtain the tagging and description of the objects that we are looking for.
+        Query GPT for the tag and description of the objects passed as inputs.
+
         It applies GPT over the original RGB image and the cropped images of the objects obtained with SAM, and then it returns a dictionary with the tagging and description of each object.
-        Inputs:
-            - image: the original RGB image. String. Path of the original RGB image.
-            - mask_path: the paths of the masks obtained. List of strings. Output is a list of length N where each element is the path of the mask obtained for each object.
-            - bboxes: the bounding boxes of the objects obtained by SAM.
-        Outputs:
-            - dict_outputs: the dictionary with the tagging and description of each object. Dictionary. Output is a dictionary where each key is the name of the object (for example, "mask_0") and each value is another dictionary with the following keys:
+
+        Parameters
+        ----------
+        image : str
+            The path of the original RGB image.
+        mask_path : list[Path]
+            The paths of the masks obtained.
+        bboxes : list[list[int]]
+            The bounding boxes of the objects obtained by SAM. Each bounding box is represented as a list of 4 integers [x_min, y_min, width, height].
+
+        Returns
+        -------
+        dict
+            A dictionary with the tagging and description of each object. Each key is the name of the object (for example, "mask_0") and each value is another dictionary with the following keys:
                 - "tag": the tag of the object obtained by GPT. String.
                 - "description": the description of the object obtained by GPT. String.
                 - "mask": the path of the mask obtained for the object. String.
@@ -94,22 +150,28 @@ class GPTAnnotator:
                             {"type": "text", "text": "Full image:"},
                             {
                                 "type": "image_url",
-                                "image_url": {"url": image_data_url},
-                                "detail": "auto",
+                                "image_url": {"url": image_data_url, "detail": "auto"},
                             },
                             {"type": "text", "text": "Cropped image:"},
-                            {"type": "image_url", "image_url": {"url": crop_url}, "detail": "auto"},
+                            {"type": "image_url", "image_url": {"url": crop_url, "detail": "auto"}},
                         ],
                     },
                 ],
-                max_completion_tokens=16384,
+                max_completion_tokens=self.max_completion_tokens,
                 model=self.deployment,
             )
             raw = response.choices[0].message.content
+            if raw is None:
+                logger.error(f"GPT response is None for mask_{p}. Setting default values.")
+                dict_outputs[f"mask_{p}"] = {
+                    "tag": "unknown",
+                    "description": "unknown",
+                    "full_object": False,
+                }
             try:
-                dict_outputs[f"mask_{p}"] = json.loads(raw)
+                dict_outputs[f"mask_{p}"] = json.loads(str(raw))
             except json.JSONDecodeError:
-                print(f"Error decoding JSON for mask_{p}: {raw}")
+                logger.error(f"Error decoding JSON for mask_{p}: {raw}")
                 dict_outputs[f"mask_{p}"] = {
                     "tag": "unknown",
                     "description": "unknown",
