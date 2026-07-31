@@ -12,6 +12,7 @@ dependencies = [
     "scikit-image",
     "ultralytics",
     "numpy",
+    "pandas",
     "opencv-python",
     "torch",
     "torchvision",

@@ -21,6 +21,10 @@
     "../final_fast_segmentation",
     "../segmentation/checkpoints"
   ],
+  // Same ../ caveat as above: venvPath is resolved against THIS file's
+  // directory, so ".." is the project root and "venv" names the dir inside it.
+  "venvPath": "..",
+  "venv": ".venv",
   "pythonVersion": "3.10",
   "typeCheckingMode": "standard",
   "reportMissingImports": "warning",

@@ -17,15 +17,19 @@ install-dev:
 	$(PIP) install -e ".[dev]"
 	$(PRE_COMMIT) install
 
+# Format the code in place.
 format:
 	$(RUFF) format .
 
+# Check that the code is formatted correctly, without changing it.
 format-check:
 	$(RUFF) format --check .
 
+# Lint the code for style and correctness issues.
 lint:
 	$(RUFF) check .
 
+# Typecheck the code for type errors.
 typecheck:
 	$(PYRIGHT)
 
