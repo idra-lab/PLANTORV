@@ -1,22 +1,54 @@
 #!/usr/bin/env python3
-import cv2
-import json
-import yaml
 import argparse
-import numpy as np
+import json
 from pathlib import Path
+from typing import Optional, Sequence, Union
+
+import cv2
+import numpy as np
+import yaml
+
+from utility.utility import logger
 
 
-def load_camera_calibration(path):
+def load_camera_calibration(path: Union[str, Path]) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Load camera calibration parameters from a YAML file.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the YAML file containing camera calibration parameters.
+
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        A tuple containing the camera matrix (K) and distortion coefficients (dist).
+    """
     with open(path, "r") as f:
         data = yaml.safe_load(f)
     K = np.array(data["camera_matrix"], dtype=np.float64)
     dist = np.array(data["dist_coeffs"], dtype=np.float64).reshape(-1, 1)
-    # print(f"Loaded camera calibration from {path}:")
+    # logger.debug(f"Loaded camera calibration from {path}:")
     return K, dist
 
 
-def rvec_tvec_to_matrix(rvec, tvec):
+def rvec_tvec_to_matrix(rvec: np.ndarray, tvec: np.ndarray) -> np.ndarray:
+    """
+    Convert rotation vector and translation vector to a 4x4 transformation matrix.
+
+    Parameters
+    ----------
+    rvec : np.ndarray
+        Rotation vector (3x1).
+    tvec : np.ndarray
+        Translation vector (3x1).
+
+    Returns
+    -------
+    np.ndarray
+        4x4 transformation matrix representing the pose.
+    """
     R, _ = cv2.Rodrigues(rvec)
     T = np.eye(4)
     T[:3, :3] = R
@@ -24,11 +56,37 @@ def rvec_tvec_to_matrix(rvec, tvec):
     return T
 
 
-def matrix_to_list(T):
+def matrix_to_list(T: np.ndarray) -> list[list[float]]:
+    """
+    Convert a 4x4 transformation matrix to a list of lists for JSON serialization.
+
+    Parameters
+    ----------
+    T : np.ndarray
+        4x4 transformation matrix.
+
+    Returns
+    -------
+    list[list[float]]
+        List of lists representing the transformation matrix.
+    """
     return [[float(v) for v in row] for row in T]
 
 
-def invert_transform(T):
+def invert_transform(T: np.ndarray) -> np.ndarray:
+    """
+    Invert a 4x4 transformation matrix.
+
+    Parameters
+    ----------
+    T : np.ndarray
+        4x4 transformation matrix to be inverted.
+
+    Returns
+    -------
+    np.ndarray
+        Inverted 4x4 transformation matrix.
+    """
     R = T[:3, :3]
     t = T[:3, 3]
     T_inv = np.eye(4)
@@ -37,8 +95,10 @@ def invert_transform(T):
     return T_inv
 
 
-def load_marker_config(path):
+def load_marker_config(path: Union[str, Path]) -> dict:
     """
+    Load marker configuration from a YAML file.
+
     Example config:
     world_marker_id: 0
     marker_size_m: 0.04
@@ -65,13 +125,53 @@ def load_marker_config(path):
          [0,1,0,0],
          [0,0,1,0],
          [0,0,0,1]]
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the YAML file containing marker configuration.
+
+    Returns
+    -------
+    dict
+        Dictionary containing the marker configuration.
     """
-    # print(f"Loaded marker config from {path}")
+    # logger.debug(f"Loaded marker config from {path}")
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
 
-def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_250"):
+def detect_aruco_poses(
+    image: np.ndarray,
+    K: np.ndarray,
+    dist: np.ndarray,
+    marker_size_m: float,
+    dictionary_name: str = "DICT_6X6_250",
+) -> tuple[dict, Sequence[np.ndarray], Optional[np.ndarray]]:
+    """
+    Detect ArUco markers in the given image and estimate their poses.
+
+    Parameters
+    ----------
+    image : np.ndarray
+        Input image in which to detect ArUco markers.
+    K : np.ndarray
+        Camera intrinsic matrix.
+    dist : np.ndarray
+        Distortion coefficients.
+    marker_size_m : float
+        Size of the ArUco marker in meters.
+    dictionary_name : str, optional
+        Name of the predefined ArUco dictionary to use (default is "DICT_6X6_250").
+
+    Returns
+    -------
+    tuple[dict, np.ndarray, np.ndarray]
+        A tuple containing:
+        - detections: A dictionary mapping marker IDs to their detection data, including corners, rotation vector, translation vector, and transformation matrix.
+        - corners: Detected marker corners in the image.
+        - ids: Detected marker IDs.
+    """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     aruco_dict_id = getattr(cv2.aruco, dictionary_name)
     aruco_dict = cv2.aruco.getPredefinedDictionary(aruco_dict_id)
@@ -101,7 +201,7 @@ def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_
         )
 
         if not ok:
-            print(" [WARN] solvePnP failed for marker ID {marker_id}")
+            logger.warning(f" [WARN] solvePnP failed for marker ID {marker_id}")
             continue
         cv2.drawFrameAxes(image, K, dist, rvec, tvec, 0.1)
         T_camera_tag = rvec_tvec_to_matrix(rvec, tvec)
@@ -120,13 +220,8 @@ def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_
             projected_point, _ = cv2.projectPoints(
                 object_point.reshape(1, 1, 3), rvec, tvec, K, dist
             )
-            print(
-                "Object Point:",
-                object_point,
-                "Image Point:",
-                image_point,
-                "Projected Point:",
-                projected_point.flatten(),
+            logger.info(
+                f"Object Point: {object_point}, Image Point: {image_point}, Projected Point: {projected_point.flatten()}"
             )
             cv2.circle(image, tuple(projected_point.reshape(2).astype(int)), 5, (0, 0, 255), -1)
             cv2.circle(image, tuple(image_point.astype(int)), 5, (255, 0, 0), -1)
@@ -136,7 +231,40 @@ def detect_aruco_poses(image, K, dist, marker_size_m, dictionary_name="DICT_6X6_
     return detections, corners, ids
 
 
-def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config, idx):
+def annotate_pair(
+    clean_image_path: Path,
+    tag_image_path: Path,
+    output_path: Path,
+    K: np.ndarray,
+    dist: np.ndarray,
+    config: dict,
+    idx: int,
+) -> dict:
+    """
+    Annotate a pair of clean and tag images with detected ArUco markers and their poses.
+
+    Parameters
+    ----------
+    clean_image_path : Path
+        Path to the clean image.
+    tag_image_path : Path
+        Path to the tag image.
+    output_path : Path
+        Path to the output directory where the annotation will be saved.
+    K : np.ndarray
+        Camera intrinsic matrix.
+    dist : np.ndarray
+        Distortion coefficients.
+    config : dict
+        Configuration dictionary containing marker information.
+    idx : int
+        Index of the image pair being processed.
+
+    Returns
+    -------
+    dict
+        A dictionary containing the annotation data for the image pair.
+    """
     clean_image = cv2.imread(str(clean_image_path))
     tag_image = cv2.imread(str(tag_image_path))
     if clean_image is None:
@@ -150,24 +278,24 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
     if world_marker_id not in detections:
         raise RuntimeError(f"World marker {world_marker_id} not detected in {tag_image_path}")
     T_camera_world = detections[world_marker_id]["T_camera_tag"]
-    print("T_camera_world:\n", T_camera_world)
+    logger.debug(f"T_camera_world:\n{T_camera_world}")
     T_world_camera = invert_transform(T_camera_world)
     objects_out = []
     for marker_id_str, obj_cfg in config.get("objects", {}).items():
         marker_id = int(marker_id_str)
         if marker_id not in detections:
-            print(
-                f"[WARN] Object marker {marker_id} not detected, skipping object '{obj_cfg['name']}'"
+            logger.warning(
+                f"Object marker {marker_id} not detected, skipping object '{obj_cfg['name']}'"
             )
             continue
         T_camera_tag = detections[marker_id]["T_camera_tag"]
-        print("T_camera_tag:\n", T_camera_tag)
+        logger.debug(f"T_camera_tag:\n{T_camera_tag}")
         T_world_tag = T_world_camera @ T_camera_tag
         T_object_tag = np.array(obj_cfg.get("T_object_tag", np.eye(4)), dtype=np.float64)
         T_tag_object = invert_transform(T_object_tag)
         T_world_object = T_world_tag @ T_tag_object
         T_m = T_camera_world @ T_world_object
-        print(f"{marker_id} T_m Z =", T_m[2, 3] * 1000)
+        logger.info(f"{marker_id} T_m Z =", T_m[2, 3] * 1000)
         corners_px = np.array(detections[marker_id]["corners_px"], dtype=np.float32)
         x_min, y_min = corners_px.min(axis=0)
         x_max, y_max = corners_px.max(axis=0)
@@ -188,7 +316,7 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
             }
         )
 
-    print(f"Detected {len(objects_out)} objects in {tag_image_path.name}")
+    logger.info(f"Detected {len(objects_out)} objects in {tag_image_path.name}")
     robot_out = None
     if "robot" in config:
         robot_marker_id = int(config["robot"]["base_marker_id"])
@@ -205,9 +333,11 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
                 "T_world_tag": matrix_to_list(T_world_tag),
             }
         else:
-            print(f"[WARN] Robot marker {robot_marker_id} not detected, skipping robot annotation")
-    print(str(clean_image_path.name))
-    print(str(tag_image_path.name))
+            logger.warning(
+                f"Robot marker {robot_marker_id} not detected, skipping robot annotation"
+            )
+    logger.info(str(clean_image_path.name))
+    logger.info(str(tag_image_path.name))
 
     annotation = {
         "clean_image": str(clean_image_path.name),
@@ -217,7 +347,7 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
         "objects": objects_out,
         "robot": robot_out,
     }
-    print(f"Saving annotation to {output_path}")
+    logger.info(f"Saving annotation to {output_path}")
     output_pathjson = Path(output_path) / f"aruco_pos_img{idx + 1}.json"
     output_pathjson.parent.mkdir(parents=True, exist_ok=True)
     with open(output_pathjson, "w") as f:
@@ -236,7 +366,8 @@ def annotate_pair(clean_image_path, tag_image_path, output_path, K, dist, config
     return annotation
 
 
-def main():
+def main() -> None:
+    """Parse command-line arguments and process image pairs for ArUco marker detection and annotation."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--clean_dir", required=True)
     parser.add_argument("--tag_dir", required=True)
@@ -254,7 +385,7 @@ def main():
     clean_images = sorted(
         clean_dir.glob(f"*{args.clean_suffix}"), key=lambda x: int(x.stem.split("_")[-1])
     )
-    print(
+    logger.info(
         f"Found {len(clean_images)} clean images in {clean_dir} with suffix '{args.clean_suffix}'"
     )
     for i, clean_path in enumerate(clean_images):
@@ -262,13 +393,13 @@ def main():
         tag_path = tag_dir / f"{stem}{args.tag_suffix}"
         out_path = out_dir / f"{stem}"
         if not tag_path.exists():
-            print(f"[WARN] Missing tag image for {clean_path.name}")
+            logger.warning(f"Missing tag image for {clean_path.name}")
             continue
         try:
             annotate_pair(clean_path, tag_path, out_path, K, dist, config, i)
-            print(f"[OK] {clean_path.name} -> {out_path.name}")
+            logger.info(f"{clean_path.name} -> {out_path.name}")
         except Exception as e:
-            print(f"[ERROR] {clean_path.name}: {e}")
+            logger.error(f"{clean_path.name}: {e}")
 
 
 if __name__ == "__main__":
