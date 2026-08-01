@@ -1,11 +1,26 @@
+import json
+
 import numpy as np
 import pandas as pd
-import json
-from matching import normalize_name, IGNORE_LABELS
+from matching import IGNORE_LABELS, normalize_name
 
 
-def compute_global_metrics(df):
+def compute_global_metrics(df: pd.DataFrame) -> dict:
+    """
+    Compute global metrics from the DataFrame containing matching results.
 
+    The metrics include the number of measurements, number of matched objects, matched rate, mean error, median error, RMSE, standard deviation of error, minimum and maximum errors, and success rates for different pixel thresholds.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        A DataFrame containing the matching results, including pixel errors and other relevant information.
+
+    Returns
+    -------
+    dict
+        A dictionary containing the computed global metrics.
+    """
     errors = df["error_px"]
     matched = df["matched"].sum()
     matched_rate = 100 * matched / len(df)
@@ -24,8 +39,20 @@ def compute_global_metrics(df):
     }
 
 
-def object_statistics(df):
+def object_statistics(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute statistics for each object based on the matching results DataFrame.
 
+    Parameters
+    ----------
+    df : pd.DataFrame
+        A DataFrame containing the matching results, including pixel errors and other relevant information.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame containing the computed statistics for each object, including mean error, standard deviation of error, maximum error, and count of measurements.
+    """
     return (
         df.groupby("aruco_name")
         .agg(
@@ -38,8 +65,20 @@ def object_statistics(df):
     )
 
 
-def image_statistics(df):
+def image_statistics(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute statistics for each image based on the matching results DataFrame.
 
+    Parameters
+    ----------
+    df : pd.DataFrame
+        A DataFrame containing the matching results, including pixel errors and other relevant information.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame containing the computed statistics for each image, including mean error, standard deviation of error, maximum error, and count of measurements.
+    """
     return (
         df.groupby("image")
         .agg(
@@ -52,22 +91,43 @@ def image_statistics(df):
     )
 
 
-def save_summary(summary, path):
+def save_summary(summary: dict, path: str) -> None:
+    """
+    Save the summary dictionary to a JSON file at the specified path.
 
+    Parameters
+    ----------
+    summary : dict
+        A dictionary containing the summary metrics to be saved.
+    path : str
+        The file path where the summary JSON file will be saved.
+    """
     with open(path, "w") as f:
         json.dump(summary, f, indent=2)
 
 
-def compute_detection_metrics(seg_data, aruco_data):
+def compute_detection_metrics(seg_data: dict, aruco_data: dict) -> dict:
+    """
+    Compute detection metrics based on the segmentation data and ArUco data.
 
+    Parameters
+    ----------
+    seg_data : dict
+        The segmentation data containing object information and their corresponding bounding boxes.
+    aruco_data : dict
+        The ArUco data containing the camera pose and object transformations.
+
+    Returns
+    -------
+    dict
+        A dictionary containing the computed detection metrics, including the number of ground truth objects, detected ground truth objects, missed ground truth objects, extra objects, and recall.
+    """
     aruco_names = set(normalize_name(obj["name"]) for obj in aruco_data["objects"])
 
     seg_names = set(normalize_name(obj["tag"]) for obj in seg_data.values())
-
     seg_names = {x for x in seg_names if x not in IGNORE_LABELS}
 
     detected_gt = seg_names & aruco_names
-
     missed_gt = aruco_names - seg_names
 
     extra_objects = seg_names - aruco_names

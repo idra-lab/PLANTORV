@@ -1,19 +1,24 @@
 import numpy as np
 import pandas as pd
+from matching import IGNORE_LABELS, normalize_name
 
-from matching import normalize_name, IGNORE_LABELS
 
-
-def extract_aruco_depth_mm(aruco_data, obj):
+def extract_aruco_depth_mm(aruco_data: dict, obj: dict) -> float:
     """
-    Computes object depth from:
+    Compute object depth from: (T_camera_world, T_world_object) and return depth in mm.
 
-    T_camera_world
-    T_world_object
+    Parameters
+    ----------
+    aruco_data : dict
+        The ArUco data containing the camera pose and object transformations.
+    obj : dict
+        The object data containing the transformation from world to object.
 
-    Returns depth in mm.
+    Returns
+    -------
+    float
+        The depth of the object in millimeters.
     """
-
     T_camera_world = np.array(aruco_data["world"]["T_camera_world"])
 
     T_world_object = np.array(obj["T_world_object"])
@@ -26,8 +31,22 @@ def extract_aruco_depth_mm(aruco_data, obj):
     return depth_mm
 
 
-def compute_depth_correlation(seg_data, aruco_data):
+def compute_depth_correlation(seg_data: dict, aruco_data: dict) -> tuple[pd.DataFrame, int]:
+    """
+    Compute the correlation between RGB-D depth and ArUco depth for each object in the segmentation data.
 
+    Parameters
+    ----------
+    seg_data : dict
+        The segmentation data containing object information and their corresponding depths.
+    aruco_data : dict
+        The ArUco data containing the camera pose and object transformations.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, int]
+        A tuple containing a DataFrame with the correlation results and the number of ignored objects due to invalid or missing depth information.
+    """
     aruco_lookup = {normalize_name(obj["name"]): obj for obj in aruco_data["objects"]}
 
     results = []

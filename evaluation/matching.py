@@ -1,10 +1,5 @@
 import numpy as np
 
-
-def bbox_center(bbox):
-    return (bbox[0] + bbox[2] / 2, bbox[1] + bbox[3] / 2)
-
-
 ALIASES = {
     "partial robotic arm": "Unknown Object",
     "robotic arm": ["robot base", "end effector"],
@@ -13,15 +8,58 @@ ALIASES = {
 IGNORE_LABELS = {"Unknown Object", "Unknown object", "unknown object"}
 
 
-def normalize_name(name):
+def bbox_center(bbox: tuple[float, float, float, float]) -> tuple[float, float]:
+    """
+    Calculate the center of a bounding box.
+
+    Parameters
+    ----------
+    bbox : tuple[float, float, float, float]
+        A tuple representing the bounding box in the format (x, y, width, height).
+
+    Returns
+    -------
+    tuple[float, float]
+        A tuple representing the center of the bounding box in the format (center_x, center_y).
+    """
+    return (bbox[0] + bbox[2] / 2, bbox[1] + bbox[3] / 2)
+
+
+def normalize_name(name: str) -> str:
+    """
+    Normalize the object name by converting it to lowercase, stripping whitespace, and applying any defined aliases.
+
+    Parameters
+    ----------
+    name : str
+        The original object name to be normalized.
+
+    Returns
+    -------
+    str
+        The normalized object name.
+    """
     name = name.lower().strip()
     return ALIASES.get(name, name)
 
 
-def match_objects(seg_data, aruco_data):
+def match_objects(seg_data: dict, aruco_data: dict) -> list[dict]:
+    """
+    Match objects from segmentation data to ArUco data based on normalized names and compute the pixel errors between their bounding box centers.
 
+    Parameters
+    ----------
+    seg_data : dict
+        The segmentation data containing object information and their corresponding bounding boxes.
+    aruco_data : dict
+        The ArUco data containing the camera pose and object transformations.
+
+    Returns
+    -------
+    list[dict]
+        A list of dictionaries containing the matching results, including pixel errors and other relevant information.
+    """
     aruco_objects = aruco_data["objects"]
-
     aruco_lookup = {normalize_name(obj["name"]): obj for obj in aruco_objects}
 
     results = []
