@@ -36,6 +36,7 @@ ENV/
 env/
 .env
 .env.*
+!.env.example
 
 # Editors and OS files
 .vscode/
@@ -68,6 +69,7 @@ Thumbs.db
 *.csv
 *.zip
 *.log*
+*_old*
 
 outputs_json_labeled/
 ppt_outputs/
