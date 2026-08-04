@@ -17,8 +17,12 @@ install-dev:
 	$(PIP) install -e ".[dev]"
 	$(PRE_COMMIT) install
 
-# Format the code in place.
+# Format the code in place. `ruff format` does NOT sort imports, so the fixable
+# lint pass (which includes isort's "I" rules) has to run first - otherwise
+# import order only ever gets corrected by the pre-commit hook, which then fails
+# the commit with "files were modified by this hook" and forces a re-stage.
 format:
+	$(RUFF) check --fix .
 	$(RUFF) format .
 
 # Check that the code is formatted correctly, without changing it.
