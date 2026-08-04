@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union, cast
 
 import cv2
@@ -8,10 +9,11 @@ from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 from skimage import measure
 from skimage.morphology import dilation, disk, erosion, remove_small_objects
 
+from segmentation.segmentation import SegmentationModel, binary_mask_to_pil, mask_to_pil
 from utility.utility import logger
 
 
-class SAMModel:
+class SAMModel(SegmentationModel):
     """Perform segmentation using the Segment Anything Model (SAM)."""
 
     def __init__(
@@ -19,6 +21,7 @@ class SAMModel:
         sam_checkpoint: str,
         model_type: str = "vit_h",
         device: str = "cuda",
+        save_dir: Optional[Union[str, Path]] = None,
         **sam_kwargs: Any,
     ) -> None:
         """Initialize the SAM mask generator.
@@ -33,11 +36,14 @@ class SAMModel:
         device : str
             Device used for inference. Common values are ``"cuda"`` and
             ``"cpu"``. Default is ``"cuda"``.
+        save_dir : str or Path or None
+            Directory where the output images will be saved if not None.
         sam_kwargs : dict
             Additional keyword arguments for the SAM mask generator. For example,
             ``points_per_side`` can be specified to control the number of points
             sampled per side of the image. See the SAM documentation for more details.
         """
+        super().__init__(save_dir=save_dir)
         self.sam = sam_model_registry[model_type](sam_checkpoint)
         self.sam.to(device=device)
 
@@ -46,51 +52,7 @@ class SAMModel:
 
         self.mask_generator = SamAutomaticMaskGenerator(self.sam, **sam_kwargs)
 
-    def sam_mask_to_pil(self, mask_bool: np.ndarray) -> Image.Image:
-        """Convert a SAM boolean mask to a grayscale PIL image.
-
-        Parameters
-        ----------
-        mask_bool : numpy.ndarray
-            Two-dimensional boolean SAM mask with shape ``(H, W)``.
-
-        Returns
-        -------
-        PIL.Image.Image
-            Grayscale mask image with pixel values ``0`` and ``255``.
-        """
-        mask_uint8 = (mask_bool.astype(np.uint8)) * 255
-        return Image.fromarray(mask_uint8)
-
-    def binary_mask_to_pil(self, mask_bin: np.ndarray) -> Image.Image:
-        """Convert a binary mask to a savable grayscale PIL image.
-
-        Parameters
-        ----------
-        mask_bin : numpy.ndarray
-            Binary mask with shape ``(H, W)`` or ``(H, W, 1)``. Values may be
-            ``0`` and ``1`` or ``0`` and ``255``.
-
-        Returns
-        -------
-        PIL.Image.Image
-            Two-dimensional grayscale mask image with values ``0`` and ``255``.
-
-        Raises
-        ------
-        ValueError
-            If ``mask_bin`` is a three-dimensional array with more than one
-            channel.
-        """
-        if mask_bin.ndim == 3:
-            if mask_bin.shape[2] != 1:
-                raise ValueError(f"Expected a single-channel mask, got shape {mask_bin.shape}")
-            mask_bin = mask_bin[:, :, 0]
-
-        mask_uint8 = (mask_bin > 0).astype(np.uint8) * 255
-        return Image.fromarray(mask_uint8)
-
-    def preprocess_mask(
+    def _preprocess_mask(
         self, mask: np.ndarray, rgb: Image.Image, f: Optional[Union[int, None]] = None
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Preprocess the RGB image before applying SAM for the second time.
@@ -134,7 +96,7 @@ class SAMModel:
             ref_img.save(f"ppt_outputs/image{f + 1}/masked_rgb.png")
         return masked_rgb, mask_bin
 
-    def cropping_mask(
+    def _cropping_mask(
         self, masks: np.ndarray, rgb: np.ndarray, alpha: float = 1.4, beta: float = 25
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Crop a mask and matching RGB region, then upscale and sharpen it.
@@ -194,7 +156,7 @@ class SAMModel:
         return mask_crop, rgb_crop
 
     def obtain_bg(
-        self, image: str, idx: int, save_dir: Optional[str] = None
+        self, image: Union[Image.Image, str, Path], idx: int = 0, **kwargs: Any
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Remove the coarse SAM background region from an RGB image.
 
@@ -209,8 +171,8 @@ class SAMModel:
         idx : int
             Image index used when saving ``masked_rgb{idx}.png`` and
             ``mask_bin{idx}.png``.
-        save_dir : str or None
-            Directory where the output images will be saved if not None.
+        kwargs : dict
+            Additional keyword arguments.
 
         Returns
         -------
@@ -220,11 +182,29 @@ class SAMModel:
         mask_bin : numpy.ndarray
             Inverted binary keep-mask with shape ``(H, W, 1)`` and values
             ``0`` and ``1``.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the specified image file does not exist.
+        TypeError
+            If the input image is not a file path, Path object, or PIL Image.
         """
         start = time.time()
-        image_read = Image.open(image)
-        image_np = np.array(image_read)
-        H, W, D = image_np.shape
+
+        # Instantiate the image
+        if isinstance(image, (str, Path)):
+            if not Path(image).exists():
+                raise FileNotFoundError(f"Image file not found: {image}")
+            image_file = Image.open(image)
+            image_np = np.array(image_file)
+        elif isinstance(image, Image.Image):
+            image_file = image
+            image_np = np.array(image)
+        else:
+            raise TypeError("Input image must be a file path, Path object, or PIL Image.")
+
+        H, W = image_np.shape[:2]
         masks_sam = self.mask_generator.generate(image_np)
         all_masks = []
         all_bboxes = []
@@ -234,7 +214,7 @@ class SAMModel:
             all_bboxes.append(m["bbox"])
 
         for i, mask in enumerate(all_masks):
-            masked = self.sam_mask_to_pil(mask)
+            masked = mask_to_pil(mask)
             masked = masked.resize((W, H))
             masked_np = np.array(masked)
             num_pixels = np.sum(masked_np > 0)
@@ -248,60 +228,55 @@ class SAMModel:
         for m in masks:
             union_mask |= m
 
-        masked_rgb, mask_bin = self.preprocess_mask(union_mask, image_read, idx)
+        masked_rgb, mask_bin = self._preprocess_mask(union_mask, image_file, idx)
         end = time.time()
 
-        if save_dir is not None:
+        if self.save_dir is not None:
             logger.debug(
-                f"Saving applied background mask for image {idx} as {save_dir}/figure_{idx}_masked_rgb.png"
+                f"Saving applied background mask for image {idx} as {self.save_dir}/figure_{idx}_bg_masked_rgb.png"
             )
-            Image.fromarray(masked_rgb).save(f"{save_dir}/figure_{idx}_masked_rgb.png")
-
-        if save_dir is not None:
+            Image.fromarray(masked_rgb).save(f"{self.save_dir}/figure_{idx}_bg_masked_rgb.png")
             logger.debug(
-                f"Saving the binary background mask for image {idx} as {save_dir}/figure_{idx}_mask_bin.png"
+                f"Saving binary mask for background for image {idx} as {self.save_dir}/figure_{idx}_bg_mask_bin.png"
             )
+            binary_mask_to_pil(mask_bin).save(f"{self.save_dir}/figure_{idx}_bg_mask_bin.png")
 
         logger.debug(f"BG mask obtained in {end - start}s")
 
         return masked_rgb, mask_bin
 
-    def filter_masks_by_iou(
+    def _filter_masks_by_iou(
         self,
-        masks: List[np.ndarray],
-        index: List[int],
-        robot_id: List[int],
+        numbered_masks: List[np.ndarray],
+        robot_ids: List[int],
         iou_threshold: float = 0.01,
         iou_2objectthreshold: float = 0.4,
         iou_maxthreshold: float = 0.6,
-        iou_robot_threshold: float = 0.95,
+        iou_robot_threshold: float = 0.01,
     ) -> List[int]:
         """Erase the redundant masks: if a mask is almost contained in another, the smaller one is removed."""
         keep = []
         removed = set()
 
-        n = len(masks)
+        n_masks = len(numbered_masks)
+        areas = [m[1].sum() for m in numbered_masks]
 
-        areas = [m.sum() for m in masks]
-
-        for i in range(n):
+        for i in range(n_masks):
             if i in removed:
                 continue
 
-            for j in range(i + 1, n):
+            for j in range(i + 1, n_masks):
                 if j in removed:
                     continue
 
-                inter = np.logical_and(masks[i], masks[j]).sum()
-                union = np.logical_or(masks[i], masks[j]).sum()
+                inter = np.logical_and(numbered_masks[i][1], numbered_masks[j][1]).sum()
+                union = np.logical_or(numbered_masks[i][1], numbered_masks[j][1]).sum()
                 iou = inter / union if union > 0 else 0
-                if i in robot_id:
-                    if (
-                        j in robot_id
-                    ):  # erase for more than one robot, erase this if. This filters extra masks for an unique robot
+                if i in robot_ids:
+                    if j in robot_ids:
                         if areas[i] > areas[j]:
                             removed.add(j)
-                    elif iou > iou_threshold:
+                    elif iou > iou_robot_threshold:
                         if areas[i] >= areas[j]:
                             removed.add(j)
                         else:
@@ -335,26 +310,24 @@ class SAMModel:
 
     def individual_mask(
         self,
-        mask_bin: np.ndarray,
-        mask_rgb: np.ndarray,
-        rgb_path: str,
-        idx: int,
-        save_dir: Union[str, None] = None,
+        image: Union[Image.Image, str, Path],
+        bg_mask_bin: np.ndarray = np.asarray([]),
+        bg_masked_rgb: np.ndarray = np.asarray([]),
+        idx: int = 0,
+        **kwargs: Any,
     ) -> tuple[list[np.ndarray], list[list[int]], list[str]]:
         """Generate and filter individual object masks inside the kept region.
 
         Parameters
         ----------
-        mask_bin : numpy.ndarray
+        bg_mask_bin : numpy.ndarray
             Inverted binary keep-mask with shape ``(H, W, 1)``.
-        mask_rgb : numpy.ndarray
+        bg_masked_rgb : numpy.ndarray
             RGB image produced by :meth:`remove_bg`, with shape ``(H, W, 3)``.
         rgb_path : str
             Path to the original RGB image.
         idx : int
             Image index used in saved crop names.
-        save_dir : str or None
-            Directory where the output images will be saved if not None.
 
         Returns
         -------
@@ -367,56 +340,65 @@ class SAMModel:
             Paths where accepted cropped object images were saved.
         """
         start = time.time()
-        H, W = mask_rgb.shape[:2]
-        masks_sam = self.mask_generator.generate(mask_rgb)
 
-        all_masks = []
-        all_bboxes = []
+        if isinstance(image, (str, Path)):
+            if not Path(image).exists():
+                raise FileNotFoundError(f"Image file not found: {image}")
+            rgb_path = Image.open(Path(image))
+        elif isinstance(image, Image.Image):
+            rgb_path = image
+        else:
+            raise TypeError(
+                f"Input image must be a file path, Path object, or PIL Image, got {type(image)}."
+            )
+        rgb = np.asarray(rgb_path)
 
-        keep = []
-        robot_id = []
-        rgb = np.asarray(Image.open(rgb_path))
-        mask_bin = mask_bin[..., 0]
+        H, W = bg_masked_rgb.shape[:2]
+        # Drop the last channel of bg_mask_bin if it has 3 channels
+        if bg_mask_bin.ndim == 3:
+            bg_mask_bin = bg_mask_bin[..., 0]
 
-        for m in masks_sam:
-            all_masks.append(m["segmentation"])
-            all_bboxes.append(m["bbox"])
+        masks_sam = self.mask_generator.generate(bg_masked_rgb)
 
-        for i, masked in enumerate(all_masks):
-            masked = self.sam_mask_to_pil(masked)
-            masked = masked.resize((W, H))
-            masked = np.asarray(masked)
+        numbered_masks = []
+        bboxes = []
+        robot_ids = []
 
-            intersection = np.logical_and(masked, mask_bin)
-            union = np.logical_or(masked, mask_bin)
+        for i in range(len(masks_sam)):
+            segment = mask_to_pil(masks_sam[i]["segmentation"])
+            segment = np.asarray(segment.resize((W, H)))
+
+            intersection = np.logical_and(segment, bg_mask_bin)
+            union = np.logical_or(segment, bg_mask_bin)
             iou = np.sum(intersection) / np.sum(union) if np.sum(union) > 0 else 0
             num_pixels = np.sum(intersection > 0)
             area_mask = num_pixels * 100 / (H * W)
-            if (0.35 < area_mask < 6.5 or area_mask > 10) and iou > 0.02:  # area min estaba 0.35
+            if (0.35 < area_mask < 6.5 or area_mask > 10) and iou > 0.02:
                 if area_mask > 10:
-                    robot_id.append(i)
-                keep.append(i)
+                    robot_ids.append(i)
+                numbered_masks.append((i, masks_sam[i]["segmentation"]))
+                bboxes.append(masks_sam[i]["bbox"])
 
-        masks = [(i, all_masks[i]) for i in keep]
-        bboxes = [all_bboxes[i] for i in keep]
-        masks_only = [m[1] for m in masks]
-        index = [m[0] for m in masks]
-        valid = self.filter_masks_by_iou(masks_only, index, robot_id, iou_threshold=0.01)
+        valid = self._filter_masks_by_iou(numbered_masks, robot_ids, iou_threshold=0.01)
 
-        masks_filtered = [masks[i] for i in valid]
+        masks_filtered = [numbered_masks[i] for i in valid]
         bboxes_filtered = [bboxes[i] for i in valid]
 
         rgb_masks = []
-        masks_path = []
+        segment_paths = []
 
-        for i, (orig_idx, masked) in enumerate(masks_filtered):
-            save_path = f"ppt_outputs/image{idx + 1}/crop_{orig_idx}.png"
-            masks_path.append(save_path)
-            mask_crop, rgb_crop = self.cropping_mask(masked, rgb)
+        for i, (orig_idx, segment) in enumerate(masks_filtered):
+            mask_crop, rgb_crop = self._cropping_mask(segment, rgb)
             rgb_masks.append(rgb_crop)
-            Image.fromarray(rgb_crop).save(save_path)
+
+            if self.save_dir is not None:
+                save_dir = Path(self.save_dir) / f"image_{idx + 1}"
+                save_dir.mkdir(parents=True, exist_ok=True)
+                save_path = save_dir / f"segment_{orig_idx}.png"
+                segment_paths.append(save_path)
+                Image.fromarray(rgb_crop).save(save_path)
 
         end = time.time()
         logger.debug(f"Individual masks obtained in {end - start}s")
 
-        return rgb_masks, bboxes_filtered, masks_path
+        return rgb_masks, bboxes_filtered, segment_paths

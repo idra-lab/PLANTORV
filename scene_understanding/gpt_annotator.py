@@ -1,9 +1,12 @@
 import base64
 import json
 import mimetypes
+from io import BytesIO
 from pathlib import Path
 
+import numpy as np
 from openai import AzureOpenAI
+from PIL import Image
 
 from utility.utility import logger
 
@@ -76,7 +79,28 @@ class GPTAnnotator:
         encoded = base64.b64encode(image_bytes).decode("ascii")
         return f"data:{mime_type};base64,{encoded}"
 
-    def main_gpt(self, image: str, mask_path: list[Path], bboxes: list[list[int]]) -> dict:
+    def encode_image_data_from_array(self, image_array: np.ndarray) -> str:
+        """
+        Encode a NumPy array representing an image as a base64 data URL.
+
+        Parameters
+        ----------
+        image_array : np.ndarray
+            The NumPy array representing the image to be encoded.
+
+        Returns
+        -------
+        str
+            A base64-encoded data URL representing the image.
+        """
+        image = Image.fromarray((image_array * 255).astype(np.uint8))
+        mime_type = "image/png"
+        with BytesIO() as buffer:
+            image.save(buffer, format="PNG")
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
+
+    def main_gpt(self, image: str, segments: list[np.ndarray], bboxes: list[list[int]]) -> dict:
         """
         Query GPT for the tag and description of the objects passed as inputs.
 
@@ -86,8 +110,8 @@ class GPTAnnotator:
         ----------
         image : str
             The path of the original RGB image.
-        mask_path : list[Path]
-            The paths of the masks obtained.
+        segments : list[np.ndarray]
+            The cropped images of the objects obtained with SAM.
         bboxes : list[list[int]]
             The bounding boxes of the objects obtained by SAM. Each bounding box is represented as a list of 4 integers [x_min, y_min, width, height].
 
@@ -135,8 +159,8 @@ class GPTAnnotator:
         "description": "string"
         }
         """
-        for p in range(len(mask_path)):
-            crop_url = self.encode_image_data_url(Path(mask_path[p]))
+        for p in range(len(segments)):
+            crop_url = self.encode_image_data_from_array(segments[p])
             response = self.client.chat.completions.create(
                 messages=[
                     {
@@ -177,7 +201,6 @@ class GPTAnnotator:
                     "description": "unknown",
                     "full_object": False,
                 }
-            dict_outputs[f"mask_{p}"]["mask"] = mask_path[p]
             dict_outputs[f"mask_{p}"]["bbox"] = bboxes[p]
 
         return dict_outputs
