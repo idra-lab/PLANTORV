@@ -45,7 +45,7 @@ class SegmentationModel(ABC):
     @abstractmethod
     def individual_mask(
         self, image: Union[Image.Image, str, Path], **kwargs: Any
-    ) -> tuple[list[np.ndarray], list[list[int]], list[str]]:
+    ) -> tuple[list[np.ndarray], list[list[int]]]:
         """
         Abstract method to generate and filter individual object masks inside the kept region.
 
@@ -58,8 +58,8 @@ class SegmentationModel(ABC):
 
         Returns
         -------
-        tuple[list[np.ndarray], list[list[int]], list[str]]:
-            A tuple containing the cropped RGB images for accepted object masks, their bounding boxes, and the paths where they were saved.
+        tuple[list[np.ndarray], list[list[int]]]:
+            A tuple containing the cropped RGB images for accepted object masks and their bounding boxes.
         """
         pass
 

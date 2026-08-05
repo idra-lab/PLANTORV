@@ -315,7 +315,7 @@ class SAMModel(SegmentationModel):
         bg_masked_rgb: np.ndarray = np.asarray([]),
         idx: int = 0,
         **kwargs: Any,
-    ) -> tuple[list[np.ndarray], list[list[int]], list[str]]:
+    ) -> tuple[list[np.ndarray], list[list[int]]]:
         """Generate and filter individual object masks inside the kept region.
 
         Parameters
@@ -336,8 +336,6 @@ class SAMModel(SegmentationModel):
         bboxes : numpy.ndarray
             Bounding boxes for accepted masks. Each row is
             ``[x_min, y_min, width, height]``.
-        masks_path : list[str]
-            Paths where accepted cropped object images were saved.
         """
         start = time.time()
 
@@ -385,20 +383,18 @@ class SAMModel(SegmentationModel):
         bboxes_filtered = [bboxes[i] for i in valid]
 
         rgb_masks = []
-        segment_paths = []
 
         for i, (orig_idx, segment) in enumerate(masks_filtered):
-            mask_crop, rgb_crop = self._cropping_mask(segment, rgb)
+            _, rgb_crop = self._cropping_mask(segment, rgb)
             rgb_masks.append(rgb_crop)
 
             if self.save_dir is not None:
                 save_dir = Path(self.save_dir) / f"image_{idx + 1}"
                 save_dir.mkdir(parents=True, exist_ok=True)
                 save_path = save_dir / f"segment_{orig_idx}.png"
-                segment_paths.append(save_path)
                 Image.fromarray(rgb_crop).save(save_path)
 
         end = time.time()
         logger.debug(f"Individual masks obtained in {end - start}s")
 
-        return rgb_masks, bboxes_filtered, segment_paths
+        return rgb_masks, bboxes_filtered

@@ -3,6 +3,7 @@ import json
 import mimetypes
 from io import BytesIO
 from pathlib import Path
+from typing import Union
 
 import numpy as np
 from openai import AzureOpenAI
@@ -100,7 +101,12 @@ class GPTAnnotator:
             encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
         return f"data:{mime_type};base64,{encoded}"
 
-    def main_gpt(self, image: str, segments: list[np.ndarray], bboxes: list[list[int]]) -> dict:
+    def main_gpt(
+        self,
+        image_path: Union[str, Path, Image.Image, np.ndarray],
+        segments: list[np.ndarray],
+        bboxes: list[list[int]],
+    ) -> dict:
         """
         Query GPT for the tag and description of the objects passed as inputs.
 
@@ -108,8 +114,8 @@ class GPTAnnotator:
 
         Parameters
         ----------
-        image : str
-            The path of the original RGB image.
+        image : Union[str, Path, Image.Image, np.ndarray]
+            The path of the original RGB image or the image itself.
         segments : list[np.ndarray]
             The cropped images of the objects obtained with SAM.
         bboxes : list[list[int]]
@@ -123,10 +129,24 @@ class GPTAnnotator:
                 - "description": the description of the object obtained by GPT. String.
                 - "mask": the path of the mask obtained for the object. String.
                 - "bbox": the bounding box of the object obtained by SAM. List of 4 integers [x_min, y_min, width, height].
+
+        Raises
+        ------
+        TypeError
+            If the image_path is not a string, Path, or PIL.Image.Image.
         """
-        image_path = Path(image)
-        image_data_url = self.encode_image_data_url(image_path)
+        if isinstance(image_path, str) or isinstance(image_path, Path):
+            if isinstance(image_path, str):
+                image_path = Path(image_path)
+            image_encoded = self.encode_image_data_url(image_path)
+        elif isinstance(image_path, Image.Image):
+            image_encoded = self.encode_image_data_from_array(np.array(image_path))
+        elif isinstance(image_path, np.ndarray):
+            image_encoded = self.encode_image_data_from_array(image_path)
+        else:
+            raise TypeError("image_path must be a str, Path, PIL.Image.Image, or np.ndarray")
         dict_outputs = {}
+
         # UNLABELED TEXT PROMPT
         # question_2 = """You will receive:
         # 1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image.
@@ -174,7 +194,7 @@ class GPTAnnotator:
                             {"type": "text", "text": "Full image:"},
                             {
                                 "type": "image_url",
-                                "image_url": {"url": image_data_url, "detail": "auto"},
+                                "image_url": {"url": image_encoded, "detail": "auto"},
                             },
                             {"type": "text", "text": "Cropped image:"},
                             {"type": "image_url", "image_url": {"url": crop_url, "detail": "auto"}},

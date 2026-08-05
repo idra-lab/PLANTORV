@@ -100,19 +100,19 @@ def main(args: argparse.Namespace) -> None:
         # Segment the image
         logger.debug("Starting segmentation...")
         masked_rgb, mask_bin = sam.obtain_bg(image, image_id)
-        rgb_masks, bboxes, masks_path = sam.individual_mask(image, mask_bin, masked_rgb, image_id)
+        rgb_masks, bboxes = sam.individual_mask(image, mask_bin, masked_rgb, image_id)
 
         # Annotate elements
         logger.debug("Starting GPT annotation...")
-        image_dict = gpt.main_gpt(str(image_path), rgb_masks, bboxes)
+        image_dict = gpt.main_gpt(image, rgb_masks, bboxes)
 
         # Map coordinates and depth
         logger.debug("Starting coordinate and depth mapping...")
-        image_dict = main_coords(str(image_path), str(depth_images[image_id]), image_dict)
+        image_dict = main_coords(image, str(depth_images[image_id]), image_dict)
 
         with open(f"{output_dir}/output_img{image_id + 1}.json", "w") as k:
             json.dump(image_dict, k, indent=4, default=np_array_to_list)
-        # break
+        break
 
 
 def parse_arguments() -> argparse.Namespace:
