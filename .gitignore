@@ -47,6 +47,7 @@ Thumbs.db
 # Logs and text files
 *.log
 *.txt
+!requirements.txt
 
 # Images
 *.png
