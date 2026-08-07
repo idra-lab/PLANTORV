@@ -110,12 +110,8 @@ class RGBDPointCloudGenerator:
                 interpolation=cv2.INTER_AREA,
             )
 
-        color_o3d = o3d.geometry.Image(
-            np.ascontiguousarray(color_rgb, dtype=np.uint8)
-        )
-        depth_o3d = o3d.geometry.Image(
-            np.ascontiguousarray(aligned_depth_mm, dtype=np.float32)
-        )
+        color_o3d = o3d.geometry.Image(np.ascontiguousarray(color_rgb, dtype=np.uint8))
+        depth_o3d = o3d.geometry.Image(np.ascontiguousarray(aligned_depth_mm, dtype=np.float32))
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
             color_o3d,
             depth_o3d,
@@ -151,13 +147,9 @@ class RGBDPointCloudGenerator:
         depth_size = (depth_raw.shape[1], depth_raw.shape[0])
 
         if color_size != self._color_size:
-            raise ValueError(
-                f"RGB frame size changed from {self._color_size} to {color_size}"
-            )
+            raise ValueError(f"RGB frame size changed from {self._color_size} to {color_size}")
         if depth_size != self._depth_size:
-            raise ValueError(
-                f"Depth frame size changed from {self._depth_size} to {depth_size}"
-            )
+            raise ValueError(f"Depth frame size changed from {self._depth_size} to {depth_size}")
 
 
 def create_aligned_point_cloud(

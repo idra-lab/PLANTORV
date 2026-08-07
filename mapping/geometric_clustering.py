@@ -45,9 +45,7 @@ def segment_planes_and_clusters(
         raise ValueError("min_plane_points must be >= 3 and dbscan_min_points >= 1")
 
     point_count = len(point_cloud.points)
-    valid_depth = (aligned_depth_mm > 0.0) & (
-        aligned_depth_mm < depth_trunc_m * 1000.0
-    )
+    valid_depth = (aligned_depth_mm > 0.0) & (aligned_depth_mm < depth_trunc_m * 1000.0)
     pixel_v, pixel_u = np.nonzero(valid_depth)
 
     if pixel_u.size != point_count:
