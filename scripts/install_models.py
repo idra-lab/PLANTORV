@@ -1,10 +1,25 @@
 #!/usr/bin/env python3
 """Download the model checkpoints used by the pipeline into ``models/``.
 
-The script only uses the standard library, so it can be run before
-``make install``. Downloads are resumable: an interrupted transfer leaves a
-``.part`` file next to the target and re-running the script continues from
-where it stopped.
+Covers SAM 1 (including MobileSAM) and SAM 2 / SAM 2.1, which
+``segmentation/sam_model.py`` drives through the same class, plus FastSAM, which
+is a YOLOv8-seg model rather than a SAM one and is not yet wired into the
+pipeline. Checkpoints are fetched from Ultralytics where they publish them, and
+from Meta otherwise.
+Ultralytics also downloads its own checkpoints on first use, so this script is
+mainly useful for two cases:
+
+- ``sam_h``, which Ultralytics does not publish at all. Meta's original weights
+  work fine, they just have to be saved under the name Ultralytics expects.
+- Pre-seeding ``models/`` before running somewhere without outbound network
+  access, such as the cluster jobs in ``scripts/PBS/``.
+
+Every checkpoint is saved under the name Ultralytics needs, because
+``segmentation/sam_model.py`` selects the architecture from the file name; see
+``SAM_CHECKPOINTS`` there for the full list. Meta distributes the same weights
+as ``.pth``; the extension is only a naming convention, so saving them as
+``.pt`` changes nothing about the contents.
+
 
 Examples
 --------
@@ -14,7 +29,7 @@ List what can be downloaded::
 
 Download one or more checkpoints by name::
 
-    python3 scripts/install_models.py sam_vit_h sam_vit_b
+    python3 scripts/install_models.py sam_h sam_b
 
 Download everything, or pick interactively when no name is given::
 
@@ -51,11 +66,12 @@ class Model:
     Attributes
     ----------
     key : str
-        Name used to select the model on the command line.
+        Name used to select the model on the command line. Identical to the
+        file name without its extension. For the SAM checkpoints this is also
+        what gets passed to ``SAMModel``.
     filename : str
-        Name the checkpoint is saved as. Kept identical to the upstream name,
-        because the code loading it (for example ``models/sam/sam_vit_h_4b8939.pth``
-        in ``samgpt.py``) refers to that exact file.
+        Name the checkpoint is saved as. This is the name Ultralytics needs to
+        recognise the architecture, not necessarily the upstream one.
     url : str
         Direct download URL.
     subdir : str
@@ -71,33 +87,86 @@ class Model:
     description: str
 
 
-SAM_BASE_URL = "https://dl.fbaipublicfiles.com/segment_anything"
+# Checkpoints Ultralytics publishes itself, on the release its own downloader
+# defaults to. These are the same weights Ultralytics would fetch on first use.
+ULTRALYTICS_BASE_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
+# Meta's original checkpoints, from https://github.com/facebookresearch/segment-anything.
+# Only needed for ViT-H, which Ultralytics does not publish in any release. The
+# weights are unchanged, they are just stored under the `.pt` name Ultralytics
+# matches on rather than Meta's `.pth` one.
+META_BASE_URL = "https://dl.fbaipublicfiles.com/segment_anything"
 
-# Checkpoints published on https://github.com/facebookresearch/segment-anything.
-# The `model_type` string SAMModel expects is the `vit_*` suffix of the key.
+# SAM 1. Sources are mixed, so these stay spelled out one by one.
 MODELS: dict[str, Model] = {
-    "sam_vit_h": Model(
-        key="sam_vit_h",
-        filename="sam_vit_h_4b8939.pth",
-        url=f"{SAM_BASE_URL}/sam_vit_h_4b8939.pth",
+    "sam_h": Model(
+        key="sam_h",
+        filename="sam_h.pt",
+        url=f"{META_BASE_URL}/sam_vit_h_4b8939.pth",
         subdir="sam",
-        description="SAM ViT-H (default, best quality, ~2.4 GB)",
+        description="SAM 1 ViT-H (pipeline default, best quality, ~2.4 GB) [from Meta]",
     ),
-    "sam_vit_l": Model(
-        key="sam_vit_l",
-        filename="sam_vit_l_0b3195.pth",
-        url=f"{SAM_BASE_URL}/sam_vit_l_0b3195.pth",
+    "sam_l": Model(
+        key="sam_l",
+        filename="sam_l.pt",
+        url=f"{ULTRALYTICS_BASE_URL}/sam_l.pt",
         subdir="sam",
-        description="SAM ViT-L (~1.2 GB)",
+        description="SAM 1 ViT-L (~1.2 GB) [from Ultralytics]",
     ),
-    "sam_vit_b": Model(
-        key="sam_vit_b",
-        filename="sam_vit_b_01ec64.pth",
-        url=f"{SAM_BASE_URL}/sam_vit_b_01ec64.pth",
+    "sam_b": Model(
+        key="sam_b",
+        filename="sam_b.pt",
+        url=f"{ULTRALYTICS_BASE_URL}/sam_b.pt",
         subdir="sam",
-        description="SAM ViT-B (smallest and fastest, ~360 MB)",
+        description="SAM 1 ViT-B (~360 MB) [from Ultralytics]",
+    ),
+    "mobile_sam": Model(
+        key="mobile_sam",
+        filename="mobile_sam.pt",
+        url=f"{ULTRALYTICS_BASE_URL}/mobile_sam.pt",
+        subdir="sam",
+        description="MobileSAM (SAM 1, tiny distilled encoder, ~39 MB) [from Ultralytics]",
     ),
 }
+
+# SAM 2 and SAM 2.1. Both generations ship the same four sizes from the same
+# place, so they are generated rather than repeated eight times. SAM 2.1 is the
+# later release of the same architecture and supersedes SAM 2 at equal size;
+# SAM 2 is kept so older runs stay reproducible.
+_SAM2_VARIANTS = {
+    "t": ("tiny", "~75 MB"),
+    "s": ("small", "~88 MB"),
+    "b": ("base+", "~154 MB"),
+    "l": ("large", "~428 MB"),
+}
+
+for _generation, _note in (("sam2", ""), ("sam2.1", ", recommended over sam2")):
+    for _size, (_label, _weight) in _SAM2_VARIANTS.items():
+        _key = f"{_generation}_{_size}"
+        MODELS[_key] = Model(
+            key=_key,
+            filename=f"{_key}.pt",
+            url=f"{ULTRALYTICS_BASE_URL}/{_key}.pt",
+            subdir="sam",
+            description=(
+                f"SAM {_generation.removeprefix('sam')} {_label} "
+                f"({_weight}{_note}) [from Ultralytics]"
+            ),
+        )
+
+# FastSAM. Not a SAM architecture at all: it is YOLOv8-seg, driven by
+# Ultralytics' FastSAMPredictor rather than the SAM one, so `SAMModel` cannot
+# load these and they live outside models/sam/. Downloadable here so the weights
+# can be pre-seeded, but the pipeline needs a FastSAM specific class before it
+# can use them.
+for _size, _weight in (("s", "~23 MB"), ("x", "~138 MB")):
+    _key = f"FastSAM-{_size}"
+    MODELS[_key] = Model(
+        key=_key,
+        filename=f"{_key}.pt",
+        url=f"{ULTRALYTICS_BASE_URL}/{_key}.pt",
+        subdir="fastsam",
+        description=f"FastSAM {_size} ({_weight}, not yet wired into the pipeline) [from Ultralytics]",
+    )
 
 
 def human_size(num_bytes: float) -> str:

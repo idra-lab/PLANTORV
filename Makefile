@@ -46,9 +46,7 @@ clean_ruffy:
 clean_pyright:
 	if [ -d .pyrightcache ]; then rm -rf .pyrightcache; fi
 clean_output: 
-	if [ -d output ]; then rm -rf output; fi
-	if [ -d ppt_outputs ]; then rm -rf ppt_outputs; fi
-	if [ -d outputs_json_labeled ]; then rm -rf outputs_json_labeled; fi
+	rm -rf output
 	rm -f ./*.log
 clean_package:
 	if [ -d dist ]; then rm -rf dist; fi

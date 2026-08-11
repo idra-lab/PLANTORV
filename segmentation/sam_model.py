@@ -5,52 +5,229 @@ from typing import Any, List, Optional, Tuple, Union, cast
 import cv2
 import numpy as np
 from PIL import Image
-from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 from skimage import measure
 from skimage.morphology import dilation, disk, erosion, remove_small_objects
+from ultralytics.models.sam import Predictor as SAMPredictor
+from ultralytics.models.sam import SAM2Predictor
 
-from segmentation.segmentation import SegmentationModel, binary_mask_to_pil, mask_to_pil
+from segmentation.segmentation import SegmentationModel, binary_mask_to_pil
 from utility.utility import logger
+
+# Checkpoint names Ultralytics knows how to build a SAM model from. `build_sam`
+# selects the architecture by matching the *end* of the checkpoint path against
+# these, so "models/sam/sam_h.pt" works but Meta's original "sam_vit_h_4b8939.pth"
+# does not. Of the SAM 1 names, only sam_b.pt and sam_l.pt are downloaded
+# automatically; sam_h.pt and mobile_sam.pt have to be present locally. Every
+# SAM 2 checkpoint is published by Ultralytics and downloads on first use.
+SAM1_CHECKPOINTS = ("sam_h.pt", "sam_l.pt", "sam_b.pt", "mobile_sam.pt")
+SAM2_CHECKPOINTS = (
+    "sam2_t.pt",
+    "sam2_s.pt",
+    "sam2_b.pt",
+    "sam2_l.pt",
+    "sam2.1_t.pt",
+    "sam2.1_s.pt",
+    "sam2.1_b.pt",
+    "sam2.1_l.pt",
+)
+SAM_CHECKPOINTS = SAM1_CHECKPOINTS + SAM2_CHECKPOINTS
 
 
 class SAMModel(SegmentationModel):
-    """Perform segmentation using the Segment Anything Model (SAM)."""
+    """Perform segmentation using the Segment Anything Model via Ultralytics.
+
+    Handles both SAM 1 and SAM 2: the checkpoint name selects the architecture
+    and the matching Ultralytics predictor, and both expose the same "segment
+    everything" call and result format, so no SAM 2 specific subclass is needed::
+
+        SAMModel("models/sam/sam_h.pt")  # SAM 1
+        SAMModel("sam2.1_l.pt")  # SAM 2, downloaded on first use
+    """
 
     def __init__(
         self,
-        sam_checkpoint: str,
-        model_type: str = "vit_h",
+        sam_checkpoint: Union[str, Path] = "sam_h.pt",
         device: str = "cuda",
         save_dir: Optional[Union[str, Path]] = None,
+        debug_masks: bool = False,
         **sam_kwargs: Any,
     ) -> None:
         """Initialize the SAM mask generator.
 
         Parameters
         ----------
-        sam_checkpoint : str
-            Path to the SAM checkpoint.
-        model_type : str
-            SAM model type. Expected values are ``"vit_b"``, ``"vit_l"``, or
-            ``"vit_h"``.
+        sam_checkpoint : str or Path
+            Checkpoint to load. Either a bare name from :data:`SAM_CHECKPOINTS`
+            (everything except ``sam_h.pt`` and ``mobile_sam.pt`` is downloaded
+            by Ultralytics on first use) or a path to a local file whose name
+            ends with one of them. The name selects both the architecture and
+            the SAM 1 / SAM 2 predictor, so there is no separate model type
+            argument.
         device : str
             Device used for inference. Common values are ``"cuda"`` and
             ``"cpu"``. Default is ``"cuda"``.
         save_dir : str or Path or None
             Directory where the output images will be saved if not None.
+        debug_masks : bool
+            If True, dump every mask SAM returns, before any filtering, under
+            ``save_dir/debug/``. Useful to tell apart "SAM never produced this
+            object" from "the filtering in :meth:`individual_mask` discarded it".
+            Requires ``save_dir``. Default is False.
         sam_kwargs : dict
-            Additional keyword arguments for the SAM mask generator. For example,
-            ``points_per_side`` can be specified to control the number of points
-            sampled per side of the image. See the SAM documentation for more details.
+            Additional keyword arguments for the Ultralytics "segment everything"
+            pass, forwarded to ``Predictor.generate``. For example,
+            ``points_stride`` controls the number of points sampled per side of
+            the image (the equivalent of ``points_per_side`` in Meta's
+            ``SamAutomaticMaskGenerator``).
+
+        Raises
+        ------
+        ValueError
+            If ``sam_checkpoint`` does not end with a name Ultralytics can map to
+            a SAM architecture.
         """
         super().__init__(save_dir=save_dir)
-        self.sam = sam_model_registry[model_type](sam_checkpoint)
-        self.sam.to(device=device)
 
-        if "points_per_side" not in sam_kwargs:
-            sam_kwargs["points_per_side"] = 32  # Default value if not provided
+        checkpoint = str(sam_checkpoint)
+        if not checkpoint.endswith(SAM_CHECKPOINTS):
+            raise ValueError(
+                f"Unsupported SAM checkpoint {checkpoint!r}. The file name must end with one of "
+                f"{', '.join(SAM_CHECKPOINTS)}. Meta's original checkpoints are compatible once "
+                "renamed (for example sam_vit_h_4b8939.pth -> sam_h.pt)."
+            )
 
-        self.mask_generator = SamAutomaticMaskGenerator(self.sam, **sam_kwargs)
+        if "points_stride" not in sam_kwargs:
+            sam_kwargs["points_stride"] = 32
+        self.generate_kwargs = sam_kwargs
+
+        if debug_masks and self.save_dir is None:
+            raise ValueError("debug_masks=True requires save_dir to be set.")
+        self.debug_masks = debug_masks
+
+        # SAM 2 needs its own predictor: it overrides how image features are
+        # computed. Everything after that - "segment everything" mode, the
+        # Results contract, mask post-processing - is inherited unchanged from
+        # the SAM 1 predictor, so the rest of this class does not care which is
+        # in use.
+        predictor_cls = SAM2Predictor if checkpoint.endswith(SAM2_CHECKPOINTS) else SAMPredictor
+        self.predictor = predictor_cls(
+            overrides={
+                "conf": 0.25,
+                "task": "segment",
+                "mode": "predict",
+                "imgsz": 1024,
+                "model": checkpoint,
+                "device": device,
+                "save": False,  # prevent Ultralytics from saving annotated images to runs/
+                "verbose": False,
+            }
+        )
+
+    def _generate(
+        self, image: np.ndarray, tag: Optional[str] = None
+    ) -> Tuple[np.ndarray, List[List[int]]]:
+        """Run SAM in "segment everything" mode over a whole image.
+
+        Parameters
+        ----------
+        image : numpy.ndarray
+            RGB image with shape ``(H, W, 3)``.
+        tag : str or None
+            Name used for the debug dump when ``debug_masks`` is enabled. Ignored
+            otherwise.
+
+        Returns
+        -------
+        masks : numpy.ndarray
+            Boolean masks with shape ``(N, H, W)``, already at the resolution of
+            ``image``. Empty with shape ``(0, H, W)`` when nothing is found.
+        bboxes : list[list[int]]
+            One box per mask as ``[x_min, y_min, width, height]``.
+        """
+        # Ultralytics assumes a numpy source is BGR (its preprocess step flips
+        # the channels back before normalisation), while the rest of this file
+        # works in RGB. Handing it RGB feeds the network channel-swapped images.
+        bgr = np.ascontiguousarray(image[..., ::-1])
+        result = self.predictor(source=bgr, **self.generate_kwargs)[0]
+
+        if result.masks is None:
+            logger.warning(f"SAM returned no masks for {tag or 'image'}")
+            return np.zeros((0, *image.shape[:2]), dtype=bool), []
+
+        masks = result.masks.data.cpu().numpy().astype(bool)
+
+        xyxy = result.boxes.xyxy.cpu().numpy()
+        bboxes = [
+            [int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)]
+            for x_min, y_min, x_max, y_max in xyxy
+        ]
+
+        if self.debug_masks and tag is not None:
+            self._dump_masks(image, masks, bboxes, tag)
+
+        return masks, bboxes
+
+    def _dump_masks(
+        self, image: np.ndarray, masks: np.ndarray, bboxes: List[List[int]], tag: str
+    ) -> None:
+        """Write every raw SAM mask to ``save_dir/debug/`` for inspection.
+
+        Produces one colour-coded overlay of all masks at once, one binary PNG
+        per mask, and a log line per mask with its area and bounding box, so an
+        object that never made it out of SAM can be told apart from one that the
+        later filtering removed.
+
+        Parameters
+        ----------
+        image : numpy.ndarray
+            RGB image the masks were generated from, shape ``(H, W, 3)``.
+        masks : numpy.ndarray
+            Boolean masks with shape ``(N, H, W)``.
+        bboxes : list[list[int]]
+            One box per mask as ``[x_min, y_min, width, height]``.
+        tag : str
+            Sub-directory name, e.g. ``"image_1_bg"``.
+        """
+        debug_dir = Path(cast(Path, self.save_dir)) / "debug" / tag
+        debug_dir.mkdir(parents=True, exist_ok=True)
+
+        H, W = image.shape[:2]
+        overlay = image.copy()
+        # Fixed hue steps keep neighbouring masks visually distinct.
+        colours = [
+            cv2.cvtColor(
+                np.array([[[int(180 * i / max(len(masks), 1)), 255, 255]]], dtype=np.uint8),
+                cv2.COLOR_HSV2RGB,
+            )[0, 0].astype(np.uint16)
+            for i in range(len(masks))
+        ]
+
+        logger.debug(f"[{tag}] SAM returned {len(masks)} raw masks")
+        for i, (mask, colour) in enumerate(zip(masks, colours)):
+            area_pct = np.sum(mask) * 100 / (H * W)
+            logger.debug(f"[{tag}]   mask {i:03d}: area {area_pct:6.2f}%  bbox {bboxes[i]}")
+
+            overlay[mask] = (overlay[mask] // 2 + colour // 2).astype(np.uint8)
+            binary_mask_to_pil(mask.astype(np.uint8)).save(debug_dir / f"mask_{i:03d}.png")
+
+        # Number each mask at its centroid so the overlay maps back to the files.
+        for i, mask in enumerate(masks):
+            ys, xs = np.nonzero(mask)
+            if len(xs) == 0:
+                continue
+            cv2.putText(
+                overlay,
+                str(i),
+                (int(xs.mean()), int(ys.mean())),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+
+        Image.fromarray(overlay).save(debug_dir.parent / f"{tag}_all_masks.png")
+        logger.debug(f"[{tag}] wrote overlay and {len(masks)} masks to {debug_dir}")
 
     def _preprocess_mask(
         self, mask: np.ndarray, rgb: Image.Image, f: Optional[Union[int, None]] = None
@@ -93,7 +270,12 @@ class SAMModel(SegmentationModel):
         masked_rgb = np.asarray(rgb) * mask_bin
         ref_img = Image.fromarray(masked_rgb.astype("uint8"))
         if f is not None:
-            ref_img.save(f"ppt_outputs/image{f + 1}/masked_rgb.png")
+            if self.save_dir is None:
+                raise ValueError("save_dir must be specified to save the masked RGB image.")
+            save_path = Path(self.save_dir) / f"image_{f + 1}"
+            save_path.mkdir(parents=True, exist_ok=True)
+            save_path = save_path / "masked_rgb.png"
+            ref_img.save(f"{save_path}")
         return masked_rgb, mask_bin
 
     def _cropping_mask(
@@ -205,28 +387,18 @@ class SAMModel(SegmentationModel):
             raise TypeError("Input image must be a file path, Path object, or PIL Image.")
 
         H, W = image_np.shape[:2]
-        masks_sam = self.mask_generator.generate(image_np)
-        all_masks = []
-        all_bboxes = []
-        del_id = []
-        for m in masks_sam:
-            all_masks.append(m["segmentation"])
-            all_bboxes.append(m["bbox"])
+        all_masks, _ = self._generate(image_np, tag=f"image_{idx + 1}_bg")
 
-        for i, mask in enumerate(all_masks):
-            masked = mask_to_pil(mask)
-            masked = masked.resize((W, H))
-            masked_np = np.array(masked)
-            num_pixels = np.sum(masked_np > 0)
-            area_mask = num_pixels * 100 / (H * W)
-            if area_mask < 15:
-                del_id.append(i)
-        masks = np.delete(all_masks, del_id, axis=0)
-        h, w = masks[0].shape
-        union_mask = np.zeros((h, w), dtype=np.uint8)
-
-        for m in masks:
-            union_mask |= m
+        # Keep only the masks covering at least 15 percent of the image, i.e. the
+        # coarse background regions rather than the objects standing on them.
+        union_mask = np.zeros((H, W), dtype=np.uint8)
+        kept = 0
+        for mask in all_masks:
+            area_mask = np.sum(mask) * 100 / (H * W)
+            if area_mask >= 15:
+                union_mask |= mask.astype(np.uint8)
+                kept += 1
+        logger.debug(f"BG pass: {kept}/{len(all_masks)} masks over the 15% area threshold")
 
         masked_rgb, mask_bin = self._preprocess_mask(union_mask, image_file, idx)
         end = time.time()
@@ -356,16 +528,13 @@ class SAMModel(SegmentationModel):
         if bg_mask_bin.ndim == 3:
             bg_mask_bin = bg_mask_bin[..., 0]
 
-        masks_sam = self.mask_generator.generate(bg_masked_rgb)
+        masks_sam, bboxes_sam = self._generate(bg_masked_rgb, tag=f"image_{idx + 1}_objects")
 
         numbered_masks = []
         bboxes = []
         robot_ids = []
 
-        for i in range(len(masks_sam)):
-            segment = mask_to_pil(masks_sam[i]["segmentation"])
-            segment = np.asarray(segment.resize((W, H)))
-
+        for i, segment in enumerate(masks_sam):
             intersection = np.logical_and(segment, bg_mask_bin)
             union = np.logical_or(segment, bg_mask_bin)
             iou = np.sum(intersection) / np.sum(union) if np.sum(union) > 0 else 0
@@ -374,13 +543,34 @@ class SAMModel(SegmentationModel):
             if (0.35 < area_mask < 6.5 or area_mask > 10) and iou > 0.02:
                 if area_mask > 10:
                     robot_ids.append(i)
-                numbered_masks.append((i, masks_sam[i]["segmentation"]))
-                bboxes.append(masks_sam[i]["bbox"])
+                numbered_masks.append((i, segment))
+                bboxes.append(bboxes_sam[i])
+            elif self.debug_masks:
+                # Name the failing condition, so a missing object can be traced to
+                # the threshold that rejected it rather than guessed at.
+                # NOTE: `area_mask` is the area of the mask *after* intersecting it
+                # with the background keep-mask, so it can be far below the raw
+                # area logged by _dump_masks. A large drop between the two means
+                # the mask lies mostly outside the region obtain_bg kept.
+                reason = (
+                    f"area∩bg {area_mask:.2f}% outside (0.35, 6.5) and <= 10"
+                    if not (0.35 < area_mask < 6.5 or area_mask > 10)
+                    else f"iou {iou:.4f} <= 0.02"
+                )
+                logger.debug(f"[image_{idx + 1}_objects]   mask {i:03d} dropped: {reason}")
 
         valid = self._filter_masks_by_iou(numbered_masks, robot_ids, iou_threshold=0.01)
 
         masks_filtered = [numbered_masks[i] for i in valid]
         bboxes_filtered = [bboxes[i] for i in valid]
+
+        logger.debug(
+            f"Object pass: {len(masks_sam)} raw masks -> {len(numbered_masks)} after the "
+            f"area/IoU thresholds -> {len(masks_filtered)} after overlap removal"
+        )
+        if self.debug_masks:
+            dropped = {i for i, _ in numbered_masks} - {orig for orig, _ in masks_filtered}
+            logger.debug(f"Overlap removal discarded raw mask ids: {sorted(dropped)}")
 
         rgb_masks = []
 

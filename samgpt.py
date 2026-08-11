@@ -70,9 +70,15 @@ def main(args: argparse.Namespace) -> None:
 
     # Instantiate the segmentation model
     sam = SAMModel(
-        "models/sam/sam_vit_h_4b8939.pth",
+        # "models/sam/sam_b.pt",
+        # "models/sam/sam_h.pt",
+        # "models/sam/sam_l.pt",
+        # "models/sam/sam2.1_l.pt",
+        "models/sam/mobile_sam.pt",
         save_dir=Path(output_dir) / "segmentation_outputs",
         device=args.device,
+        debug_masks=args.debug_masks,
+        points_stride=48,
     )
 
     # Instantiate the GPT annotator
@@ -132,7 +138,7 @@ def parse_arguments() -> argparse.Namespace:
         "--depth-dir", type=str, default="dataset/depth", help="Path to the depth images directory"
     )
     parser.add_argument(
-        "--output-dir", type=str, default="output_json_labeled", help="Path to the output directory"
+        "--output-dir", type=str, default="output", help="Path to the output directory"
     )
     parser.add_argument("--env-file", type=str, default=".env", help="Path to the environment file")
     parser.add_argument(
@@ -152,6 +158,15 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         default="DEBUG",
         help="Logging level (e.g., 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')",
+    )
+
+    parser.add_argument(
+        "--debug-masks",
+        action="store_true",
+        help=(
+            "Save every mask SAM produces, before filtering, to "
+            "<output-dir>/segmentation_outputs/debug/ and log why each mask was kept or dropped"
+        ),
     )
 
     return parser.parse_args()

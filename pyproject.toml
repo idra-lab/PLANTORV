@@ -10,13 +10,15 @@ requires-python = ">=3.10"
 dependencies = [
     "matplotlib",
     "scikit-image",
-    "ultralytics",
+    "ultralytics>=8.3.0", # 8.3.0 is the first release exposing the SAM Predictor API
     "numpy",
     "pandas",
     "opencv-python",
     "torch",
     "torchvision",
     "Pillow",
+    # Only still needed by the legacy top-level samdamcoords.py; segmentation/
+    # went through Ultralytics. Drop this once that script is retired.
     "segment-anything",
     "pyyaml",
     "python-dotenv",
@@ -32,13 +34,8 @@ dev = [
 ]
 
 [tool.setuptools]
-# This project is run in place (python3 samgpt.py, python3 aruco/aruco_detector.py, ...),
-# not imported as an installed library, so no packages need to be built/installed.
 packages = []
 
-# Linter/type-checker settings live in .dev-config/ to keep this file focused on
-# packaging. Both tools follow these pointers, so `ruff`/`pyright` still work with
-# no CLI flags (and editors/language servers pick them up too).
 [tool.ruff]
 extend = ".dev-config/ruff.toml"
 
