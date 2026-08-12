@@ -7,7 +7,7 @@ ArUco marker annotations.
 ## Code Structure
 
 - `samgpt.py` - main pipeline: runs SAM segmentation, GPT labeling, RGB-D coordinate mapping, and writes JSON outputs.
-- `segmentation/` - `SegmentationModel` base class and `SAMModel`, which runs Segment Anything through Ultralytics (SAM 1, MobileSAM, SAM 2 and SAM 2.1) to produce a background mask and per-object crops.
+- `segmentation/` - `SegmentationModel` base class, `SAMModel` (SAM 1, MobileSAM, SAM 2 and SAM 2.1) and `FastSAMModel`, all run through Ultralytics to produce a background mask and per-object crops.
 - `scene_understanding/` - `GPTAnnotator`, sends each crop plus the full scene to an Azure OpenAI deployment for an ultra-specific tag + description.
 - `mapping/` - RGB-D camera calibration (hardcoded Femto Mega intrinsics) and depth-to-color projection utilities.
 - `aruco/` - ArUco marker detection, pose estimation, camera/config YAML files, and marker generation.
@@ -50,7 +50,6 @@ Both targets are thin wrappers, so the raw equivalents work too:
 | --- | --- |
 | `make install` | `pip install -e .` |
 | `make install-dev` | `pip install -e ".[dev]"` then `pre-commit install` |
-
 
 ### 2. Install the segmentation model (SAM checkpoint)
 
@@ -104,19 +103,42 @@ SAM 2 checkpoints are much smaller than their SAM 1 counterparts for two reasons
 hierarchical Hiera encoder needs roughly a third of the parameters of SAM 1's plain ViT
 (224 M vs 641 M for the largest of each), and they are stored in fp16 rather than fp32.
 
-#### FastSAM (downloadable, not yet usable)
+#### FastSAM
 
 | variant | file             | size    | downloaded from |
 |---------|------------------|---------|-----------------|
 | s       | `FastSAM-s.pt`   | ~23 MB  | Ultralytics     |
 | x       | `FastSAM-x.pt`   | ~138 MB | Ultralytics     |
 
-The installer can fetch these into `models/fastsam/`, but **`SAMModel` cannot load them**.
 FastSAM is not a SAM architecture: it is a YOLOv8-seg model that produces all its masks in
-one forward pass, driven by Ultralytics' `FastSAMPredictor` (a subclass of the YOLO
-segmentation predictor) rather than the SAM predictor. It has no `points_stride`
-"segment everything" mode, and Ultralytics' `build_sam` does not recognise its checkpoints.
-Using it from the pipeline needs a FastSAM specific class.
+one forward pass, driven by Ultralytics' `FastSAMPredictor` rather than the SAM predictor.
+It has no `points_stride` "segment everything" mode, and `build_sam` does not recognise its
+checkpoints, so `SAMModel` cannot load it. It has its own class instead, with the same
+interface:
+
+```python
+from segmentation.fastsam_model import FastSAMModel
+
+sam = FastSAMModel("models/fastsam/FastSAM-s.pt", save_dir=..., device="cuda")
+```
+
+`FastSAMModel` implements `SegmentationModel` directly and owns its whole pipeline rather
+than reusing `SAMModel`, so its thresholds can move independently — the two models produce
+very differently shaped mask sets. They are module constants at the top of
+[segmentation/fastsam_model.py](segmentation/fastsam_model.py). FastSAM has no
+`points_stride`; use `conf`, `iou` and `imgsz` instead.
+
+> **`obtain_bg` works differently here, by necessity.** FastSAM is a *thing* detector: it
+> proposes object instances and never emits "stuff" regions like walls or tables. On
+> `rgb_dataset_1.png` its 79 masks cover only **18% of the image** (SAM 1 ViT-H covers
+> 97%) and its largest is 9.2%, which is part of an object rather than the background. So
+> SAM's rule — background is the *biggest* masks — finds nothing at any threshold. FastSAM
+> instead takes the background to be the **complement of every mask**, which is exactly
+> right for a model that only masks objects, and needs no threshold to tune.
+>
+> With that, FastSAM-s finds the same four objects as SAM 1 ViT-H on that frame, with
+> bounding boxes within ~30 px. It still splits the robot arm into three masks where SAM
+> returns one; raising `conf` (0.6 roughly halves the mask count) reduces that splitting.
 
 To use any of them, pass the name or path when constructing `SAMModel` — there is no
 separate model-type argument, and no separate SAM 2 class:
@@ -154,9 +176,9 @@ AZURE_API_KEY=<your-azure-openai-api-key>
 ```
 
 | Variable         | Used in                 | Description                              |
-|------------------|-------------------------|-------------------------------------------|
-| `AZURE_ENDPOINT` | [samgpt.py](samgpt.py)  | Base URL of your Azure OpenAI resource    |
-| `AZURE_API_KEY`  | [samgpt.py](samgpt.py)  | API key for that resource                 |
+|------------------|-------------------------|------------------------------------------|
+| `AZURE_ENDPOINT` | [samgpt.py](samgpt.py)  | Base URL of your Azure OpenAI resource   |
+| `AZURE_API_KEY`  | [samgpt.py](samgpt.py)  | API key for that resource                |
 
 The deployment name (`gpt-5.2-chat`) and API version (`2024-12-01-preview`) are set
 in [samgpt.py](samgpt.py) — edit them there to match your Azure deployment.

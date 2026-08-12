@@ -3,9 +3,9 @@
 
 Covers SAM 1 (including MobileSAM) and SAM 2 / SAM 2.1, which
 ``segmentation/sam_model.py`` drives through the same class, plus FastSAM, which
-is a YOLOv8-seg model rather than a SAM one and is not yet wired into the
-pipeline. Checkpoints are fetched from Ultralytics where they publish them, and
-from Meta otherwise.
+is a YOLOv8-seg model rather than a SAM one and has its own class in
+``segmentation/fastsam_model.py``. Checkpoints are fetched from Ultralytics where
+they publish them, and from Meta otherwise.
 Ultralytics also downloads its own checkpoints on first use, so this script is
 mainly useful for two cases:
 
@@ -155,9 +155,8 @@ for _generation, _note in (("sam2", ""), ("sam2.1", ", recommended over sam2")):
 
 # FastSAM. Not a SAM architecture at all: it is YOLOv8-seg, driven by
 # Ultralytics' FastSAMPredictor rather than the SAM one, so `SAMModel` cannot
-# load these and they live outside models/sam/. Downloadable here so the weights
-# can be pre-seeded, but the pipeline needs a FastSAM specific class before it
-# can use them.
+# load these and they live outside models/sam/. They are used through
+# `segmentation/fastsam_model.py` instead.
 for _size, _weight in (("s", "~23 MB"), ("x", "~138 MB")):
     _key = f"FastSAM-{_size}"
     MODELS[_key] = Model(
@@ -165,7 +164,7 @@ for _size, _weight in (("s", "~23 MB"), ("x", "~138 MB")):
         filename=f"{_key}.pt",
         url=f"{ULTRALYTICS_BASE_URL}/{_key}.pt",
         subdir="fastsam",
-        description=f"FastSAM {_size} ({_weight}, not yet wired into the pipeline) [from Ultralytics]",
+        description=f"FastSAM {_size} ({_weight}, used via FastSAMModel) [from Ultralytics]",
     )
 
 

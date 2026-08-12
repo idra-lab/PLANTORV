@@ -12,7 +12,7 @@ from PIL import Image
 
 from mapping.rgbd_mapper import main_coords
 from scene_understanding.gpt_annotator import GPTAnnotator
-from segmentation.sam_model import SAMModel
+from segmentation.fastsam_model import FastSAMModel
 from utility.utility import logger
 
 np.set_printoptions(threshold=sys.maxsize)
@@ -69,16 +69,23 @@ def main(args: argparse.Namespace) -> None:
     images_path = Path(args.images_dir)
 
     # Instantiate the segmentation model
-    sam = SAMModel(
-        # "models/sam/sam_b.pt",
-        # "models/sam/sam_h.pt",
-        # "models/sam/sam_l.pt",
-        # "models/sam/sam2.1_l.pt",
-        "models/sam/mobile_sam.pt",
+    # sam = SAMModel(
+    #     # "models/sam/sam_b.pt",
+    #     # "models/sam/sam_h.pt",
+    #     # "models/sam/sam_l.pt",
+    #     # "models/sam/sam2.1_l.pt",
+    #     "models/sam/mobile_sam.pt",
+    #     save_dir=Path(output_dir) / "segmentation_outputs",
+    #     device=args.device,
+    #     debug_masks=args.debug_masks,
+    #     points_stride=48,
+    # )
+
+    sam = FastSAMModel(
+        "models/fastsam/FastSAM-s.pt",
         save_dir=Path(output_dir) / "segmentation_outputs",
         device=args.device,
         debug_masks=args.debug_masks,
-        points_stride=48,
     )
 
     # Instantiate the GPT annotator
