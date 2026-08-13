@@ -7,14 +7,15 @@ ArUco marker annotations.
 ## Code Structure
 
 - `samgpt.py` - main pipeline: runs SAM segmentation, GPT labeling, RGB-D coordinate mapping, and writes JSON outputs.
-- `segmentation/` - `SAMModel`, wraps Segment Anything (SAM) to produce a background mask and per-object crops.
+- `segmentation/` - `SegmentationModel` base class, `SAMModel` (SAM 1, MobileSAM, SAM 2 and SAM 2.1) and `FastSAMModel`, all run through Ultralytics to produce a background mask and per-object crops.
 - `scene_understanding/` - `GPTAnnotator`, sends each crop plus the full scene to an Azure OpenAI deployment for an ultra-specific tag + description.
 - `mapping/` - RGB-D camera calibration (hardcoded Femto Mega intrinsics) and depth-to-color projection utilities.
 - `aruco/` - ArUco marker detection, pose estimation, camera/config YAML files, and marker generation.
 - `evaluation/` - matching, metrics, depth correlation, and result visualization.
 - `utility/` - shared logging helpers (compact console + rotating file output, via `loguru`).
 - `dataset/` - expected input images: `rgb/`, `depth/`, and `rgb_aruco/`.
-- `models/` - local model checkpoints, including the SAM checkpoint expected at `models/sam/sam_vit_h_4b8939.pth`.
+- `models/` - local model checkpoints, including the SAM checkpoint expected at `models/sam/sam_h.pt`.
+- `scripts/install_models.py` - downloads the checkpoints into `models/` (see [Setup](#2-install-the-segmentation-model-sam-checkpoint)).
 - `scripts/PBS/` - cluster job scripts (`generation.sh`, `evaluation.sh`, `aruco_detector.sh`).
 - `.dev-config/` - Ruff and Pyright settings, referenced from `pyproject.toml` (see [Development](#development)).
 - `outputs_json_labeled/`, `output_aruco/`, `results/`, `ppt_outputs/` - generated pipeline outputs.
@@ -50,25 +51,118 @@ Both targets are thin wrappers, so the raw equivalents work too:
 | `make install` | `pip install -e .` |
 | `make install-dev` | `pip install -e ".[dev]"` then `pre-commit install` |
 
-
 ### 2. Install the segmentation model (SAM checkpoint)
 
-The pipeline uses the **ViT-H** SAM checkpoint by default (`SAMModel(..., model_type="vit_h")`,
-loaded by `samgpt.py` from `models/sam/sam_vit_h_4b8939.pth`). Download it there:
+Segmentation runs through [Ultralytics](https://docs.ultralytics.com/models/sam/), which
+picks the SAM architecture from the **checkpoint file name**. The name must therefore end
+with one of the names in `SAM_CHECKPOINTS`
+([segmentation/sam_model.py](segmentation/sam_model.py)); `SAMModel` rejects anything else
+with an explanatory error. The path in front of it is free.
+
+The same class drives SAM 1 and SAM 2 — the checkpoint name also selects the matching
+Ultralytics predictor, so there is no separate SAM 2 class to import.
+
+The pipeline defaults to **ViT-H**, loaded by `samgpt.py` from `models/sam/sam_h.pt`.
+Download it with the installer script:
 
 ```bash
-mkdir -p models/sam
-wget -O models/sam/sam_vit_h_4b8939.pth \
-  https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
+python3 scripts/install_models.py sam_h
 ```
-If you want a smaller/faster model, download a different checkpoint and pass the
-matching `model_type` when constructing `SAMModel`:
 
-| model_type | checkpoint file            | download                                                                 |
-|------------|----------------------------|--------------------------------------------------------------------------|
-| `vit_h`    | `sam_vit_h_4b8939.pth`     | https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth     |
-| `vit_l`    | `sam_vit_l_0b3195.pth`     | https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth     |
-| `vit_b`    | `sam_vit_b_01ec64.pth`     | https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth     |
+It only uses the standard library, so it can be run before `make install`, and an
+interrupted download resumes where it stopped. The other entry points:
+
+```bash
+python3 scripts/install_models.py --list   # show what is available
+python3 scripts/install_models.py --all    # download everything
+python3 scripts/install_models.py          # choose interactively
+```
+
+#### SAM 1
+
+| model             | key / file             | size     | downloaded from |
+|-------------------|------------------------|----------|-----------------|
+| ViT-H (default)   | `sam_h.pt`             | ~2.4 GB  | Meta            |
+| ViT-L             | `sam_l.pt`             | ~1.2 GB  | Ultralytics     |
+| ViT-B             | `sam_b.pt`             | ~360 MB  | Ultralytics     |
+| MobileSAM         | `mobile_sam.pt`        | ~39 MB   | Ultralytics     |
+
+#### SAM 2 and SAM 2.1
+
+Same four sizes in both generations, all from Ultralytics. SAM 2.1 is the later release of
+the same architecture and is preferred; SAM 2 is kept so older runs stay reproducible.
+
+| variant | SAM 2       | SAM 2.1       | size    |
+|---------|-------------|---------------|---------|
+| tiny    | `sam2_t.pt` | `sam2.1_t.pt` | ~75 MB  |
+| small   | `sam2_s.pt` | `sam2.1_s.pt` | ~88 MB  |
+| base+   | `sam2_b.pt` | `sam2.1_b.pt` | ~154 MB |
+| large   | `sam2_l.pt` | `sam2.1_l.pt` | ~428 MB |
+
+SAM 2 checkpoints are much smaller than their SAM 1 counterparts for two reasons: the
+hierarchical Hiera encoder needs roughly a third of the parameters of SAM 1's plain ViT
+(224 M vs 641 M for the largest of each), and they are stored in fp16 rather than fp32.
+
+#### FastSAM
+
+| variant | file             | size    | downloaded from |
+|---------|------------------|---------|-----------------|
+| s       | `FastSAM-s.pt`   | ~23 MB  | Ultralytics     |
+| x       | `FastSAM-x.pt`   | ~138 MB | Ultralytics     |
+
+FastSAM is not a SAM architecture: it is a YOLOv8-seg model that produces all its masks in
+one forward pass, driven by Ultralytics' `FastSAMPredictor` rather than the SAM predictor.
+It has no `points_stride` "segment everything" mode, and `build_sam` does not recognise its
+checkpoints, so `SAMModel` cannot load it. It has its own class instead, with the same
+interface:
+
+```python
+from segmentation.fastsam_model import FastSAMModel
+
+sam = FastSAMModel("models/fastsam/FastSAM-s.pt", save_dir=..., device="cuda")
+```
+
+`FastSAMModel` implements `SegmentationModel` directly and owns its whole pipeline rather
+than reusing `SAMModel`, so its thresholds can move independently — the two models produce
+very differently shaped mask sets. They are module constants at the top of
+[segmentation/fastsam_model.py](segmentation/fastsam_model.py). FastSAM has no
+`points_stride`; use `conf`, `iou` and `imgsz` instead.
+
+> **`obtain_bg` works differently here, by necessity.** FastSAM is a *thing* detector: it
+> proposes object instances and never emits "stuff" regions like walls or tables. On
+> `rgb_dataset_1.png` its 79 masks cover only **18% of the image** (SAM 1 ViT-H covers
+> 97%) and its largest is 9.2%, which is part of an object rather than the background. So
+> SAM's rule — background is the *biggest* masks — finds nothing at any threshold. FastSAM
+> instead takes the background to be the **complement of every mask**, which is exactly
+> right for a model that only masks objects, and needs no threshold to tune.
+>
+> With that, FastSAM-s finds the same four objects as SAM 1 ViT-H on that frame, with
+> bounding boxes within ~30 px. It still splits the robot arm into three masks where SAM
+> returns one; raising `conf` (0.6 roughly halves the mask count) reduces that splitting.
+
+To use any of them, pass the name or path when constructing `SAMModel` — there is no
+separate model-type argument, and no separate SAM 2 class:
+
+```python
+sam = SAMModel("models/sam/sam_b.pt", save_dir=..., device="cuda")     # SAM 1
+sam = SAMModel("models/sam/sam2.1_l.pt", save_dir=..., device="cuda")  # SAM 2.1
+```
+
+Ultralytics fetches everything except `sam_h.pt` itself if it is missing, so for those the
+script is optional — `SAMModel("sam2.1_l.pt")` works with no setup. Note that Ultralytics
+downloads into the **current working directory**, not into `models/`, so using the script
+keeps the checkpoints together and makes runs independent of where they are launched from.
+
+ViT-H is the exception — Ultralytics publishes no `sam_h.pt` in any release, so the script
+takes Meta's original checkpoint and saves it under that name. The weights are unchanged:
+`.pth` and `.pt` are both `torch.save` archives, and the extension is only a naming
+convention.
+
+> **Heads-up before switching models.** The area and IoU thresholds in `individual_mask`
+> were tuned against SAM 1 ViT-H. On the same tabletop frame, SAM 2.1 and MobileSAM return
+> far fewer, much coarser masks (whole table regions rather than objects), so swapping the
+> checkpoint alone will change the pipeline output noticeably. Run with `--debug-masks`
+> (see [Useful Commands](#useful-commands)) and re-check those thresholds first.
 
 ### 3. Configure the `.env` file
 
@@ -82,9 +176,9 @@ AZURE_API_KEY=<your-azure-openai-api-key>
 ```
 
 | Variable         | Used in                 | Description                              |
-|------------------|-------------------------|-------------------------------------------|
-| `AZURE_ENDPOINT` | [samgpt.py](samgpt.py)  | Base URL of your Azure OpenAI resource    |
-| `AZURE_API_KEY`  | [samgpt.py](samgpt.py)  | API key for that resource                 |
+|------------------|-------------------------|------------------------------------------|
+| `AZURE_ENDPOINT` | [samgpt.py](samgpt.py)  | Base URL of your Azure OpenAI resource   |
+| `AZURE_API_KEY`  | [samgpt.py](samgpt.py)  | API key for that resource                |
 
 The deployment name (`gpt-5.2-chat`) and API version (`2024-12-01-preview`) are set
 in [samgpt.py](samgpt.py) — edit them there to match your Azure deployment.
@@ -95,6 +189,16 @@ Run the main segmentation, labeling, and RGB-D coordinate pipeline:
 
 ```bash
 python3 samgpt.py
+```
+
+Inspect what the segmentation model is actually producing. This saves every mask SAM
+returns *before* any filtering to `<output-dir>/segmentation_outputs/debug/` — a numbered
+colour-coded overlay per pass plus one PNG per mask — and logs the area, bounding box, and
+the reason each mask was kept or dropped. Use it to tell "SAM never found this object"
+apart from "the area/IoU thresholds discarded it":
+
+```bash
+python3 samgpt.py --debug-masks
 ```
 
 Generate ArUco annotations from the configured RGB/marker image folders:
@@ -125,7 +229,7 @@ qsub scripts/PBS/evaluation.sh
 Clean generated outputs if you want a fresh run:
 
 ```bash
-rm -rf outputs_json_labeled output_aruco results ppt_outputs
+rm -rf output
 ```
 
 ## Development
