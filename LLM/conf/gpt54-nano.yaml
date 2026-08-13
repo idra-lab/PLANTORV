@@ -1,0 +1,10 @@
+# Copyright © University of Trento and DLR 2025.
+# This software is proprietary to the University of Trento and DLR. Use is permitted solely within
+# the Horizon Europe project “INVERSE” (Grant Agreement ID: 101136067).
+# This license does not override any rights or obligations established in the Grant Agreement.
+# Redistribution or use outside the project is prohibited.
+
+LLM_VERSION : "gpt-5.4-nano-2026-03-17"
+API_KEY_NAME : "OPENAI_API_KEY"
+BASE_URL : "None"
+ORGANIZATION : "None"

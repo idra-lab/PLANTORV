@@ -1,0 +1,31 @@
+# Copyright © University of Trento and DLR 2025.
+# This software is proprietary to the University of Trento and DLR. Use is permitted solely within
+# the Horizon Europe project “INVERSE” (Grant Agreement ID: 101136067).
+# This license does not override any rights or obligations established in the Grant Agreement.
+# Redistribution or use outside the project is prohibited.
+
+PROVIDER: "huggingface"
+MODEL_NAME: "Jackrong/Qwen3.5-27B-Claude-4.6-Opus-Reasoning-Distilled"
+DISABLE_SYSTEM: false
+DEVICE: "cuda"
+QUANTIZE: 0
+# Enable model sharding across multiple GPUs when available
+MULTI_GPU: true
+# Optional advanced override (e.g. "auto", "balanced", or an explicit mapping)
+DEVICE_MAP: "auto"
+ENABLE_THINKING: false
+CACHE_DIR: "/scratch/models"
+
+LLM_CONFIG:
+  max_tokens: 8192
+  temperature: 0.0
+  top_p: 1.0
+  frequency_penalty: 0.0
+  presence_penalty: 0.0
+  stop:
+    - "USER:"
+    - "SYSTEM:"
+    - "```\n\n"           # stop after closing markdown fence
+    - "</think>"          # catch reasoning models that don't suppress thinking
+  seed: 42
+  enable_thinking: false

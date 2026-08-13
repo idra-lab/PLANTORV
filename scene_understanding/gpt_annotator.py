@@ -1,17 +1,23 @@
 import base64
 import json
 import mimetypes
+import os
 from io import BytesIO
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 from openai import AzureOpenAI
 from PIL import Image
 
+from LLM.LLMAzureOpenAI.LLMAzureOpenAI import LLMAzureOpenAI
 from utility.utility import logger
 
 """GPT Model for tagging and description"""
+
+DEFAULT_LLM_CONFIG_FILE = (
+    Path(__file__).resolve().parent.parent / "LLM" / "conf" / "azure_gpt52.yaml"
+)
 
 
 class GPTAnnotator:
@@ -23,6 +29,7 @@ class GPTAnnotator:
         subscription_key: str,
         api_version: str,
         max_completion_tokens: int = 16384,
+        llm: Optional[LLMAzureOpenAI] = None,
     ) -> None:
         """
         Initialize the GPTAnnotator with Azure OpenAI client.
@@ -41,14 +48,82 @@ class GPTAnnotator:
             The API version for the Azure OpenAI service.
         max_completion_tokens : int
             The maximum number of tokens to generate in the completion. Default is 16384.
+        llm : Optional[LLMAzureOpenAI]
+            The LLM backend the settings were taken from, when the annotator was built with
+            :meth:`from_config`. It is kept for reference (engine, generation parameters,
+            plain-text queries); the vision requests are issued through :attr:`client` because
+            the shared backend flattens multimodal message content into plain text.
         """
         self.client = AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
             api_key=subscription_key,
         )
+        self.endpoint = endpoint
+        self.model_name = model_name
         self.deployment = deployment
+        self.api_version = api_version
         self.max_completion_tokens = max_completion_tokens
+        self.llm = llm
+
+    @classmethod
+    def from_config(
+        cls,
+        llm_config_file: Union[str, Path] = DEFAULT_LLM_CONFIG_FILE,
+        deployment: Optional[str] = None,
+        max_completion_tokens: Optional[int] = None,
+    ) -> "GPTAnnotator":
+        """
+        Build a GPTAnnotator from an LLM YAML configuration file.
+
+        The configuration is read through :class:`LLMAzureOpenAI`, so the same files used by
+        the LLM package (see ``LLM/conf``) also drive the annotator. The endpoint and the API
+        key are read from the environment variables named by ``ENDPOINT_ENV`` and
+        ``API_KEY_NAME``; ``LLM/.env`` is loaded automatically when present.
+
+        Parameters
+        ----------
+        llm_config_file : Union[str, Path]
+            The path of the YAML configuration file. Defaults to ``LLM/conf/azure_gpt52.yaml``.
+        deployment : Optional[str]
+            The Azure deployment name. Defaults to the model name (``LLM_VERSION``), which is
+            the usual convention for these deployments.
+        max_completion_tokens : Optional[int]
+            The maximum number of tokens to generate in the completion. Defaults to the
+            ``LLM_CONFIG.max_tokens`` value of the configuration file (4096 when unset).
+
+        Returns
+        -------
+        GPTAnnotator
+            An annotator configured from the file.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the configuration file does not exist or is not a YAML file.
+        ValueError
+            If the environment variable holding the API key is not set.
+        """
+        llm = LLMAzureOpenAI(llm_config_file=str(llm_config_file))
+
+        subscription_key = os.environ.get(llm.API_KEY_NAME)
+        if not subscription_key:
+            raise ValueError(
+                f"Missing environment variable {llm.API_KEY_NAME} referenced by API_KEY_NAME in "
+                f"{llm_config_file}. Set it in LLM/.env or in the shell environment."
+            )
+
+        return cls(
+            endpoint=llm.ENDPOINT,
+            model_name=llm.engine,
+            deployment=deployment if deployment is not None else llm.engine,
+            subscription_key=subscription_key,
+            api_version=llm.API_VERSION,
+            max_completion_tokens=(
+                max_completion_tokens if max_completion_tokens is not None else llm.max_tokens
+            ),
+            llm=llm,
+        )
 
     def encode_image_data_url(self, image_path: Path) -> str:
         """

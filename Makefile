@@ -8,12 +8,12 @@ PRE_COMMIT ?= pre-commit
 
 # Runtime dependencies only - this is what the PBS cluster jobs need.
 install:
-	$(PIP) install -e .
+	$(PIP) install -r requirements.txt
 
 # Runtime + dev tooling (ruff, pyright, pre-commit), plus the git hook.
 # pip has no way to pull an extra automatically, so `make install-dev` is the
 # single entry point instead of remembering `pip install -e ".[dev]"`.
-install-dev:
+install-dev: install
 	$(PIP) install -e ".[dev]"
 	$(PRE_COMMIT) install
 
