@@ -1,16 +1,12 @@
-import base64
 import json
-import mimetypes
-import os
-from io import BytesIO
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Union
 
 import numpy as np
-from openai import AzureOpenAI
 from PIL import Image
 
-from LLM.LLMAzureOpenAI.LLMAzureOpenAI import LLMAzureOpenAI
+from LLM.llm_base import BaseLLM
+from LLM.llm_factory import create_llm
 from utility.utility import logger
 
 """GPT Model for tagging and description"""
@@ -19,78 +15,88 @@ DEFAULT_LLM_CONFIG_FILE = (
     Path(__file__).resolve().parent.parent / "LLM" / "conf" / "azure_gpt52.yaml"
 )
 
+# LABELED PROMPT
+ANNOTATION_PROMPT = """You will receive:
+1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image.
+The second image shows the object and the first one gives the context of the image.
+Your task:
+- Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
+- The tags should be ONLY one of the following ones: "Wide and large blue Lego block", "Small blue Lego block", "Yellow Lego block", "Wide red Lego Block with 4 studs", "Green Lego block", "2x2 Blue and red Lego block", "Tall red Lego block", " White and red box","Blue and white small box", "Big Black Bottle","Big White bottle", "Metallic Wrench", "Orange Lego block", "Orange small box", " White and green box", "Full robotic arm", "Partial robotic arm", "Unknown object".
+- Do not change the tags neither use other tags that are not in the list. If you are not sure about the tag, use "Unknown object". For the detection, you can use the context of the whole image.
+Return ONLY raw JSON.
+Do not use markdown code fences.
+Do not write ```json.
+{
+"tag": "string",
+"description": "string"
+}
+"""
+
+# UNLABELED TEXT PROMPT, kept for the runs that do not use a fixed tag list.
+FREEFORM_ANNOTATION_PROMPT = """You will receive:
+1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image.
+The second image shows the object and the first one gives the context of the image.
+Your task:
+- Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
+- The tagging should be ultra-specific. For example, instead of saying "lego block", say "furthest blue lego block with 4 studs ". Add the colour in the tag.
+Return ONLY raw JSON.
+Do not use markdown code fences.
+Do not write ```json.
+{
+"tag": "string",
+"description": "string"
+}
+"""
+
 
 class GPTAnnotator:
-    def __init__(
-        self,
-        endpoint: str,
-        model_name: str,
-        deployment: str,
-        subscription_key: str,
-        api_version: str,
-        max_completion_tokens: int = 16384,
-        llm: Optional[LLMAzureOpenAI] = None,
-    ) -> None:
+    def __init__(self, llm: BaseLLM, prompt: str = ANNOTATION_PROMPT) -> None:
         """
-        Initialize the GPTAnnotator with Azure OpenAI client.
+        Initialize the GPTAnnotator with an LLM backend.
 
         Parameters
         ----------
-        endpoint : str
-            The Azure OpenAI endpoint URL.
-        model_name : str
-            The name of the GPT model to use.
-        deployment : str
-            The deployment name for the GPT model.
-        subscription_key : str
-            The subscription key for the Azure OpenAI service.
-        api_version : str
-            The API version for the Azure OpenAI service.
-        max_completion_tokens : int
-            The maximum number of tokens to generate in the completion. Default is 16384.
-        llm : Optional[LLMAzureOpenAI]
-            The LLM backend the settings were taken from, when the annotator was built with
-            :meth:`from_config`. It is kept for reference (engine, generation parameters,
-            plain-text queries); the vision requests are issued through :attr:`client` because
-            the shared backend flattens multimodal message content into plain text.
+        llm : BaseLLM
+            The backend used to annotate the objects. It must support images, which is the case
+            for the Azure OpenAI, OpenAI, Anthropic, Gemini and GLM backends.
+        prompt : str
+            The instructions sent with every pair of images.
+
+        Raises
+        ------
+        ValueError
+            If the backend does not support images.
         """
-        self.client = AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=subscription_key,
-        )
-        self.endpoint = endpoint
-        self.model_name = model_name
-        self.deployment = deployment
-        self.api_version = api_version
-        self.max_completion_tokens = max_completion_tokens
+        if not llm.SUPPORTS_IMAGES:
+            raise ValueError(
+                f"{type(llm).__name__} does not support images and cannot be used for annotation."
+            )
+
         self.llm = llm
+        self.prompt = prompt
 
     @classmethod
     def from_config(
         cls,
         llm_config_file: Union[str, Path] = DEFAULT_LLM_CONFIG_FILE,
-        deployment: Optional[str] = None,
-        max_completion_tokens: Optional[int] = None,
+        prompt: str = ANNOTATION_PROMPT,
+        **overrides: Any,
     ) -> "GPTAnnotator":
         """
         Build a GPTAnnotator from an LLM YAML configuration file.
 
-        The configuration is read through :class:`LLMAzureOpenAI`, so the same files used by
-        the LLM package (see ``LLM/conf``) also drive the annotator. The endpoint and the API
-        key are read from the environment variables named by ``ENDPOINT_ENV`` and
-        ``API_KEY_NAME``; ``LLM/.env`` is loaded automatically when present.
+        The configuration file carries the model, the endpoint, the credentials and the request
+        parameters (see ``LLM/conf``), and also selects the backend: pointing this at
+        ``claude-46-opus.yaml`` instead of ``azure_gpt52.yaml`` swaps the provider.
 
         Parameters
         ----------
         llm_config_file : Union[str, Path]
             The path of the YAML configuration file. Defaults to ``LLM/conf/azure_gpt52.yaml``.
-        deployment : Optional[str]
-            The Azure deployment name. Defaults to the model name (``LLM_VERSION``), which is
-            the usual convention for these deployments.
-        max_completion_tokens : Optional[int]
-            The maximum number of tokens to generate in the completion. Defaults to the
-            ``LLM_CONFIG.max_tokens`` value of the configuration file (4096 when unset).
+        prompt : str
+            The instructions sent with every pair of images.
+        **overrides : Any
+            Forwarded to the backend's ``from_config``, e.g. ``params={"seed": 7}``.
 
         Returns
         -------
@@ -102,79 +108,49 @@ class GPTAnnotator:
         FileNotFoundError
             If the configuration file does not exist or is not a YAML file.
         ValueError
-            If the environment variable holding the API key is not set.
+            If the selected backend does not support images.
         """
-        llm = LLMAzureOpenAI(llm_config_file=str(llm_config_file))
+        return cls(create_llm(llm_config_file, **overrides), prompt=prompt)
 
-        subscription_key = os.environ.get(llm.API_KEY_NAME)
-        if not subscription_key:
-            raise ValueError(
-                f"Missing environment variable {llm.API_KEY_NAME} referenced by API_KEY_NAME in "
-                f"{llm_config_file}. Set it in LLM/.env or in the shell environment."
-            )
-
-        return cls(
-            endpoint=llm.ENDPOINT,
-            model_name=llm.engine,
-            deployment=deployment if deployment is not None else llm.engine,
-            subscription_key=subscription_key,
-            api_version=llm.API_VERSION,
-            max_completion_tokens=(
-                max_completion_tokens if max_completion_tokens is not None else llm.max_tokens
-            ),
-            llm=llm,
-        )
-
-    def encode_image_data_url(self, image_path: Path) -> str:
+    @staticmethod
+    def to_image(image: Union[str, Path, Image.Image, np.ndarray]) -> Image.Image:
         """
-        Encode an image file as a base64 data URL.
+        Convert any supported image input into a PIL image.
 
         Parameters
         ----------
-        image_path : Path
-            The path to the image file to be encoded.
+        image : Union[str, Path, Image.Image, np.ndarray]
+            The path of an image, the image itself, or an array holding it. Floating point
+            arrays are assumed to be in the [0, 1] range.
 
         Returns
         -------
-        str
-            A base64-encoded data URL representing the image.
+        Image.Image
+            The image as a PIL object.
 
         Raises
         ------
         FileNotFoundError
-            If the specified image file does not exist.
+            If a path is given but no file exists there.
+        TypeError
+            If the input is of an unsupported type.
         """
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image file not found: {image_path}")
+        if isinstance(image, (str, Path)):
+            image_path = Path(image)
+            if not image_path.exists():
+                raise FileNotFoundError(f"Image file not found: {image_path}")
+            return Image.open(image_path)
 
-        mime_type, _ = mimetypes.guess_type(str(image_path))
-        if mime_type is None:
-            mime_type = "application/octet-stream"
+        if isinstance(image, Image.Image):
+            return image
 
-        image_bytes = image_path.read_bytes()
-        encoded = base64.b64encode(image_bytes).decode("ascii")
-        return f"data:{mime_type};base64,{encoded}"
+        if isinstance(image, np.ndarray):
+            array = image
+            if np.issubdtype(array.dtype, np.floating):
+                array = (array * 255).clip(0, 255)
+            return Image.fromarray(array.astype(np.uint8))
 
-    def encode_image_data_from_array(self, image_array: np.ndarray) -> str:
-        """
-        Encode a NumPy array representing an image as a base64 data URL.
-
-        Parameters
-        ----------
-        image_array : np.ndarray
-            The NumPy array representing the image to be encoded.
-
-        Returns
-        -------
-        str
-            A base64-encoded data URL representing the image.
-        """
-        image = Image.fromarray((image_array * 255).astype(np.uint8))
-        mime_type = "image/png"
-        with BytesIO() as buffer:
-            image.save(buffer, format="PNG")
-            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-        return f"data:{mime_type};base64,{encoded}"
+        raise TypeError("image must be a str, Path, PIL.Image.Image, or np.ndarray")
 
     def main_gpt(
         self,
@@ -183,13 +159,13 @@ class GPTAnnotator:
         bboxes: list[list[int]],
     ) -> dict:
         """
-        Query GPT for the tag and description of the objects passed as inputs.
+        Query the model for the tag and description of the objects passed as inputs.
 
-        It applies GPT over the original RGB image and the cropped images of the objects obtained with SAM, and then it returns a dictionary with the tagging and description of each object.
+        It applies the model over the original RGB image and the cropped images of the objects obtained with SAM, and then it returns a dictionary with the tagging and description of each object.
 
         Parameters
         ----------
-        image : Union[str, Path, Image.Image, np.ndarray]
+        image_path : Union[str, Path, Image.Image, np.ndarray]
             The path of the original RGB image or the image itself.
         segments : list[np.ndarray]
             The cropped images of the objects obtained with SAM.
@@ -200,102 +176,68 @@ class GPTAnnotator:
         -------
         dict
             A dictionary with the tagging and description of each object. Each key is the name of the object (for example, "mask_0") and each value is another dictionary with the following keys:
-                - "tag": the tag of the object obtained by GPT. String.
-                - "description": the description of the object obtained by GPT. String.
-                - "mask": the path of the mask obtained for the object. String.
+                - "tag": the tag of the object obtained by the model. String.
+                - "description": the description of the object obtained by the model. String.
                 - "bbox": the bounding box of the object obtained by SAM. List of 4 integers [x_min, y_min, width, height].
 
         Raises
         ------
         TypeError
-            If the image_path is not a string, Path, or PIL.Image.Image.
+            If the image_path is not a string, Path, PIL.Image.Image, or np.ndarray.
         """
-        if isinstance(image_path, str) or isinstance(image_path, Path):
-            if isinstance(image_path, str):
-                image_path = Path(image_path)
-            image_encoded = self.encode_image_data_url(image_path)
-        elif isinstance(image_path, Image.Image):
-            image_encoded = self.encode_image_data_from_array(np.array(image_path))
-        elif isinstance(image_path, np.ndarray):
-            image_encoded = self.encode_image_data_from_array(image_path)
-        else:
-            raise TypeError("image_path must be a str, Path, PIL.Image.Image, or np.ndarray")
+        full_image = self.to_image(image_path)
         dict_outputs = {}
 
-        # UNLABELED TEXT PROMPT
-        # question_2 = """You will receive:
-        # 1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image.
-        # The second image shows the object and the first one gives the context of the image.
-        # Your task:
-        # - Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
-        # - The tagging should be ultra-specific. For example, instead of saying "lego block", say "furthest blue lego block with 4 studs ". Add the colour in the tag.
-        # Return ONLY raw JSON.
-        # Do not use markdown code fences.
-        # Do not write ```json.
-        # {
-        # "tag": "string",
-        # "description": "string"
-        # }
-        # """
+        for index, segment in enumerate(segments):
+            crop = self.to_image(segment)
 
-        # LABELED PROMPT
-        question_2 = """You will receive:
-        1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image. 
-        The second image shows the object and the first one gives the context of the image.
-        Your task:
-        - Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
-        - The tags should be ONLY one of the following ones: "Wide and large blue Lego block", "Small blue Lego block", "Yellow Lego block", "Wide red Lego Block with 4 studs", "Green Lego block", "2x2 Blue and red Lego block", "Tall red Lego block", " White and red box","Blue and white small box", "Big Black Bottle","Big White bottle", "Metallic Wrench", "Orange Lego block", "Orange small box", " White and green box", "Full robotic arm", "Partial robotic arm", "Unknown object". 
-        - Do not change the tags neither use other tags that are not in the list. If you are not sure about the tag, use "Unknown object". For the detection, you can use the context of the whole image.
-        Return ONLY raw JSON.
-        Do not use markdown code fences.
-        Do not write ```json.
-        {
-        "tag": "string",
-        "description": "string"
-        }
-        """
-        for p in range(len(segments)):
-            crop_url = self.encode_image_data_from_array(segments[p])
-            response = self.client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant.",
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": question_2},
-                            {"type": "text", "text": "Full image:"},
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": image_encoded, "detail": "auto"},
-                            },
-                            {"type": "text", "text": "Cropped image:"},
-                            {"type": "image_url", "image_url": {"url": crop_url, "detail": "auto"}},
-                        ],
-                    },
-                ],
-                max_completion_tokens=self.max_completion_tokens,
-                model=self.deployment,
+            success, raw = self.llm.query(
+                f"{self.prompt}\nThe first image is the full scene, the second one is the cropped object.",
+                images=[full_image, crop],
             )
-            raw = response.choices[0].message.content
-            if raw is None:
-                logger.error(f"GPT response is None for mask_{p}. Setting default values.")
-                dict_outputs[f"mask_{p}"] = {
-                    "tag": "unknown",
-                    "description": "unknown",
-                    "full_object": False,
-                }
-            try:
-                dict_outputs[f"mask_{p}"] = json.loads(str(raw))
-            except json.JSONDecodeError:
-                logger.error(f"Error decoding JSON for mask_{p}: {raw}")
-                dict_outputs[f"mask_{p}"] = {
-                    "tag": "unknown",
-                    "description": "unknown",
-                    "full_object": False,
-                }
-            dict_outputs[f"mask_{p}"]["bbox"] = bboxes[p]
+
+            dict_outputs[f"mask_{index}"] = self._parse_answer(success, raw, index)
+            dict_outputs[f"mask_{index}"]["bbox"] = bboxes[index]
 
         return dict_outputs
+
+    @staticmethod
+    def _parse_answer(success: bool, raw: str, index: int) -> dict:
+        """
+        Turn a model answer into the annotation dictionary of one object.
+
+        Parameters
+        ----------
+        success : bool
+            Whether the query reached the model.
+        raw : str
+            The raw answer of the model.
+        index : int
+            The index of the object, used for logging.
+
+        Returns
+        -------
+        dict
+            The parsed annotation, or a placeholder when the answer is missing or malformed.
+        """
+        unknown = {"tag": "unknown", "description": "unknown", "full_object": False}
+
+        if not success or not raw:
+            logger.error(f"No response for mask_{index}. Setting default values.")
+            return dict(unknown)
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.error(f"Error decoding JSON for mask_{index}: {raw}")
+            return dict(unknown)
+
+        if not isinstance(parsed, dict):
+            logger.error(f"Unexpected JSON payload for mask_{index}: {raw}")
+            return dict(unknown)
+
+        return parsed
+
+    def close(self) -> None:
+        """Release the backend connection."""
+        self.llm.close()

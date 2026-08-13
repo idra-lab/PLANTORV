@@ -7,27 +7,6 @@ name = "plantorv"
 version = "0.1.0"
 description = "Object segmentation, VLM tagging, and depth estimation pipeline."
 requires-python = ">=3.10"
-<<<<<<< HEAD
-=======
-dependencies = [
-    "matplotlib",
-    "scikit-image",
-    "ultralytics>=8.3.0", # 8.3.0 is the first release exposing the SAM Predictor API
-    "numpy",
-    "pandas",
-    "opencv-python",
-    "torch",
-    "torchvision",
-    "Pillow",
-    # Only still needed by the legacy top-level samdamcoords.py; segmentation/
-    # went through Ultralytics. Drop this once that script is retired.
-    "segment-anything",
-    "pyyaml",
-    "python-dotenv",
-    "openai",
-    "loguru",
-]
->>>>>>> c8aa1ec3a55453998cc6d40284f81b2dd2f698bf
 
 [project.optional-dependencies]
 dev = [
@@ -39,10 +18,7 @@ dev = [
 [tool.setuptools]
 packages = []
 
-<<<<<<< HEAD
 # Linter/type-checker settings live in .dev-config/ to keep this file focused on packaging. 
-=======
->>>>>>> c8aa1ec3a55453998cc6d40284f81b2dd2f698bf
 [tool.ruff]
 extend = ".dev-config/ruff.toml"
 

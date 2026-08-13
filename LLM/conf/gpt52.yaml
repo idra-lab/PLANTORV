@@ -8,3 +8,8 @@ LLM_VERSION : "gpt-5.2"
 API_KEY_NAME : "OPENAI_API_KEY"
 BASE_URL : "None"
 ORGANIZATION : "None"
+
+# The gpt-5 family rejects temperature/top_p and renamed the token cap.
+LLM_CONFIG:
+  max_completion_tokens: 16384
+  seed: 42

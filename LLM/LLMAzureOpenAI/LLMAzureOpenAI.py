@@ -4,151 +4,97 @@
 # This license does not override any rights or obligations established in the Grant Agreement.
 # Redistribution or use outside the project is prohibited.
 
-"""Azure OpenAI backend"""
+"""Azure OpenAI backend."""
 
-import yaml
 import os
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, cast
 
 from openai import AzureOpenAI
 
 try:
-    from llm_base import BaseLLM, logger, resolve_config_value
+    from llm_base import BaseLLM, image_data_url, logger, resolve_config_value
 except Exception:
     try:
-        from ..llm_base import BaseLLM, logger, resolve_config_value
+        from ..llm_base import BaseLLM, image_data_url, logger, resolve_config_value
     except Exception:
         import sys
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-        from llm_base import BaseLLM, logger, resolve_config_value
+        from llm_base import BaseLLM, image_data_url, logger, resolve_config_value
 
 
-class LLM(BaseLLM):
-    """Azure OpenAI chat-completions implementation."""
+class LLMAzureOpenAI(BaseLLM):
+    """Azure OpenAI chat-completions backend.
 
-    def __init__(
-        self,
-        llm_config_file: str = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "conf",
-            "azure_gpt40-32k.yaml",
-        ),
-        examples_yaml_file: Iterable[str] = ("",),
-        gpt5_mini: Optional[bool] = None,
-    ) -> None:
-        """Initialize the Azure OpenAI backend from a YAML config.
+    Configuration keys:
+        LLM_VERSION: Model name.
+        DEPLOYMENT: Azure deployment name. Defaults to ``LLM_VERSION``.
+        API_KEY_NAME: Environment variable holding the API key.
+        ENDPOINT / ENDPOINT_ENV: Endpoint URL, or the environment variable holding it.
+        API_VERSION: Azure API version.
+        IMAGE_DETAIL: Detail level sent with images ("auto", "low", "high").
+        LLM_CONFIG: Request parameters, forwarded as-is. Use the names the deployment expects,
+            e.g. ``max_completion_tokens`` for the gpt-5 family and ``max_tokens`` before it.
+    """
 
-        Args:
-            llm_config_file (str): Path to YAML with Azure settings.
-            examples_yaml_file (Iterable[str]): Optional few-shot examples.
-            gpt5_mini (Optional[bool]): Optional override for reduced parameter mode.
+    PROVIDER = "azure_openai"
+    SUPPORTS_IMAGES = True
 
-        Raises:
-            FileNotFoundError: If the YAML config file is missing.
-            KeyError: If required config values are missing.
-        """
-        llm_base_config = {}
+    def _setup(self) -> None:
+        """Read the Azure connection settings from the configuration."""
+        self.deployment = self.config.get("DEPLOYMENT") or self.model
+        self.api_key_name = self.config.get("API_KEY_NAME") or "AZURE_OPENAI_API_KEY"
+        self.api_key = self.config.get("API_KEY")
+        self.endpoint = resolve_config_value(self.config, "ENDPOINT", allow_bare_env=True)
+        self.api_version = self.config.get("API_VERSION")
+        self.image_detail = self.config.get("IMAGE_DETAIL", "auto")
 
-        logger.info("LLM configuration file: %s", llm_config_file)
-        if llm_config_file.endswith(".yaml") and os.path.isfile(llm_config_file):
-            with open(llm_config_file) as file:
-                llm_connection_config = yaml.load(file, Loader=yaml.FullLoader)
+        logger.info("Model: %s (deployment: %s)", self.model, self.deployment)
+        logger.info("Endpoint: %s", self.endpoint)
+        logger.info("API version: %s", self.api_version)
+        logger.info("Request parameters: %s", self.request_params())
 
-                self.engine       = llm_connection_config["LLM_VERSION"]
-                self.API_KEY_NAME = llm_connection_config["API_KEY_NAME"]
-                self.ENDPOINT     = resolve_config_value(llm_connection_config, "ENDPOINT", allow_bare_env=True)
-                self.API_VERSION  = llm_connection_config["API_VERSION"]
-                auto_gpt5_mode = ("gpt" in self.engine.lower() and "5" in self.engine.lower())
-                self.gpt5_mini = auto_gpt5_mode if gpt5_mini is None else gpt5_mini
-                llm_base_config = llm_connection_config.get("LLM_CONFIG", {})
-                if not isinstance(llm_base_config, dict):
-                    raise ValueError("LLM_CONFIG must be a dict when provided.")
-
-                logger.info("LLM_VERSION: %s", self.engine)
-                logger.info("API_KEY_NAME: %s", self.API_KEY_NAME)
-                logger.info("ENDPOINT: %s", self.ENDPOINT)
-                logger.info("API_VERSION: %s", self.API_VERSION)
-                logger.info("LLM_CONFIG: %s", llm_base_config)
-
-        else:
-            raise FileNotFoundError("The selected file {} does not exist or is not a yaml file".format(llm_config_file))
-
-        super().__init__(examples_yaml_file=examples_yaml_file, llm_config=llm_base_config)
-
-    def _connect(self, messages: List[Dict[str, Any]]) -> Any:
-        """Send a chat completion request and return the raw response.
-
-        Args:
-            messages (List[Dict[str, Any]]): Chat-style message list.
+    def _create_client(self) -> AzureOpenAI:
+        """Create the Azure OpenAI client.
 
         Returns:
-            Any: Azure OpenAI SDK response object.
+            AzureOpenAI: Configured SDK client.
 
         Raises:
-            KeyError: If the API key environment variable is missing.
+            ValueError: If the API key or the endpoint is missing.
         """
-        client = AzureOpenAI(
-            api_key        = os.environ[self.API_KEY_NAME],
-            azure_endpoint = self.ENDPOINT,
-            api_version    = self.API_VERSION,
+        api_key = self.api_key or os.environ.get(self.api_key_name)
+        if not api_key:
+            raise ValueError(
+                "Missing Azure OpenAI API key. Set {} in LLM/.env or in the shell "
+                "environment, or provide API_KEY in the config.".format(self.api_key_name)
+            )
+        if not self.endpoint:
+            raise ValueError("Missing Azure OpenAI endpoint. Set ENDPOINT or ENDPOINT_ENV in the config.")
+
+        return AzureOpenAI(
+            api_key=api_key,
+            azure_endpoint=self.endpoint,
+            api_version=self.api_version,
         )
 
-        if not client:
-            raise ConnectionError("Failed to connect to Azure OpenAI. Check your API key and endpoint configuration.")
+    def _send(self, client: AzureOpenAI, messages: List[Dict[str, Any]]) -> Any:
+        """Send a chat completion request."""
+        return client.chat.completions.create(
+            model=self.deployment,
+            messages=cast(Any, messages),
+            **self.request_params(),
+        )
 
-        # Added support for gpt-5-mini which does not support all parameters
-        if not self.gpt5_mini:
-            response = client.chat.completions.create(
-                model = self.engine,
-                **self._build_completion_kwargs(messages)
-            )
-        else:
-            prepared_messages = self._prepare_messages(messages)
-            response = client.chat.completions.create(
-                model             = self.engine,
-                messages          = prepared_messages,
-                seed              = self.seed,
-                stop              = self.stop,
-            )
-        
-        return response
+    def _extract_text(self, response: Any) -> str:
+        """Extract the assistant message content."""
+        return response.choices[0].message.content or ""
 
-    def _extract_content(self, response: Any) -> str:
-        """Extract the assistant message content.
-
-        Args:
-            response (Any): Azure OpenAI SDK response object.
-
-        Returns:
-            str: Assistant response text.
-        """
-        return response.choices[0].message.content
-
-    def _extract_completion_tokens(self, response: Any) -> int:
-        """Extract completion token count if available.
-
-        Args:
-            response (Any): Azure OpenAI SDK response object.
-
-        Returns:
-            int: Completion token count.
-        """
-        if hasattr(response, "usage") and response.usage is not None:
-            return response.usage.completion_tokens
-        return 0
-
-    def _extract_prompt_tokens(self, response: Any) -> int:
-        """Extract prompt token count if available.
-
-        Args:
-            response (Any): Azure OpenAI SDK response object.
-
-        Returns:
-            int: Prompt token count.
-        """
-        if hasattr(response, "usage") and response.usage is not None:
-            return response.usage.prompt_tokens
-        return 0
+    def image_part(self, image: Any) -> Dict[str, Any]:
+        """Encode an image as an OpenAI ``image_url`` content part."""
+        return {
+            "type": "image_url",
+            "image_url": {"url": image_data_url(image), "detail": self.image_detail},
+        }
 
 
-LLMAzureOpenAI = LLM
+LLM = LLMAzureOpenAI

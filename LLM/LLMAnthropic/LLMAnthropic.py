@@ -4,199 +4,137 @@
 # This license does not override any rights or obligations established in the Grant Agreement.
 # Redistribution or use outside the project is prohibited.
 
-"""Anthropic API backend for the shared BaseLLM interface."""
+"""Anthropic backend."""
 
 import os
-import yaml
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from anthropic import Anthropic, AnthropicFoundry
 
 try:
-    from llm_base import BaseLLM, logger, resolve_config_value
+    from llm_base import BaseLLM, encode_image, logger, resolve_config_value
 except Exception:
     try:
-        from ..llm_base import BaseLLM, logger, resolve_config_value
+        from ..llm_base import BaseLLM, encode_image, logger, resolve_config_value
     except Exception:
         import sys
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-        from llm_base import BaseLLM, logger, resolve_config_value
+        from llm_base import BaseLLM, encode_image, logger, resolve_config_value
 
 
 class LLMAnthropic(BaseLLM):
-    """Anthropic Messages API implementation."""
+    """Anthropic Messages API backend.
 
-    def __init__(
-        self,
-        llm_config_file: str,
-        examples_yaml_file: Iterable[str] = ("",),
-    ) -> None:
-        """Initialize the Anthropic backend from a YAML config.
+    Configuration keys:
+        LLM_VERSION: Model name.
+        API_KEY_NAME: Environment variable holding the API key.
+        BASE_URL: Optional base URL. When set, the Foundry client is used.
+        LLM_CONFIG: Request parameters, forwarded as-is. ``max_tokens`` is required by the API,
+            so it is always sent.
+    """
 
-        Args:
-            llm_config_file (str): Path to YAML with API settings.
-            examples_yaml_file (Iterable[str]): Optional few-shot examples.
+    PROVIDER = "anthropic"
+    SUPPORTS_IMAGES = True
 
-        Raises:
-            FileNotFoundError: If the YAML config file is missing.
-            ValueError: If required config values are missing.
-        """
-        self._client = None
+    DEFAULT_PARAMS = {"max_tokens": 4096}
+    PARAM_ALIASES = {"max_completion_tokens": "max_tokens", "stop": "stop_sequences"}
 
-        logger.info("LLM configuration file: %s", llm_config_file)
-        if not llm_config_file.endswith(".yaml") or not os.path.isfile(llm_config_file):
-            raise FileNotFoundError(
-                "The selected file {} does not exist or is not a yaml file".format(llm_config_file)
-            )
+    def _setup(self) -> None:
+        """Read the Anthropic connection settings from the configuration."""
+        self.api_key_name = self.config.get("API_KEY_NAME") or self.config.get("API_KEY_ENV") or "ANTHROPIC_API_KEY"
+        self.api_key = self.config.get("API_KEY")
+        self.base_url = resolve_config_value(self.config, "BASE_URL", None, allow_bare_env=True)
 
-        with open(llm_config_file) as file:
-            llm_connection_config = yaml.load(file, Loader=yaml.FullLoader)
+        logger.info("Model: %s", self.model)
+        logger.info("Base URL: %s", self.base_url)
+        logger.info("Request parameters: %s", self.request_params())
 
-        self.engine = (
-            llm_connection_config.get("LLM_VERSION")
-            or llm_connection_config.get("MODEL")
-            or llm_connection_config.get("MODEL_NAME")
-        )
-        if not self.engine:
-            raise ValueError("Missing model name in config. Expected LLM_VERSION (or MODEL/MODEL_NAME).")
-
-        self.API_KEY_NAME = (
-            llm_connection_config.get("API_KEY_NAME")
-            or llm_connection_config.get("API_KEY_ENV")
-            or "ANTHROPIC_API_KEY"
-        )
-        self.API_KEY = llm_connection_config.get("API_KEY", None)
-        self.BASE_URL = resolve_config_value(llm_connection_config, "BASE_URL", None, allow_bare_env=True)
-
-        config_from_yaml = llm_connection_config.get("LLM_CONFIG", {})
-        if not isinstance(config_from_yaml, dict):
-            raise ValueError("LLM_CONFIG must be a dict when provided.")
-
-        logger.info("LLM_VERSION: %s", self.engine)
-        logger.info("API_KEY_NAME: %s", self.API_KEY_NAME)
-        logger.info("BASE_URL: %s", self.BASE_URL)
-        logger.info("LLM_CONFIG: %s", config_from_yaml)
-
-        super().__init__(examples_yaml_file=examples_yaml_file, llm_config=config_from_yaml)
-
-    @staticmethod
-    def _normalize_messages(messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, str]], Optional[str]]:
-        """Normalize shared message format to Anthropic-compatible payload."""
-        system_chunks: List[str] = []
-        normalized: List[Dict[str, str]] = []
-
-        for msg in messages:
-            if isinstance(msg, dict):
-                role = str(msg.get("role", "user")).strip().lower()
-                content = msg.get("content", "")
-            else:
-                role = "system"
-                content = str(msg)
-
-            if isinstance(content, list):
-                content = " ".join(str(chunk) for chunk in content)
-            else:
-                content = str(content)
-
-            if role == "system":
-                if content.strip():
-                    system_chunks.append(content)
-                continue
-
-            if role not in ("user", "assistant"):
-                role = "user"
-
-            normalized.append({"role": role, "content": content})
-
-        if not normalized:
-            normalized.append({"role": "user", "content": ""})
-
-        system_prompt = "\n\n".join(chunk for chunk in system_chunks if chunk.strip())
-        return normalized, (system_prompt if system_prompt else None)
-
-    def _connect(self, messages: List[Dict[str, Any]]) -> Any:
-        """Send a messages request and return the raw response.
-
-        Args:
-            messages (List[Dict[str, Any]]): Chat-style message list.
+    def _create_client(self) -> Any:
+        """Create the Anthropic client.
 
         Returns:
-            Any: Anthropic SDK response object.
+            Any: ``AnthropicFoundry`` when a base URL is configured, ``Anthropic`` otherwise.
 
         Raises:
             ValueError: If the API key is missing.
         """
-        api_key = self.API_KEY or os.environ.get(self.API_KEY_NAME)
+        api_key = self.api_key or os.environ.get(self.api_key_name)
         if not api_key:
             raise ValueError(
-                "Missing Anthropic API key. Set {} or provide API_KEY in config.".format(self.API_KEY_NAME)
+                "Missing Anthropic API key. Set {} or provide API_KEY in the config.".format(self.api_key_name)
             )
 
-        client_kwargs = {"api_key": api_key}
-        if self.BASE_URL not in [None, "", "None"]:
-            client_kwargs["base_url"] = self.BASE_URL
+        if self.base_url:
+            logger.info("Initializing Anthropic client with base URL: %s", self.base_url)
+            return AnthropicFoundry(api_key=api_key, base_url=self.base_url)
 
-        if self._client is None:
-            if self.BASE_URL not in [None, "", "None"]:
-                logger.info("Initializing Anthropic client with base URL: %s", self.BASE_URL)
-                self._client = AnthropicFoundry(**client_kwargs)
-            else:
-                logger.info("Initializing Anthropic client without base URL")
-                self._client = Anthropic(**client_kwargs)
-        client = self._client
+        return Anthropic(api_key=api_key)
 
-        normalized_messages, system_prompt = self._normalize_messages(messages)
+    @staticmethod
+    def _split_system(messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        """Split system messages out of the message list, as the API expects them apart."""
+        system_chunks: List[str] = []
+        conversation: List[Dict[str, Any]] = []
+
+        for message in messages:
+            role = str(message.get("role", "user")).strip().lower()
+            content = message.get("content", "")
+
+            if role == "system":
+                if isinstance(content, str) and content.strip():
+                    system_chunks.append(content)
+                continue
+
+            conversation.append({"role": role if role in ("user", "assistant") else "user", "content": content})
+
+        if not conversation:
+            conversation.append({"role": "user", "content": ""})
+
+        system_prompt = "\n\n".join(system_chunks)
+        return conversation, (system_prompt or None)
+
+    def _send(self, client: Any, messages: List[Dict[str, Any]]) -> Any:
+        """Send a messages request."""
+        conversation, system_prompt = self._split_system(messages)
 
         request_kwargs: Dict[str, Any] = {
-            "model": self.engine,
-            "messages": normalized_messages,
-            "max_tokens": self.max_tokens if self.max_tokens is not None else BaseLLM.llm_default_config["max_tokens"],
+            "model": self.model,
+            "messages": conversation,
+            **self.request_params(),
         }
-
         if system_prompt is not None:
             request_kwargs["system"] = system_prompt
-        if self.temperature is not None:
-            request_kwargs["temperature"] = self.temperature
-        if self.top_p is not None and self.top_p > 0:
-            request_kwargs["top_p"] = self.top_p
-        if self.stop not in [None, "", []]:
-            if isinstance(self.stop, str):
-                request_kwargs["stop_sequences"] = [self.stop]
-            else:
-                request_kwargs["stop_sequences"] = [str(seq) for seq in self.stop if str(seq).strip()]
 
-        response = client.messages.create(**request_kwargs)
-        return response
+        return client.messages.create(**request_kwargs)
 
-    def _extract_content(self, response: Any) -> str:
-        """Extract concatenated assistant text content."""
-        if not hasattr(response, "content") or response.content is None:
-            return ""
-
-        chunks: List[str] = []
-        for block in response.content:
-            block_type = getattr(block, "type", None)
-            text = getattr(block, "text", None)
-            if block_type == "text" and text is not None:
-                chunks.append(text)
-
+    def _extract_text(self, response: Any) -> str:
+        """Concatenate the text blocks of the response."""
+        blocks = getattr(response, "content", None) or []
+        chunks = [
+            block.text
+            for block in blocks
+            if getattr(block, "type", None) == "text" and getattr(block, "text", None) is not None
+        ]
         return "".join(chunks).strip()
 
-    def _extract_completion_tokens(self, response: Any) -> int:
-        """Extract completion token count if available."""
-        if hasattr(response, "usage") and response.usage is not None:
-            output_tokens = getattr(response.usage, "output_tokens", None)
-            if isinstance(output_tokens, int):
-                return output_tokens
-        return 0
+    def _extract_usage(self, response: Any) -> Dict[str, int]:
+        """Extract token usage, which Anthropic names input/output tokens."""
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return {"prompt_tokens": 0, "completion_tokens": 0}
 
-    def _extract_prompt_tokens(self, response: Any) -> int:
-        """Extract prompt token count if available."""
-        if hasattr(response, "usage") and response.usage is not None:
-            input_tokens = getattr(response.usage, "input_tokens", None)
-            if isinstance(input_tokens, int):
-                return input_tokens
-        return 0
+        return {
+            "prompt_tokens": int(getattr(usage, "input_tokens", 0) or 0),
+            "completion_tokens": int(getattr(usage, "output_tokens", 0) or 0),
+        }
+
+    def image_part(self, image: Any) -> Dict[str, Any]:
+        """Encode an image as an Anthropic base64 image block."""
+        mime_type, encoded = encode_image(image)
+        return {
+            "type": "image",
+            "source": {"type": "base64", "media_type": mime_type, "data": encoded},
+        }
 
 
 LLM = LLMAnthropic

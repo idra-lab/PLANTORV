@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from PIL import Image
 
 from mapping.rgbd_mapper import main_coords
-from scene_understanding.gpt_annotator import GPTAnnotator
+from scene_understanding.gpt_annotator import DEFAULT_LLM_CONFIG_FILE, GPTAnnotator
 from segmentation.fastsam_model import FastSAMModel
 from utility.utility import logger
 
@@ -88,19 +88,13 @@ def main(args: argparse.Namespace) -> None:
         debug_masks=args.debug_masks,
     )
 
-    # Instantiate the GPT annotator
-    model_name = "gpt-5.2-chat"
-    deployment = "gpt-5.2-chat"
-    api_version = "2024-12-01-preview"
-    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    if not azure_endpoint:
-        logger.error("Azure endpoint is not set. Please check your environment variables.")
+    # Instantiate the annotator. The YAML file selects the model, the endpoint, the credentials
+    # and the request parameters, so switching model means pointing --llm-config elsewhere.
+    try:
+        gpt = GPTAnnotator.from_config(args.llm_config)
+    except (FileNotFoundError, ValueError) as error:
+        logger.error(f"Unable to configure the annotator: {error}")
         sys.exit(1)
-    azure_key = os.getenv("AZURE_OPENAI_API_KEY")
-    if not azure_key:
-        logger.error("Azure API key is not set. Please check your environment variables.")
-        sys.exit(1)
-    gpt = GPTAnnotator(azure_endpoint, model_name, deployment, azure_key, api_version)
 
     images = sorted(images_path.glob("*.png"), key=lambda x: int(x.stem.split("_")[-1]))
     depth_images = sorted(depth_path.glob("*.png"), key=lambda x: int(x.stem.split("_")[-1]))
@@ -146,6 +140,12 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir", type=str, default="output", help="Path to the output directory"
+    )
+    parser.add_argument(
+        "--llm-config",
+        type=str,
+        default=str(DEFAULT_LLM_CONFIG_FILE),
+        help="Path to the LLM YAML configuration file used for annotation (see LLM/conf)",
     )
     parser.add_argument("--env-file", type=str, default=".env", help="Path to the environment file")
     parser.add_argument(

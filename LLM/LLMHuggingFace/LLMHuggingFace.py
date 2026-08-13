@@ -7,9 +7,11 @@
 """Hugging Face LLM wrapper with optional quantization and config loading."""
 
 import os
+import re
 import torch
 import yaml
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -19,104 +21,136 @@ except Exception:
     BitsAndBytesConfig = None
 
 try:
-    from llm_base import BaseLLM, logger
+    from llm_base import BaseLLM, logger, normalize_messages
 except Exception:
     try:
-        from ..llm_base import BaseLLM, logger
+        from ..llm_base import BaseLLM, logger, normalize_messages
     except Exception:
         import os
         import sys
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-        from llm_base import BaseLLM, logger
+        from llm_base import BaseLLM, logger, normalize_messages
 
 NOT_SET = object()
 
 class LLMHuggingFace(BaseLLM):
-    """Text-only Hugging Face LLM backend."""
+    """Text-only Hugging Face backend, running the model in-process.
+
+    The weights are loaded on the first :meth:`query` (through :meth:`connect`), so building the
+    instance from a configuration file stays cheap.
+
+    Configuration keys:
+        MODEL_NAME: Hugging Face model identifier.
+        DEVICE: Device to run on. Defaults to CUDA when available.
+        QUANTIZE: 8, 4, or 0 (no quantization). Defaults to 8.
+        DEVICE_MAP / MULTI_GPU: Model sharding across GPUs.
+        CACHE_DIR: Where weights are downloaded.
+        DISABLE_SYSTEM: Rewrite system messages for templates without a system role.
+        ENABLE_THINKING: Passed to chat templates that support it (Qwen3 family).
+        LLM_CONFIG: Generation parameters (``max_tokens``, ``temperature``, ``top_p``, ``stop``,
+            ``use_cache``), consumed locally rather than sent to a server.
+    """
+
+    PROVIDER = "huggingface"
+    SUPPORTS_IMAGES = False
+
+    DEFAULT_PARAMS = {"max_tokens": 4096, "temperature": 0.0}
+    # Every parameter is consumed locally by generate(); nothing is forwarded to a server.
+    NON_REQUEST_PARAMS = (
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "stop",
+        "use_cache",
+        "seed",
+        "enable_thinking",
+        "frequency_penalty",
+        "presence_penalty",
+    )
 
     def __init__(
         self,
-        llm_config_file: str,
+        model: str,
+        params: Optional[Dict[str, Any]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        config_file: Optional[Union[str, Path]] = None,
+        examples: Optional[Union[str, Path]] = None,
         device: Optional[str] = None,
         quantize: Optional[int] = None,
         cache_dir: Optional[str] = None,
-        examples_yaml_file: Optional[Iterable[str]] = None,
         device_map: Optional[Any] = None,
     ) -> None:
-        """Create a Hugging Face chatbot instance.
+        """Create a Hugging Face backend.
 
         Args:
-            llm_config_file (str): Path to YAML config.
-            device (Optional[str]): Optional device override.
-            quantize (Optional[int]): Optional quantization override (8, 4, or 0).
-            cache_dir (Optional[str]): Optional cache dir override.
-            examples_yaml_file (Optional[Iterable[str]]): Optional example files for few-shot.
-            device_map (Optional[Any]): Optional device_map override for model sharding.
-
-        Raises:
-            FileNotFoundError: If the config file does not exist.
-            ValueError: If required keys are missing or invalid.
+            model (str): Hugging Face model identifier.
+            params (Optional[Dict[str, Any]]): Generation parameters (``LLM_CONFIG``).
+            config (Optional[Dict[str, Any]]): Full configuration dictionary.
+            config_file (Optional[Union[str, Path]]): Path the configuration came from.
+            examples (Optional[Union[str, Path]]): Folder with few-shot examples.
+            device (Optional[str]): Device override.
+            quantize (Optional[int]): Quantization override (8, 4, or 0).
+            cache_dir (Optional[str]): Cache directory override.
+            device_map (Optional[Any]): ``device_map`` override for model sharding.
         """
-        logger.debug(f"Initializing LLMHuggingFace with config: {llm_config_file}")
-        config = _load_yaml_config(llm_config_file)
-        model_name = config.get("MODEL_NAME") or config.get("LLM_VERSION")
-        if model_name is None:
-            raise ValueError("Missing MODEL_NAME in config: {}".format(llm_config_file))
+        self._device_override = device
+        self._quantize_override = quantize
+        self._cache_dir_override = cache_dir
+        self._device_map_override = device_map
 
-        config_device = config.get("DEVICE")
+        self.tokenizer: Any = None
+        self.model_input_device: Optional[str] = None
+        self._warned_missing_chat_template = False
+        self._warned_missing_enable_thinking = False
+
+        super().__init__(
+            model=model,
+            params=params,
+            config=config,
+            config_file=config_file,
+            examples=examples,
+        )
+
+    def _setup(self) -> None:
+        """Resolve device, quantization and sharding settings from the configuration."""
+        config = self.config
+        self.model_name = self.model
+
         config_quantize = config.get("QUANTIZE")
         if config_quantize is None and "QUANTIZE_8BIT" in config:
             config_quantize = 8 if config.get("QUANTIZE_8BIT") else 0
-        config_device_map = config.get("DEVICE_MAP")
-        config_multi_gpu = config.get("MULTI_GPU")
-        config_cache_dir = config.get("CACHE_DIR")
-        llm_config = config.get("LLM_CONFIG")
-        if llm_config is None:
-            llm_config = {}
-        if not isinstance(llm_config, dict):
-            raise ValueError("LLM_CONFIG must be a dict when provided.")
-        llm_config = dict(llm_config)
 
-        # Accept system-role rewrite flag from both top-level and LLM_CONFIG scopes.
-        llm_disable_system = llm_config.pop("disable_system", None)
-        if llm_disable_system is None:
-            llm_disable_system = llm_config.pop("DISABLE_SYSTEM", None)
-
-        resolved_disable_system = config.get("DISABLE_SYSTEM")
-        if resolved_disable_system is None:
-            resolved_disable_system = config.get("disable_system")
-        if resolved_disable_system is None:
-            resolved_disable_system = llm_disable_system
-
-        # Accept thinking-mode flag from both legacy top-level and LLM_CONFIG scopes.
-        llm_enable_thinking = llm_config.pop("enable_thinking", None)
-        if llm_enable_thinking is None:
-            llm_enable_thinking = llm_config.pop("ENABLE_THINKING", None)
-
+        # The thinking-mode flag is accepted both at the top level and inside LLM_CONFIG.
         resolved_enable_thinking = config.get("ENABLE_THINKING")
         if resolved_enable_thinking is None:
             resolved_enable_thinking = config.get("enable_thinking")
         if resolved_enable_thinking is None:
-            resolved_enable_thinking = llm_enable_thinking
-
+            resolved_enable_thinking = self.param("enable_thinking")
         logger.debug(f"Resolved configuration ENABLE_THINKING: {resolved_enable_thinking}")
 
-        resolved_device = device if device is not None else config_device
+        resolved_device = self._device_override if self._device_override is not None else config.get("DEVICE")
         if resolved_device is None:
             resolved_device = "cuda" if torch.cuda.is_available() else "cpu"
+
         resolved_quantize = (
-            quantize if quantize is not None else (config_quantize if config_quantize is not None else 8)
+            self._quantize_override
+            if self._quantize_override is not None
+            else (config_quantize if config_quantize is not None else 8)
         )
         if resolved_quantize not in (0, 4, 8):
             raise ValueError("Invalid QUANTIZE value: {} (expected 0, 4, or 8)".format(resolved_quantize))
-        resolved_device_map = device_map if device_map is not None else config_device_map
+
+        resolved_device_map = (
+            self._device_map_override if self._device_map_override is not None else config.get("DEVICE_MAP")
+        )
         if isinstance(resolved_device_map, str) and not resolved_device_map.strip():
             resolved_device_map = None
         if resolved_device_map is not None and not isinstance(resolved_device_map, (str, dict)):
             raise ValueError(
                 "Invalid DEVICE_MAP value: {} (expected string, dict, or null).".format(resolved_device_map)
             )
-        resolved_multi_gpu = _coerce_bool(config_multi_gpu, default=False)
+
+        resolved_multi_gpu = _coerce_bool(config.get("MULTI_GPU"), default=False)
         if resolved_multi_gpu and resolved_device_map is None and _is_cuda_device(resolved_device):
             if torch.cuda.device_count() > 1:
                 resolved_device_map = "auto"
@@ -130,27 +164,33 @@ class LLMHuggingFace(BaseLLM):
                 resolved_device,
             )
             resolved_device_map = None
-        resolved_cache_dir = cache_dir if cache_dir is not None else config_cache_dir
-        resolved_examples = examples_yaml_file if examples_yaml_file is not None else [""]
 
         self.device = resolved_device
-        self.model_name = model_name
         self.quantize = resolved_quantize
         self.device_map = resolved_device_map
         self.multi_gpu = resolved_multi_gpu
         self.enable_thinking = _coerce_bool(resolved_enable_thinking, default=NOT_SET)
-        self.disable_system = _coerce_bool(resolved_disable_system, default=False)
 
         logger.debug(f"Final resolved enable_thinking value: {self.enable_thinking}")
 
+        resolved_cache_dir = (
+            self._cache_dir_override if self._cache_dir_override is not None else config.get("CACHE_DIR")
+        )
         default_cache_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models"))
         self.cache_dir = resolved_cache_dir if resolved_cache_dir is not None else default_cache_dir
+
+    def _create_client(self) -> Any:
+        """Load the tokenizer and the model.
+
+        Returns:
+            Any: The loaded ``transformers`` model.
+
+        Raises:
+            torch.OutOfMemoryError: If the model does not fit, and no fallback applies.
+        """
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=self.cache_dir)
-        self._warned_missing_chat_template = False
-        self._warned_missing_enable_thinking = False
-
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, cache_dir=self.cache_dir)
         if self.tokenizer.pad_token is None and self.tokenizer.eos_token is not None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
@@ -179,8 +219,10 @@ class LLMHuggingFace(BaseLLM):
             model_kwargs["low_cpu_mem_usage"] = True
 
         try:
-            logger.debug("Loading model '%s' with kwargs: %s", model_name, model_kwargs)
-            self.model = AutoModelForCausalLM.from_pretrained(model_name, cache_dir=self.cache_dir, **model_kwargs)
+            logger.debug("Loading model '%s' with kwargs: %s", self.model_name, model_kwargs)
+            model = AutoModelForCausalLM.from_pretrained(
+                self.model_name, cache_dir=self.cache_dir, **model_kwargs
+            )
         except Exception as error:
             is_oom = isinstance(error, torch.OutOfMemoryError) or "out of memory" in str(error).lower()
             can_fallback = _is_cuda_device(self.device) and self.quantize == 8 and BitsAndBytesConfig is not None
@@ -193,54 +235,21 @@ class LLMHuggingFace(BaseLLM):
                 )
                 model_kwargs["device_map"] = self.device_map if self.device_map is not None else "auto"
                 model_kwargs["dtype"] = torch.float16
-                self.model = AutoModelForCausalLM.from_pretrained(
-                    model_name,
+                model = AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
                     cache_dir=self.cache_dir,
                     **model_kwargs,
                 )
                 quantized = True
             else:
                 raise
+
         if not quantized and "device_map" not in model_kwargs:
             logger.debug("Model loaded without quantization; moving to device '%s'.", self.device)
-            self.model = self.model.to(self.device)
-        self.model_input_device = _resolve_model_input_device(self.model, fallback=self.device)
-        super().__init__(examples_yaml_file=resolved_examples, llm_config=llm_config)
+            model = model.to(self.device)
 
-    @classmethod
-    def from_config(
-        cls,
-        llm_config_file: str,
-        device: Optional[str] = None,
-        quantize: Optional[int] = None,
-        cache_dir: Optional[str] = None,
-        examples_yaml_file: Optional[Iterable[str]] = None,
-        device_map: Optional[Any] = None,
-    ) -> "LLMHuggingFace":
-        """Create an instance from a YAML config file.
-
-        Args:
-            llm_config_file (str): Path to YAML config.
-            device (Optional[str]): Optional device override.
-            quantize (Optional[int]): Optional quantization override (8, 4, or 0).
-            cache_dir (Optional[str]): Optional cache dir override.
-            examples_yaml_file (Optional[Iterable[str]]): Optional examples override.
-            device_map (Optional[Any]): Optional device_map override for model sharding.
-
-        Returns:
-            LLMHuggingFace: Configured chatbot instance.
-        Raises:
-            FileNotFoundError: If the config file does not exist.
-            ValueError: If required keys are missing from the config.
-        """
-        return cls(
-            llm_config_file=llm_config_file,
-            device=device,
-            quantize=quantize,
-            device_map=device_map,
-            cache_dir=cache_dir,
-            examples_yaml_file=examples_yaml_file,
-        )
+        self.model_input_device = _resolve_model_input_device(model, fallback=self.device)
+        return model
 
     def format_prompt(self, examples: List[Dict[str, str]], query: str) -> str:
         """Format a simple Q/A few-shot prompt.
@@ -284,12 +293,10 @@ class LLMHuggingFace(BaseLLM):
         Returns:
             str: Prompt string for generation.
         """
-        normalized = self._prepare_messages(messages)
+        normalized = normalize_messages(messages, disable_system=self.disable_system)
 
         if hasattr(self.tokenizer, "apply_chat_template"):
-            # Check if this tokenizer supports enable_thinking (Qwen3 family)
-            import inspect
-            template_sig = inspect.signature(self.tokenizer.apply_chat_template)
+            # Some tokenizers (Qwen3 family) accept enable_thinking in their chat template.
             extra_kwargs = {}
             if self.enable_thinking is not NOT_SET:
                 extra_kwargs["enable_thinking"] = self.enable_thinking
@@ -331,9 +338,10 @@ class LLMHuggingFace(BaseLLM):
         Returns:
             str: Trimmed text.
         """
+        stop = self.param("stop")
         stop_sequences = []
-        if isinstance(self.stop, (list, tuple)):
-            stop_sequences.extend([s for s in self.stop if s])
+        if isinstance(stop, (list, tuple)):
+            stop_sequences.extend([s for s in stop if s])
         if not stop_sequences:
             stop_sequences = ["USER:", "SYSTEM:"]
 
@@ -360,25 +368,29 @@ class LLMHuggingFace(BaseLLM):
         Returns:
             Tuple[str, int]: Generated text and token count.
         """
+        model = self.connect()
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model_input_device)
 
         generation_kwargs = {
             "max_new_tokens": max_new_tokens,
             "pad_token_id": self.tokenizer.eos_token_id,
         }
-        if self.use_cache is not None:
-            generation_kwargs["use_cache"] = self.use_cache
+        use_cache = self.param("use_cache")
+        if use_cache is not None:
+            generation_kwargs["use_cache"] = use_cache
 
-        if self.temperature is not None and self.temperature > 0:
+        temperature = self.param("temperature")
+        top_p = self.param("top_p")
+        if temperature is not None and temperature > 0:
             generation_kwargs["do_sample"] = True
-            generation_kwargs["temperature"] = self.temperature
-            if self.top_p is not None and self.top_p > 0:
-                generation_kwargs["top_p"] = self.top_p
+            generation_kwargs["temperature"] = temperature
+            if top_p is not None and top_p > 0:
+                generation_kwargs["top_p"] = top_p
         else:
             generation_kwargs["do_sample"] = False
 
         with torch.no_grad():
-            output = self.model.generate(**inputs, **generation_kwargs)
+            output = model.generate(**inputs, **generation_kwargs)
 
         input_length = inputs["input_ids"].shape[-1]
         generated_tokens = output[0][input_length:]
@@ -386,34 +398,38 @@ class LLMHuggingFace(BaseLLM):
         response = self._truncate_at_stop_sequences(response)
         return response, int(generated_tokens.shape[-1])
 
-    def _connect(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _send(self, client: Any, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Generate a completion for the given messages.
 
         Args:
+            client (Any): The loaded model, from :meth:`connect`.
             messages (List[Dict[str, Any]]): Chat-style message list.
 
         Returns:
-            Dict[str, Any]: Response payload with text and token count.
+            Dict[str, Any]: Response payload with text and token counts.
         """
         prompt = self._messages_to_prompt(messages)
-        prompt_tokens = 0
         try:
             prompt_tokens = int(len(self.tokenizer.encode(prompt, add_special_tokens=False)))
         except Exception:
             prompt_tokens = 0
-        response, completion_tokens = self._generate_from_prompt(prompt, max_new_tokens=self.max_tokens)
+
+        response, completion_tokens = self._generate_from_prompt(
+            prompt, max_new_tokens=self.param("max_tokens", 4096)
+        )
         return {
             "content": response,
             "completion_tokens": completion_tokens,
             "prompt_tokens": prompt_tokens,
         }
 
-    def _estimate_prompt_tokens(self, messages: List[Dict[str, Any]]) -> int:
-        """Estimate prompt tokens locally using the model tokenizer."""
+    def count_prompt_tokens(self, messages: List[Dict[str, Any]]) -> int:
+        """Count prompt tokens locally using the model tokenizer."""
+        self.connect()
         prompt = self._messages_to_prompt(messages)
         return int(len(self.tokenizer.encode(prompt, add_special_tokens=False)))
 
-    def _extract_content(self, response: Dict[str, Any]) -> str:
+    def _extract_text(self, response: Dict[str, Any]) -> str:
         """Extract the text content from the response dict.
 
         Args:
@@ -424,52 +440,34 @@ class LLMHuggingFace(BaseLLM):
         """
         text = response["content"]
         # Strip <think>...</think> blocks produced by reasoning models
-        import re
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-        # If model stopped mid-think (no closing tag), keep only what's after
+        # If model stopped mid-think (no closing tag), keep only what's before
         if "<think>" in text:
-            parts = text.split("<think>", 1)
-            text = parts[0].strip()
+            text = text.split("<think>", 1)[0].strip()
         return text
 
-    def _extract_completion_tokens(self, response: Dict[str, Any]) -> int:
-        """Extract completion token count from the response dict.
+    def _extract_usage(self, response: Dict[str, Any]) -> Dict[str, int]:
+        """Extract token counts from the response dict."""
+        return {
+            "prompt_tokens": int(response.get("prompt_tokens", 0)),
+            "completion_tokens": int(response.get("completion_tokens", 0)),
+        }
 
-        Args:
-            response (Dict[str, Any]): Backend response payload.
-
-        Returns:
-            int: Completion token count.
-        """
-        return response["completion_tokens"]
-
-    def _extract_prompt_tokens(self, response: Dict[str, Any]) -> int:
-        """Extract prompt token count from the response dict.
-
-        Args:
-            response (Dict[str, Any]): Backend response payload.
-
-        Returns:
-            int: Prompt token count.
-        """
-        return response.get("prompt_tokens", 0)
-    
     def close(self) -> None:
         """Release model/tokenizer references and free CUDA cache."""
         import gc
 
         logger.debug("Closing LLMHuggingFace instance and freeing resources.")
-        logger.debug(f"Amount of memory used before cleanup: {torch.cuda.memory_allocated() / (1024 ** 2):.2f} MB")
+        if torch.cuda.is_available():
+            logger.debug(f"Memory used before cleanup: {torch.cuda.memory_allocated() / (1024 ** 2):.2f} MB")
 
         try:
-            if hasattr(self, "model"):
-                del self.model
+            self._client = None
         except Exception:
             pass
 
         try:
-            if hasattr(self, "tokenizer"):
-                del self.tokenizer
+            self.tokenizer = None
         except Exception:
             pass
 
@@ -483,7 +481,8 @@ class LLMHuggingFace(BaseLLM):
                 pass
         
         logger.debug("LLMHuggingFace instance closed and resources freed.")
-        logger.debug(f"Amount of memory used after cleanup: {torch.cuda.memory_allocated() / (1024 ** 2):.2f} MB")
+        if torch.cuda.is_available():
+            logger.debug(f"Memory used after cleanup: {torch.cuda.memory_allocated() / (1024 ** 2):.2f} MB")
 
 
 

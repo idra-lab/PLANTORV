@@ -15,7 +15,8 @@ import os
 import re
 import threading
 import time
-from typing import Any, Dict, Iterable, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 import yaml
 
@@ -35,24 +36,52 @@ else:
     _VLLM_IMPORT_ERROR = None
 
 try:
-    from llm_base import BaseLLM, logger
+    from llm_base import BaseLLM, logger, normalize_messages
 except Exception:
     try:
-        from ..llm_base import BaseLLM, logger
+        from ..llm_base import BaseLLM, logger, normalize_messages
     except Exception:
         import sys
 
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-        from llm_base import BaseLLM, logger
+        from llm_base import BaseLLM, logger, normalize_messages
 
 NOT_SET  = object()
 
 class LLMVLLM(BaseLLM):
-    """Offline vLLM backend implementing the shared BaseLLM interface.
+    """Offline vLLM backend.
 
-    Model weights and KV runtime are kept in a process-level cache, so creating
-    multiple instances with the same engine config does not reload the model.
+    Model weights and KV runtime are kept in a process-level cache, so creating multiple
+    instances with the same engine config does not reload the model.
+
+    Configuration keys:
+        MODEL_NAME: Model identifier or local path.
+        DTYPE, TENSOR_PARALLEL_SIZE, MAX_MODEL_LEN, MAX_NUM_SEQS, MAX_NUM_BATCHED_TOKENS,
+        GPU_MEMORY_UTILIZATION, SWAP_SPACE, TRUST_REMOTE_CODE, ENABLE_PREFIX_CACHING,
+        DISABLE_LOG_STATS, ENFORCE_EAGER: vLLM engine settings.
+        DOWNLOAD_DIR / DOWNLOAD_WORKERS: Where and how weights are fetched.
+        DISABLE_SYSTEM: Rewrite system messages for templates without a system role.
+        LLM_CONFIG: Sampling parameters, consumed locally rather than sent to a server.
     """
+
+    PROVIDER = "vllm"
+    SUPPORTS_IMAGES = False
+
+    DEFAULT_MAX_TOKENS = 4096
+    DEFAULT_PARAMS = {"max_tokens": DEFAULT_MAX_TOKENS, "temperature": 0.0}
+    # Sampling happens in-process: nothing here is forwarded to a server.
+    NON_REQUEST_PARAMS = (
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "stop",
+        "seed",
+        "frequency_penalty",
+        "presence_penalty",
+        "use_cache",
+        "enable_thinking",
+        "disable_system",
+    )
 
     _ENGINE_CACHE_LOCK = threading.Lock()
     _ENGINE_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -60,72 +89,81 @@ class LLMVLLM(BaseLLM):
 
     def __init__(
         self,
-        llm_config_file: str,
-        examples_yaml_file: Iterable[str] = ("",),
-        download_dir: Optional[str] = None,
-        download_workers: Optional[int] = None,
-        tensor_parallel_size: Optional[int] = None,
-        dtype: Optional[str] = None,
-        max_model_len: Optional[int] = None,
-        max_num_seqs: Optional[int] = None,
-        max_num_batched_tokens: Optional[int] = None,
-        gpu_memory_utilization: Optional[float] = None,
-        swap_space: Optional[float] = None,
-        trust_remote_code: Optional[bool] = None,
-        enable_prefix_caching: Optional[bool] = None,
-        disable_log_stats: Optional[bool] = None,
-        enforce_eager: Optional[bool] = None,
+        model: str,
+        params: Optional[Dict[str, Any]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        config_file: Optional[Union[str, Path]] = None,
+        examples: Optional[Union[str, Path]] = None,
+        **overrides: Any,
     ) -> None:
-        """Initialize an in-process vLLM backend from YAML config."""
-        init_started_at = time.perf_counter()
+        """Initialize an in-process vLLM backend.
+
+        The engine is created on the first :meth:`query` (through :meth:`connect`) and shared
+        between instances using the same engine settings.
+
+        Args:
+            model (str): Model identifier or local path.
+            params (Optional[Dict[str, Any]]): Sampling parameters (``LLM_CONFIG``).
+            config (Optional[Dict[str, Any]]): Full configuration dictionary.
+            config_file (Optional[Union[str, Path]]): Path the configuration came from.
+            examples (Optional[Union[str, Path]]): Folder with few-shot examples.
+            **overrides (Any): Engine overrides such as ``download_dir``, ``dtype``,
+                ``tensor_parallel_size``, ``max_model_len``, ``gpu_memory_utilization``.
+
+        Raises:
+            ImportError: If vLLM is not installed.
+        """
         if VLLMEngine is None or SamplingParams is None:
             raise ImportError(
                 "vLLM is not available. Install it with `pip install vllm`."
             ) from _VLLM_IMPORT_ERROR
 
-        logger.info("LLM configuration file: %s", llm_config_file)
-        if not llm_config_file.endswith((".yaml", ".yml")) or not os.path.isfile(llm_config_file):
-            raise FileNotFoundError(
-                "The selected file {} does not exist or is not a yaml file".format(llm_config_file)
-            )
+        self._init_overrides: Dict[str, Any] = dict(overrides)
+        self._warned_missing_chat_template = False
+        self.tokenizer: Any = None
 
-        llm_connection_config = _load_yaml_config(llm_config_file)
+        super().__init__(
+            model=model,
+            params=params,
+            config=config,
+            config_file=config_file,
+            examples=examples,
+        )
+
+    def _setup(self) -> None:
+        """Resolve the engine settings from the configuration."""
+        llm_connection_config = self.config
+        llm_config_file = self.config_file or __file__
+        overrides = self._init_overrides
+
+        download_dir = overrides.get("download_dir")
+        download_workers = overrides.get("download_workers")
+        tensor_parallel_size = overrides.get("tensor_parallel_size")
+        dtype = overrides.get("dtype")
+        max_model_len = overrides.get("max_model_len")
+        max_num_seqs = overrides.get("max_num_seqs")
+        max_num_batched_tokens = overrides.get("max_num_batched_tokens")
+        gpu_memory_utilization = overrides.get("gpu_memory_utilization")
+        swap_space = overrides.get("swap_space")
+        trust_remote_code = overrides.get("trust_remote_code")
+        enable_prefix_caching = overrides.get("enable_prefix_caching")
+        disable_log_stats = overrides.get("disable_log_stats")
+        enforce_eager = overrides.get("enforce_eager")
+
         logger.debug(
             "Loaded vLLM config with keys: %s",
             sorted(llm_connection_config.keys()),
         )
 
-        self.engine = (
-            llm_connection_config.get("MODEL_NAME")
-            or llm_connection_config.get("LLM_VERSION")
-            or llm_connection_config.get("MODEL")
+        self.engine = self.model
+
+        # The thinking flag and the system-role rewrite are accepted inside LLM_CONFIG too.
+        resolved_enable_thinking = self.param("enable_thinking", NOT_SET)
+        self.enable_thinking = (
+            NOT_SET if resolved_enable_thinking is NOT_SET else _coerce_bool(resolved_enable_thinking)
         )
-        if not self.engine:
-            raise ValueError("Missing model name in config. Expected MODEL_NAME (or LLM_VERSION/MODEL).")
-
-        llm_base_config = llm_connection_config.get("LLM_CONFIG", {})
-        if not isinstance(llm_base_config, dict):
-            raise ValueError("LLM_CONFIG must be a dict when provided.")
-        llm_base_config = dict(llm_base_config)
-
-        llm_disable_system = llm_base_config.pop("disable_system", None)
-        if llm_disable_system is None:
-            llm_disable_system = llm_base_config.pop("DISABLE_SYSTEM", None)
-
-        resolved_disable_system = llm_connection_config.get("DISABLE_SYSTEM")
-        if resolved_disable_system is None:
-            resolved_disable_system = llm_connection_config.get("disable_system")
-        if resolved_disable_system is None:
-            resolved_disable_system = llm_disable_system
-
-        resolved_enable_thinking = llm_base_config.pop("enable_thinking", NOT_SET)
-        if resolved_enable_thinking is NOT_SET:
-            resolved_enable_thinking = llm_base_config.pop("ENABLE_THINKING", NOT_SET)
-        if resolved_enable_thinking is NOT_SET:
-            self.enable_thinking = NOT_SET
-        else:
-            self.enable_thinking = _coerce_bool(resolved_enable_thinking)
-        self.disable_system = _coerce_bool(resolved_disable_system, default=False)
+        if not self.disable_system:
+            self.disable_system = _coerce_bool(self.param("disable_system"), default=False)
 
         config_download_dir = (
             llm_connection_config.get("DOWNLOAD_DIR")
@@ -269,6 +307,12 @@ class LLMVLLM(BaseLLM):
         self._engine_key = _engine_key(self._engine_kwargs)
         logger.debug("Computed shared engine cache key: %s", self._engine_key)
 
+    def _create_client(self) -> Any:
+        """Load (or reuse) the shared vLLM engine.
+
+        Returns:
+            Any: The vLLM engine instance backing this model.
+        """
         with LLMVLLM._ENGINE_CACHE_LOCK:
             cache_entry = LLMVLLM._ENGINE_CACHE.get(self._engine_key)
             if cache_entry is None:
@@ -299,7 +343,6 @@ class LLMVLLM(BaseLLM):
                     cache_entry.get("refs", 0),
                 )
             cache_entry["refs"] = int(cache_entry.get("refs", 0)) + 1
-            self._llm = cache_entry["llm"]
             self.tokenizer = cache_entry["tokenizer"]
             logger.debug(
                 "Attached to shared engine key=%s refs_now=%s",
@@ -311,13 +354,7 @@ class LLMVLLM(BaseLLM):
                 atexit.register(LLMVLLM._shutdown_all_engines)
                 LLMVLLM._ATEXIT_REGISTERED = True
 
-        self._warned_missing_chat_template = False
-        super().__init__(examples_yaml_file=examples_yaml_file, llm_config=llm_base_config)
-        logger.debug(
-            "LLMVLLM initialization completed in %.2f s (engine=%s)",
-            _elapsed_s(init_started_at),
-            self.engine,
-        )
+            return cache_entry["llm"]
 
     @classmethod
     def _shutdown_all_engines(cls) -> None:
@@ -349,28 +386,10 @@ class LLMVLLM(BaseLLM):
         except Exception:
             pass
 
-    @classmethod
-    def from_config(
-        cls,
-        llm_config_file: str,
-        examples_yaml_file: Iterable[str] = ("",),
-        download_dir: Optional[str] = None,
-        download_workers: Optional[int] = None,
-        **kwargs: Any,
-    ) -> "LLMVLLM":
-        """Construct a backend instance from a YAML config path."""
-        return cls(
-            llm_config_file=llm_config_file,
-            examples_yaml_file=examples_yaml_file,
-            download_dir=download_dir,
-            download_workers=download_workers,
-            **kwargs,
-        )
-
     def _messages_to_prompt(self, messages: List[Dict[str, Any]]) -> str:
         """Convert structured chat messages into a single prompt string."""
         started_at = time.perf_counter()
-        normalized = self._prepare_messages(messages)
+        normalized = normalize_messages(messages, disable_system=self.disable_system)
 
         logger.debug(
             "Formatting prompt from %s messages; roles=%s",
@@ -428,18 +447,16 @@ class LLMVLLM(BaseLLM):
     def _build_sampling_params(self) -> Any:
         """Build vLLM sampling params from shared generation settings."""
         started_at = time.perf_counter()
-        max_tokens = self.max_tokens if self.max_tokens is not None else BaseLLM.llm_default_config["max_tokens"]
         try:
-            max_tokens = int(max_tokens)
+            max_tokens = int(self.param("max_tokens", self.DEFAULT_MAX_TOKENS))
         except Exception:
-            max_tokens = int(BaseLLM.llm_default_config["max_tokens"])
+            max_tokens = self.DEFAULT_MAX_TOKENS
 
         temperature = 0.0
-        if self.temperature is not None:
-            try:
-                temperature = float(self.temperature)
-            except Exception:
-                temperature = 0.0
+        try:
+            temperature = float(self.param("temperature", 0.0))
+        except Exception:
+            temperature = 0.0
         if temperature < 0:
             temperature = 0.0
 
@@ -448,33 +465,33 @@ class LLMVLLM(BaseLLM):
             "temperature": temperature,
         }
 
-        if self.top_p is not None:
+        if self.param("top_p") is not None:
             try:
-                top_p = float(self.top_p)
+                top_p = float(self.param("top_p"))
                 if top_p > 0:
                     sampling_kwargs["top_p"] = top_p
             except Exception:
                 pass
 
-        if self.frequency_penalty is not None:
+        if self.param("frequency_penalty") is not None:
             try:
-                sampling_kwargs["frequency_penalty"] = float(self.frequency_penalty)
+                sampling_kwargs["frequency_penalty"] = float(self.param("frequency_penalty"))
             except Exception:
                 pass
 
-        if self.presence_penalty is not None:
+        if self.param("presence_penalty") is not None:
             try:
-                sampling_kwargs["presence_penalty"] = float(self.presence_penalty)
+                sampling_kwargs["presence_penalty"] = float(self.param("presence_penalty"))
             except Exception:
                 pass
 
-        if self.seed is not None:
+        if self.param("seed") is not None:
             try:
-                sampling_kwargs["seed"] = int(self.seed)
+                sampling_kwargs["seed"] = int(self.param("seed"))
             except Exception:
                 pass
 
-        stop_sequences = _normalize_stop_sequences(self.stop)
+        stop_sequences = _normalize_stop_sequences(self.param("stop"))
         if stop_sequences:
             sampling_kwargs["stop"] = stop_sequences
 
@@ -495,7 +512,7 @@ class LLMVLLM(BaseLLM):
             logger.debug("SamplingParams fallback built in %.2f ms", _elapsed_ms(started_at))
             return params
 
-    def _connect(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _send(self, client: Any, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Generate one completion using the in-process vLLM engine."""
         connect_started_at = time.perf_counter()
         prompt = self._messages_to_prompt(messages)
@@ -510,7 +527,7 @@ class LLMVLLM(BaseLLM):
         logger.debug("Sampling parameter build took %.2f ms", _elapsed_ms(sampling_started_at))
 
         generate_started_at = time.perf_counter()
-        outputs = self._llm.generate(
+        outputs = client.generate(
             [prompt],
             sampling_params,
             use_tqdm=False,
@@ -525,7 +542,7 @@ class LLMVLLM(BaseLLM):
 
         generated = request_output.outputs[0]
         text = str(getattr(generated, "text", "")).strip()
-        text = _truncate_at_stop_sequences(text, self.stop)
+        text = _truncate_at_stop_sequences(text, self.param("stop"))
 
         completion_tokens = 0
         token_ids = getattr(generated, "token_ids", None)
@@ -563,7 +580,7 @@ class LLMVLLM(BaseLLM):
             "cached_prompt_tokens": cached_prompt_tokens,
         }
 
-    def _extract_content(self, response: Dict[str, Any]) -> str:
+    def _extract_text(self, response: Dict[str, Any]) -> str:
         """Extract assistant content from a normalized vLLM response payload."""
         text = str(response.get("content", ""))
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
@@ -571,22 +588,21 @@ class LLMVLLM(BaseLLM):
             text = text.split("<think>", 1)[0].strip()
         return text
 
-    def _extract_completion_tokens(self, response: Dict[str, Any]) -> int:
-        """Extract completion tokens from a normalized vLLM response payload."""
+    def _extract_usage(self, response: Dict[str, Any]) -> Dict[str, int]:
+        """Extract token counts from a normalized vLLM response payload."""
         try:
-            return int(response.get("completion_tokens", 0))
+            prompt_tokens = int(response.get("prompt_tokens", 0))
         except Exception:
-            return 0
-
-    def _extract_prompt_tokens(self, response: Dict[str, Any]) -> int:
-        """Extract prompt tokens from a normalized vLLM response payload."""
+            prompt_tokens = 0
         try:
-            return int(response.get("prompt_tokens", 0))
+            completion_tokens = int(response.get("completion_tokens", 0))
         except Exception:
-            return 0
+            completion_tokens = 0
+        return {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}
 
-    def _estimate_prompt_tokens(self, messages: List[Dict[str, Any]]) -> int:
-        """Estimate prompt tokens using the backend tokenizer for dry runs."""
+    def count_prompt_tokens(self, messages: List[Dict[str, Any]]) -> int:
+        """Count prompt tokens using the backend tokenizer."""
+        self.connect()
         prompt = self._messages_to_prompt(messages)
         return self._count_prompt_tokens(prompt)
 
@@ -623,6 +639,7 @@ class LLMVLLM(BaseLLM):
         The shared engine is intentionally retained until process exit so multiple
         phases in a single script execution reuse loaded weights and prefix cache.
         """
+        self._client = None
         with LLMVLLM._ENGINE_CACHE_LOCK:
             cache_entry = LLMVLLM._ENGINE_CACHE.get(getattr(self, "_engine_key", ""))
             if cache_entry is None:
