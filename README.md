@@ -144,7 +144,7 @@ To use any of them, pass the name or path when constructing `SAMModel` — there
 separate model-type argument, and no separate SAM 2 class:
 
 ```python
-sam = SAMModel("models/sam/sam_b.pt", save_dir=..., device="cuda")     # SAM 1
+sam = SAMModel("models/sam/sam_b.pt", save_dir=..., device="cuda")  # SAM 1
 sam = SAMModel("models/sam/sam2.1_l.pt", save_dir=..., device="cuda")  # SAM 2.1
 ```
 

@@ -5,8 +5,9 @@
 # Redistribution or use outside the project is prohibited.
 
 import os
-import yaml
+
 import tiktoken
+import yaml
 
 try:
     from utility.logger import logger
@@ -25,17 +26,23 @@ except Exception:
         _path = new_path
     from utility.logger import logger
 
-    
-def includeYAML(file_name: str, messages: list, system_msg: str):
-    """
-    :brief: Add examples from a YAML file to the list of messages
-    :details: This function reads a YAML file and adds the messages to the list of messages. It recursively reads other
-    YAML files included in the current YAML file.
-    :param file_name: Name of the YAML file containing examples
-    :param messages: List of dictionaries containing the messages
-    :param system_msg: System message. If empty and the YAML file contains a system message, it will be added set, otherwise it will be ignored
-    """
 
+def includeYAML(file_name: str, messages: list, system_msg: str) -> None:
+    """
+    Add examples from a YAML file to the list of messages.
+
+    Read  a YAML file and adds the messages to the list of messages. It recursively reads other
+    YAML files included in the current YAML file.
+
+    Parameters
+    ----------
+    file_name : str
+        Name of the YAML file containing examples
+    messages : list
+        List of dictionaries containing the messages
+    system_msg : str
+        System message. If empty and the YAML file contains a system message, it will be added to the list, otherwise it will be ignored
+    """
     logger.info("Adding examples from file: %s", file_name)
     with open(file_name) as file:
         yaml_file = yaml.load(file, Loader=yaml.FullLoader)["entries"]
@@ -62,9 +69,7 @@ def includeYAML(file_name: str, messages: list, system_msg: str):
 
                     # Get path of current yaml file and add the file
                     else:
-                        abs_file = os.path.join(
-                            os.path.dirname(file_name), *file.split("/")
-                        )
+                        abs_file = os.path.join(os.path.dirname(file_name), *file.split("/"))
                         includeYAML(abs_file, messages, system_msg)
 
 

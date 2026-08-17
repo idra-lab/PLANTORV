@@ -18,6 +18,7 @@ except Exception:
         from ..llm_base import BaseLLM, image_data_url, logger, resolve_config_value
     except Exception:
         import sys
+
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
         from llm_base import BaseLLM, image_data_url, logger, resolve_config_value
 
@@ -48,7 +49,9 @@ class LLMOpenAI(BaseLLM):
         self.image_detail = self.config.get("IMAGE_DETAIL", "auto")
 
         if "ENDPOINT" in self.config or "API_VERSION" in self.config:
-            logger.warning("Azure-style fields detected in OpenAI config. Use LLMAzureOpenAI for Azure endpoints.")
+            logger.warning(
+                "Azure-style fields detected in OpenAI config. Use LLMAzureOpenAI for Azure endpoints."
+            )
 
         logger.info("Model: %s", self.model)
         logger.info("Base URL: %s", self.base_url)
@@ -57,16 +60,22 @@ class LLMOpenAI(BaseLLM):
     def _create_client(self) -> OpenAI:
         """Create the OpenAI client.
 
-        Returns:
-            OpenAI: Configured SDK client.
+        Returns
+        -------
+        OpenAI
+            Configured SDK client.
 
-        Raises:
-            ValueError: If the API key is missing.
+        Raises
+        ------
+        ValueError
+            If the API key is missing.
         """
         api_key = self.api_key or os.environ.get(self.api_key_name)
         if not api_key:
             raise ValueError(
-                "Missing OpenAI API key. Set {} or provide API_KEY in the config.".format(self.api_key_name)
+                "Missing OpenAI API key. Set {} or provide API_KEY in the config.".format(
+                    self.api_key_name
+                )
             )
 
         client_kwargs: Dict[str, Any] = {"api_key": api_key}
@@ -80,7 +89,20 @@ class LLMOpenAI(BaseLLM):
         return OpenAI(**client_kwargs)
 
     def _send(self, client: OpenAI, messages: List[Dict[str, Any]]) -> Any:
-        """Send a chat completion request."""
+        """Send a chat completion request.
+
+        Parameters
+        ----------
+        client : OpenAI
+            The SDK client returned by :meth:`connect`.
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format.
+
+        Returns
+        -------
+        Any
+            The raw chat-completion response.
+        """
         return client.chat.completions.create(
             model=self.model,
             messages=cast(Any, messages),
@@ -88,11 +110,33 @@ class LLMOpenAI(BaseLLM):
         )
 
     def _extract_text(self, response: Any) -> str:
-        """Extract the assistant message content."""
+        """Extract the assistant message content.
+
+        Parameters
+        ----------
+        response : Any
+            Raw chat-completion response.
+
+        Returns
+        -------
+        str
+            The assistant answer, or the empty string when the message has no content.
+        """
         return response.choices[0].message.content or ""
 
     def image_part(self, image: Any) -> Dict[str, Any]:
-        """Encode an image as an OpenAI ``image_url`` content part."""
+        """Encode an image as an OpenAI ``image_url`` content part.
+
+        Parameters
+        ----------
+        image : Any
+            A ``PIL.Image.Image``, or the path of an image file.
+
+        Returns
+        -------
+        Dict[str, Any]
+            An ``image_url`` content part holding a ``data:`` URL and the configured detail level.
+        """
         return {
             "type": "image_url",
             "image_url": {"url": image_data_url(image), "detail": self.image_detail},

@@ -24,6 +24,7 @@ except Exception:
         from .llm_base import load_config_file, logger
     except Exception:
         import sys
+
         sys.path.append(os.path.dirname(__file__))
         from llm_base import load_config_file, logger
 
@@ -66,21 +67,33 @@ PROVIDER_MODULES = {
 
 
 def default_config_dir() -> str:
-    """Return the directory holding the bundled configuration files."""
+    """Return the directory holding the bundled configuration files.
+
+    Returns
+    -------
+    str
+        Path of the ``conf`` folder sitting next to this module.
+    """
     return os.path.join(os.path.dirname(__file__), "conf")
 
 
 def normalize_provider(provider: str) -> str:
     """Normalize a provider name to its canonical slug.
 
-    Args:
-        provider (str): Provider name, in any of its accepted spellings.
+    Parameters
+    ----------
+    provider : str
+        Provider name, in any of its accepted spellings.
 
-    Returns:
-        str: Canonical provider slug.
+    Returns
+    -------
+    str
+        Canonical provider slug.
 
-    Raises:
-        ValueError: If the provider is unknown.
+    Raises
+    ------
+    ValueError
+        If the provider is unknown.
     """
     normalized = str(provider).strip().lower().replace("-", "_").replace(" ", "_")
     if normalized in PROVIDER_ALIASES:
@@ -91,14 +104,20 @@ def normalize_provider(provider: str) -> str:
 def infer_provider(config: Dict[str, Any]) -> str:
     """Infer the provider from a loaded configuration.
 
-    Args:
-        config (Dict[str, Any]): Parsed configuration.
+    Parameters
+    ----------
+    config : Dict[str, Any]
+        Parsed configuration.
 
-    Returns:
-        str: Canonical provider slug.
+    Returns
+    -------
+    str
+        Canonical provider slug.
 
-    Raises:
-        ValueError: If the provider cannot be determined.
+    Raises
+    ------
+    ValueError
+        If the provider cannot be determined.
     """
     if not isinstance(config, dict):
         raise ValueError("config must be a dictionary.")
@@ -110,8 +129,14 @@ def infer_provider(config: Dict[str, Any]) -> str:
     if "ENDPOINT" in config or "ENDPOINT_ENV" in config or "API_VERSION" in config:
         return "azure_openai"
 
-    model = str(config.get("LLM_VERSION") or config.get("MODEL_NAME") or config.get("MODEL") or "").strip().lower()
-    api_key_name = str(config.get("API_KEY_NAME") or config.get("API_KEY_ENV") or "").strip().lower()
+    model = (
+        str(config.get("LLM_VERSION") or config.get("MODEL_NAME") or config.get("MODEL") or "")
+        .strip()
+        .lower()
+    )
+    api_key_name = (
+        str(config.get("API_KEY_NAME") or config.get("API_KEY_ENV") or "").strip().lower()
+    )
     has_api_key = "API_KEY_NAME" in config or "API_KEY_ENV" in config
 
     if "anthropic" in api_key_name or model.startswith("claude"):
@@ -131,7 +156,10 @@ def infer_provider(config: Dict[str, Any]) -> str:
     if any(key in config for key in vllm_keys) and not has_api_key:
         return "vllm"
 
-    if any(key in config for key in ("MODEL_NAME", "DEVICE", "QUANTIZE", "CACHE_DIR")) and not has_api_key:
+    if (
+        any(key in config for key in ("MODEL_NAME", "DEVICE", "QUANTIZE", "CACHE_DIR"))
+        and not has_api_key
+    ):
         return "huggingface"
 
     if "openai" in api_key_name or model.startswith(("gpt", "o1", "o3", "o4")):
@@ -141,22 +169,47 @@ def infer_provider(config: Dict[str, Any]) -> str:
 
 
 def infer_provider_from_file(config_file: Union[str, Path]) -> str:
-    """Infer the provider from a configuration file path."""
+    """Infer the provider from a configuration file path.
+
+    Parameters
+    ----------
+    config_file : Union[str, Path]
+        Path to the YAML configuration file.
+
+    Returns
+    -------
+    str
+        Canonical provider slug.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the file does not exist or is not a YAML file.
+    ValueError
+        If the provider cannot be determined.
+    """
     return infer_provider(load_config_file(config_file))
 
 
 def resolve_class(provider: str) -> Type["BaseLLM"]:
     """Import and return the backend class for a provider.
 
-    Args:
-        provider (str): Provider name or slug.
+    Parameters
+    ----------
+    provider : str
+        Provider name or slug.
 
-    Returns:
-        Type[BaseLLM]: The backend class.
+    Returns
+    -------
+    Type[BaseLLM]
+        The backend class.
 
-    Raises:
-        ValueError: If the provider is unknown.
-        ImportError: If the backend module cannot be imported.
+    Raises
+    ------
+    ValueError
+        If the provider is unknown.
+    ImportError
+        If the backend module cannot be imported.
     """
     slug = normalize_provider(provider)
     if slug not in PROVIDER_MODULES:
@@ -191,7 +244,27 @@ def resolve_class(provider: str) -> Type["BaseLLM"]:
 
 
 def resolve_class_from_file(config_file: Union[str, Path]) -> Type["BaseLLM"]:
-    """Return the backend class a configuration file asks for."""
+    """Return the backend class a configuration file asks for.
+
+    Parameters
+    ----------
+    config_file : Union[str, Path]
+        Path to the YAML configuration file.
+
+    Returns
+    -------
+    Type[BaseLLM]
+        The backend class.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the file does not exist or is not a YAML file.
+    ValueError
+        If the provider cannot be determined.
+    ImportError
+        If the backend module cannot be imported.
+    """
     return resolve_class(infer_provider_from_file(config_file))
 
 
@@ -202,13 +275,19 @@ def create_llm(
 ) -> "BaseLLM":
     """Build the backend described by a configuration file.
 
-    Args:
-        config_file (Union[str, Path]): Path to the YAML configuration file.
-        examples (Optional[Union[str, Path]]): Folder with few-shot examples.
-        **overrides (Any): Forwarded to the backend's ``from_config``.
+    Parameters
+    ----------
+    config_file : Union[str, Path]
+        Path to the YAML configuration file.
+    examples : Optional[Union[str, Path]], optional
+        Folder with few-shot examples.
+    **overrides : Any
+        Forwarded to the backend's ``from_config``.
 
-    Returns:
-        BaseLLM: A configured backend instance.
+    Returns
+    -------
+    BaseLLM
+        A configured backend instance.
     """
     backend = resolve_class_from_file(config_file)
     logger.debug("Selected backend %s for %s", backend.__name__, config_file)
@@ -218,22 +297,26 @@ def create_llm(
 def list_config_files(config_dir: Optional[Union[str, Path]] = None) -> List[str]:
     """List the YAML configuration files of a directory.
 
-    Args:
-        config_dir (Optional[Union[str, Path]]): Directory to scan. Defaults to ``LLM/conf``.
+    Parameters
+    ----------
+    config_dir : Optional[Union[str, Path]], optional
+        Directory to scan. Defaults to ``LLM/conf``.
 
-    Returns:
-        List[str]: Sorted configuration file paths.
+    Returns
+    -------
+    List[str]
+        Sorted configuration file paths.
 
-    Raises:
-        FileNotFoundError: If the directory does not exist.
+    Raises
+    ------
+    FileNotFoundError
+        If the directory does not exist.
     """
     target_dir = Path(config_dir) if config_dir is not None else Path(default_config_dir())
     if not target_dir.is_dir():
         raise FileNotFoundError("LLM config directory not found: {}".format(target_dir))
 
-    return sorted(
-        str(path) for path in target_dir.iterdir() if path.suffix in (".yaml", ".yml")
-    )
+    return sorted(str(path) for path in target_dir.iterdir() if path.suffix in (".yaml", ".yml"))
 
 
 def select_llm(
@@ -246,25 +329,38 @@ def select_llm(
 ) -> "BaseLLM":
     """Pick a configuration file from a directory and build its backend.
 
-    Args:
-        config_dir (Optional[Union[str, Path]]): Directory to pick from. Defaults to ``LLM/conf``.
-        selection (Optional[Union[int, str]]): A 1-based index, a file name or path, or ``None``
-            to ask interactively.
-        examples (Optional[Union[str, Path]]): Folder with few-shot examples.
-        input_fn (Callable[[str], str]): Input function used in interactive mode.
-        print_fn (Callable[[str], None]): Print function used in interactive mode.
-        **overrides (Any): Forwarded to the backend's ``from_config``.
+    Parameters
+    ----------
+    config_dir : Optional[Union[str, Path]], optional
+        Directory to pick from. Defaults to ``LLM/conf``.
+    selection : Optional[Union[int, str]], optional
+        A 1-based index, a file name or path, or ``None`` to ask interactively.
+    examples : Optional[Union[str, Path]], optional
+        Folder with few-shot examples.
+    input_fn : Callable[[str], str], optional
+        Input function used in interactive mode.
+    print_fn : Callable[[str], None], optional
+        Print function used in interactive mode.
+    **overrides : Any
+        Forwarded to the backend's ``from_config``.
 
-    Returns:
-        BaseLLM: A configured backend instance.
+    Returns
+    -------
+    BaseLLM
+        A configured backend instance.
 
-    Raises:
-        FileNotFoundError: If no configuration file matches.
-        ValueError: If an interactive selection is cancelled.
+    Raises
+    ------
+    FileNotFoundError
+        If no configuration file matches.
+    ValueError
+        If an interactive selection is cancelled.
     """
     config_files = list_config_files(config_dir)
     if not config_files:
-        raise FileNotFoundError("No configuration files found in {}".format(config_dir or default_config_dir()))
+        raise FileNotFoundError(
+            "No configuration files found in {}".format(config_dir or default_config_dir())
+        )
 
     if isinstance(selection, str) and not selection.isdigit():
         candidate = Path(selection)

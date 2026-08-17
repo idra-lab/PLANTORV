@@ -18,6 +18,7 @@ except Exception:
         from ..llm_base import BaseLLM, encode_image, logger, resolve_config_value
     except Exception:
         import sys
+
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
         from llm_base import BaseLLM, encode_image, logger, resolve_config_value
 
@@ -41,7 +42,9 @@ class LLMAnthropic(BaseLLM):
 
     def _setup(self) -> None:
         """Read the Anthropic connection settings from the configuration."""
-        self.api_key_name = self.config.get("API_KEY_NAME") or self.config.get("API_KEY_ENV") or "ANTHROPIC_API_KEY"
+        self.api_key_name = (
+            self.config.get("API_KEY_NAME") or self.config.get("API_KEY_ENV") or "ANTHROPIC_API_KEY"
+        )
         self.api_key = self.config.get("API_KEY")
         self.base_url = resolve_config_value(self.config, "BASE_URL", None, allow_bare_env=True)
 
@@ -52,16 +55,22 @@ class LLMAnthropic(BaseLLM):
     def _create_client(self) -> Any:
         """Create the Anthropic client.
 
-        Returns:
-            Any: ``AnthropicFoundry`` when a base URL is configured, ``Anthropic`` otherwise.
+        Returns
+        -------
+        Any
+            ``AnthropicFoundry`` when a base URL is configured, ``Anthropic`` otherwise.
 
-        Raises:
-            ValueError: If the API key is missing.
+        Raises
+        ------
+        ValueError
+            If the API key is missing.
         """
         api_key = self.api_key or os.environ.get(self.api_key_name)
         if not api_key:
             raise ValueError(
-                "Missing Anthropic API key. Set {} or provide API_KEY in the config.".format(self.api_key_name)
+                "Missing Anthropic API key. Set {} or provide API_KEY in the config.".format(
+                    self.api_key_name
+                )
             )
 
         if self.base_url:
@@ -72,7 +81,19 @@ class LLMAnthropic(BaseLLM):
 
     @staticmethod
     def _split_system(messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-        """Split system messages out of the message list, as the API expects them apart."""
+        """Split system messages out of the message list, as the API expects them apart.
+
+        Parameters
+        ----------
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format.
+
+        Returns
+        -------
+        Tuple[List[Dict[str, Any]], Optional[str]]
+            The ``user``/``assistant`` conversation, and the joined system prompt (``None`` when
+            no system message is present).
+        """
         system_chunks: List[str] = []
         conversation: List[Dict[str, Any]] = []
 
@@ -85,7 +106,9 @@ class LLMAnthropic(BaseLLM):
                     system_chunks.append(content)
                 continue
 
-            conversation.append({"role": role if role in ("user", "assistant") else "user", "content": content})
+            conversation.append(
+                {"role": role if role in ("user", "assistant") else "user", "content": content}
+            )
 
         if not conversation:
             conversation.append({"role": "user", "content": ""})
@@ -94,7 +117,20 @@ class LLMAnthropic(BaseLLM):
         return conversation, (system_prompt or None)
 
     def _send(self, client: Any, messages: List[Dict[str, Any]]) -> Any:
-        """Send a messages request."""
+        """Send a messages request.
+
+        Parameters
+        ----------
+        client : Any
+            The Anthropic client returned by :meth:`connect`.
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format.
+
+        Returns
+        -------
+        Any
+            The raw Anthropic message response.
+        """
         conversation, system_prompt = self._split_system(messages)
 
         request_kwargs: Dict[str, Any] = {
@@ -108,7 +144,18 @@ class LLMAnthropic(BaseLLM):
         return client.messages.create(**request_kwargs)
 
     def _extract_text(self, response: Any) -> str:
-        """Concatenate the text blocks of the response."""
+        """Concatenate the text blocks of the response.
+
+        Parameters
+        ----------
+        response : Any
+            Raw Anthropic message response.
+
+        Returns
+        -------
+        str
+            The assistant answer, with non-text blocks dropped.
+        """
         blocks = getattr(response, "content", None) or []
         chunks = [
             block.text
@@ -118,7 +165,18 @@ class LLMAnthropic(BaseLLM):
         return "".join(chunks).strip()
 
     def _extract_usage(self, response: Any) -> Dict[str, int]:
-        """Extract token usage, which Anthropic names input/output tokens."""
+        """Extract token usage, which Anthropic names input/output tokens.
+
+        Parameters
+        ----------
+        response : Any
+            Raw Anthropic message response.
+
+        Returns
+        -------
+        Dict[str, int]
+            Keys ``prompt_tokens`` and ``completion_tokens``; zeros when usage is not reported.
+        """
         usage = getattr(response, "usage", None)
         if usage is None:
             return {"prompt_tokens": 0, "completion_tokens": 0}
@@ -129,7 +187,18 @@ class LLMAnthropic(BaseLLM):
         }
 
     def image_part(self, image: Any) -> Dict[str, Any]:
-        """Encode an image as an Anthropic base64 image block."""
+        """Encode an image as an Anthropic base64 image block.
+
+        Parameters
+        ----------
+        image : Any
+            A ``PIL.Image.Image``, or the path of an image file.
+
+        Returns
+        -------
+        Dict[str, Any]
+            An ``image`` content block carrying the base64 payload.
+        """
         mime_type, encoded = encode_image(image)
         return {
             "type": "image",
