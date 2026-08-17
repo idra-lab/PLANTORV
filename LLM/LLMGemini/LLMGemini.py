@@ -20,6 +20,7 @@ except Exception:
         from ..llm_base import BaseLLM, ImageInput, encode_image, logger, resolve_config_value
     except Exception:
         import sys
+
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
         from llm_base import BaseLLM, ImageInput, encode_image, logger, resolve_config_value
 
@@ -46,7 +47,9 @@ class LLMGemini(BaseLLM):
 
     def _setup(self) -> None:
         """Read the Gemini connection settings from the configuration."""
-        self.api_key_name = self.config.get("API_KEY_NAME") or self.config.get("API_KEY_ENV") or "GEMINI_API_KEY"
+        self.api_key_name = (
+            self.config.get("API_KEY_NAME") or self.config.get("API_KEY_ENV") or "GEMINI_API_KEY"
+        )
         self.api_key = self.config.get("API_KEY")
         self.base_url = resolve_config_value(self.config, "BASE_URL", None, allow_bare_env=True)
 
@@ -57,16 +60,20 @@ class LLMGemini(BaseLLM):
     def _create_client(self) -> Any:
         """Create the Gemini client.
 
-        Returns:
+        Returns
+        -------
             Any: Configured ``genai.Client``.
 
-        Raises:
+        Raises
+        ------
             ValueError: If the API key is missing.
         """
         api_key = self.api_key or os.environ.get(self.api_key_name)
         if not api_key:
             raise ValueError(
-                "Missing Gemini API key. Set {} or provide API_KEY in the config.".format(self.api_key_name)
+                "Missing Gemini API key. Set {} or provide API_KEY in the config.".format(
+                    self.api_key_name
+                )
             )
 
         if not self.base_url:
@@ -77,11 +84,14 @@ class LLMGemini(BaseLLM):
             return genai.Client(api_key=api_key, http_options={"base_url": self.base_url})
         except Exception:
             logger.warning(
-                "Unable to apply BASE_URL='%s' with google-genai; using the default endpoint.", self.base_url
+                "Unable to apply BASE_URL='%s' with google-genai; using the default endpoint.",
+                self.base_url,
             )
             return genai.Client(api_key=api_key)
 
-    def build_content(self, message: str, images: Optional[Sequence[ImageInput]] = None) -> List[types.Part]:
+    def build_content(
+        self, message: str, images: Optional[Sequence[ImageInput]] = None
+    ) -> List[types.Part]:
         """Build message content as Gemini parts."""
         parts: List[types.Part] = [types.Part.from_text(text=message)]
         for image in images or []:
@@ -93,7 +103,9 @@ class LLMGemini(BaseLLM):
         mime_type, encoded = encode_image(image)
         return types.Part.from_bytes(data=base64.b64decode(encoded), mime_type=mime_type)
 
-    def _to_contents(self, messages: List[Dict[str, Any]]) -> Tuple[List[types.Content], Optional[str]]:
+    def _to_contents(
+        self, messages: List[Dict[str, Any]]
+    ) -> Tuple[List[types.Content], Optional[str]]:
         """Convert shared messages into Gemini contents plus the system instruction."""
         system_chunks: List[str] = []
         contents: List[types.Content] = []
@@ -107,8 +119,12 @@ class LLMGemini(BaseLLM):
                     system_chunks.append(content)
                 continue
 
-            parts = content if isinstance(content, list) else [types.Part.from_text(text=str(content))]
-            contents.append(types.Content(role="model" if role == "assistant" else "user", parts=parts))
+            parts = (
+                content if isinstance(content, list) else [types.Part.from_text(text=str(content))]
+            )
+            contents.append(
+                types.Content(role="model" if role == "assistant" else "user", parts=parts)
+            )
 
         if not contents:
             contents.append(types.Content(role="user", parts=[types.Part.from_text(text="")]))

@@ -18,6 +18,7 @@ except Exception:
         from ..llm_base import BaseLLM, encode_image, logger, resolve_config_value
     except Exception:
         import sys
+
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
         from llm_base import BaseLLM, encode_image, logger, resolve_config_value
 
@@ -41,7 +42,9 @@ class LLMAnthropic(BaseLLM):
 
     def _setup(self) -> None:
         """Read the Anthropic connection settings from the configuration."""
-        self.api_key_name = self.config.get("API_KEY_NAME") or self.config.get("API_KEY_ENV") or "ANTHROPIC_API_KEY"
+        self.api_key_name = (
+            self.config.get("API_KEY_NAME") or self.config.get("API_KEY_ENV") or "ANTHROPIC_API_KEY"
+        )
         self.api_key = self.config.get("API_KEY")
         self.base_url = resolve_config_value(self.config, "BASE_URL", None, allow_bare_env=True)
 
@@ -52,16 +55,20 @@ class LLMAnthropic(BaseLLM):
     def _create_client(self) -> Any:
         """Create the Anthropic client.
 
-        Returns:
+        Returns
+        -------
             Any: ``AnthropicFoundry`` when a base URL is configured, ``Anthropic`` otherwise.
 
-        Raises:
+        Raises
+        ------
             ValueError: If the API key is missing.
         """
         api_key = self.api_key or os.environ.get(self.api_key_name)
         if not api_key:
             raise ValueError(
-                "Missing Anthropic API key. Set {} or provide API_KEY in the config.".format(self.api_key_name)
+                "Missing Anthropic API key. Set {} or provide API_KEY in the config.".format(
+                    self.api_key_name
+                )
             )
 
         if self.base_url:
@@ -85,7 +92,9 @@ class LLMAnthropic(BaseLLM):
                     system_chunks.append(content)
                 continue
 
-            conversation.append({"role": role if role in ("user", "assistant") else "user", "content": content})
+            conversation.append(
+                {"role": role if role in ("user", "assistant") else "user", "content": content}
+            )
 
         if not conversation:
             conversation.append({"role": "user", "content": ""})

@@ -46,7 +46,8 @@ except Exception:
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
         from llm_base import BaseLLM, logger, normalize_messages
 
-NOT_SET  = object()
+NOT_SET = object()
+
 
 class LLMVLLM(BaseLLM):
     """Offline vLLM backend.
@@ -110,7 +111,8 @@ class LLMVLLM(BaseLLM):
             **overrides (Any): Engine overrides such as ``download_dir``, ``dtype``,
                 ``tensor_parallel_size``, ``max_model_len``, ``gpu_memory_utilization``.
 
-        Raises:
+        Raises
+        ------
             ImportError: If vLLM is not installed.
         """
         if VLLMEngine is None or SamplingParams is None:
@@ -160,7 +162,9 @@ class LLMVLLM(BaseLLM):
         # The thinking flag and the system-role rewrite are accepted inside LLM_CONFIG too.
         resolved_enable_thinking = self.param("enable_thinking", NOT_SET)
         self.enable_thinking = (
-            NOT_SET if resolved_enable_thinking is NOT_SET else _coerce_bool(resolved_enable_thinking)
+            NOT_SET
+            if resolved_enable_thinking is NOT_SET
+            else _coerce_bool(resolved_enable_thinking)
         )
         if not self.disable_system:
             self.disable_system = _coerce_bool(self.param("disable_system"), default=False)
@@ -178,9 +182,7 @@ class LLMVLLM(BaseLLM):
         if config_download_workers is None:
             config_download_workers = llm_connection_config.get("HF_DOWNLOAD_WORKERS")
 
-        resolved_download_dir = (
-            download_dir if download_dir is not None else config_download_dir
-        )
+        resolved_download_dir = download_dir if download_dir is not None else config_download_dir
         resolved_download_dir = _resolve_optional_path(
             resolved_download_dir,
             base_dir=os.path.dirname(os.path.abspath(llm_config_file)),
@@ -218,13 +220,17 @@ class LLMVLLM(BaseLLM):
         self.download_workers = resolved_download_workers
 
         resolved_tensor_parallel_size = _coerce_positive_int(
-            tensor_parallel_size if tensor_parallel_size is not None else llm_connection_config.get("TENSOR_PARALLEL_SIZE"),
+            tensor_parallel_size
+            if tensor_parallel_size is not None
+            else llm_connection_config.get("TENSOR_PARALLEL_SIZE"),
             default=1,
             field_name="TENSOR_PARALLEL_SIZE",
         )
         resolved_dtype = dtype if dtype is not None else llm_connection_config.get("DTYPE", "auto")
         resolved_max_model_len = _coerce_optional_int(
-            max_model_len if max_model_len is not None else llm_connection_config.get("MAX_MODEL_LEN"),
+            max_model_len
+            if max_model_len is not None
+            else llm_connection_config.get("MAX_MODEL_LEN"),
             field_name="MAX_MODEL_LEN",
             minimum=1,
         )
@@ -254,7 +260,9 @@ class LLMVLLM(BaseLLM):
             minimum=0.0,
         )
         resolved_trust_remote_code = _coerce_bool(
-            trust_remote_code if trust_remote_code is not None else llm_connection_config.get("TRUST_REMOTE_CODE"),
+            trust_remote_code
+            if trust_remote_code is not None
+            else llm_connection_config.get("TRUST_REMOTE_CODE"),
             default=False,
         )
         resolved_enable_prefix_caching = _coerce_bool(
@@ -270,7 +278,9 @@ class LLMVLLM(BaseLLM):
             default=True,
         )
         resolved_enforce_eager = _coerce_bool(
-            enforce_eager if enforce_eager is not None else llm_connection_config.get("ENFORCE_EAGER"),
+            enforce_eager
+            if enforce_eager is not None
+            else llm_connection_config.get("ENFORCE_EAGER"),
             default=False,
         )
 
@@ -284,10 +294,7 @@ class LLMVLLM(BaseLLM):
             "disable_log_stats": resolved_disable_log_stats,
             "enforce_eager": resolved_enforce_eager,
         }
-        if (
-            resolved_download_dir is not None
-            and _vllm_supports_init_kwarg("download_dir")
-        ):
+        if resolved_download_dir is not None and _vllm_supports_init_kwarg("download_dir"):
             self._engine_kwargs["download_dir"] = resolved_download_dir
         if resolved_dtype not in [None, "", "None"]:
             self._engine_kwargs["dtype"] = resolved_dtype
@@ -310,7 +317,8 @@ class LLMVLLM(BaseLLM):
     def _create_client(self) -> Any:
         """Load (or reuse) the shared vLLM engine.
 
-        Returns:
+        Returns
+        -------
             Any: The vLLM engine instance backing this model.
         """
         with LLMVLLM._ENGINE_CACHE_LOCK:
@@ -400,7 +408,9 @@ class LLMVLLM(BaseLLM):
         if hasattr(self.tokenizer, "apply_chat_template"):
             extra_kwargs = {}
             if self.enable_thinking is not NOT_SET:
-                logger.debug(f"Passing enable_thinking={self.enable_thinking} to tokenizer template.")
+                logger.debug(
+                    f"Passing enable_thinking={self.enable_thinking} to tokenizer template."
+                )
                 extra_kwargs["enable_thinking"] = self.enable_thinking
 
             try:
@@ -505,9 +515,7 @@ class LLMVLLM(BaseLLM):
             # Compatibility fallback for older vLLM versions that may not expose
             # all sampling fields (for example `seed`).
             sampling_kwargs.pop("seed", None)
-            logger.debug(
-                "SamplingParams seed unsupported by current vLLM; retrying without seed"
-            )
+            logger.debug("SamplingParams seed unsupported by current vLLM; retrying without seed")
             params = SamplingParams(**sampling_kwargs)
             logger.debug("SamplingParams fallback built in %.2f ms", _elapsed_ms(started_at))
             return params

@@ -24,6 +24,7 @@ except Exception:
         from .llm_base import load_config_file, logger
     except Exception:
         import sys
+
         sys.path.append(os.path.dirname(__file__))
         from llm_base import load_config_file, logger
 
@@ -76,10 +77,12 @@ def normalize_provider(provider: str) -> str:
     Args:
         provider (str): Provider name, in any of its accepted spellings.
 
-    Returns:
+    Returns
+    -------
         str: Canonical provider slug.
 
-    Raises:
+    Raises
+    ------
         ValueError: If the provider is unknown.
     """
     normalized = str(provider).strip().lower().replace("-", "_").replace(" ", "_")
@@ -94,10 +97,12 @@ def infer_provider(config: Dict[str, Any]) -> str:
     Args:
         config (Dict[str, Any]): Parsed configuration.
 
-    Returns:
+    Returns
+    -------
         str: Canonical provider slug.
 
-    Raises:
+    Raises
+    ------
         ValueError: If the provider cannot be determined.
     """
     if not isinstance(config, dict):
@@ -110,8 +115,14 @@ def infer_provider(config: Dict[str, Any]) -> str:
     if "ENDPOINT" in config or "ENDPOINT_ENV" in config or "API_VERSION" in config:
         return "azure_openai"
 
-    model = str(config.get("LLM_VERSION") or config.get("MODEL_NAME") or config.get("MODEL") or "").strip().lower()
-    api_key_name = str(config.get("API_KEY_NAME") or config.get("API_KEY_ENV") or "").strip().lower()
+    model = (
+        str(config.get("LLM_VERSION") or config.get("MODEL_NAME") or config.get("MODEL") or "")
+        .strip()
+        .lower()
+    )
+    api_key_name = (
+        str(config.get("API_KEY_NAME") or config.get("API_KEY_ENV") or "").strip().lower()
+    )
     has_api_key = "API_KEY_NAME" in config or "API_KEY_ENV" in config
 
     if "anthropic" in api_key_name or model.startswith("claude"):
@@ -131,7 +142,10 @@ def infer_provider(config: Dict[str, Any]) -> str:
     if any(key in config for key in vllm_keys) and not has_api_key:
         return "vllm"
 
-    if any(key in config for key in ("MODEL_NAME", "DEVICE", "QUANTIZE", "CACHE_DIR")) and not has_api_key:
+    if (
+        any(key in config for key in ("MODEL_NAME", "DEVICE", "QUANTIZE", "CACHE_DIR"))
+        and not has_api_key
+    ):
         return "huggingface"
 
     if "openai" in api_key_name or model.startswith(("gpt", "o1", "o3", "o4")):
@@ -151,10 +165,12 @@ def resolve_class(provider: str) -> Type["BaseLLM"]:
     Args:
         provider (str): Provider name or slug.
 
-    Returns:
+    Returns
+    -------
         Type[BaseLLM]: The backend class.
 
-    Raises:
+    Raises
+    ------
         ValueError: If the provider is unknown.
         ImportError: If the backend module cannot be imported.
     """
@@ -207,7 +223,8 @@ def create_llm(
         examples (Optional[Union[str, Path]]): Folder with few-shot examples.
         **overrides (Any): Forwarded to the backend's ``from_config``.
 
-    Returns:
+    Returns
+    -------
         BaseLLM: A configured backend instance.
     """
     backend = resolve_class_from_file(config_file)
@@ -221,19 +238,19 @@ def list_config_files(config_dir: Optional[Union[str, Path]] = None) -> List[str
     Args:
         config_dir (Optional[Union[str, Path]]): Directory to scan. Defaults to ``LLM/conf``.
 
-    Returns:
+    Returns
+    -------
         List[str]: Sorted configuration file paths.
 
-    Raises:
+    Raises
+    ------
         FileNotFoundError: If the directory does not exist.
     """
     target_dir = Path(config_dir) if config_dir is not None else Path(default_config_dir())
     if not target_dir.is_dir():
         raise FileNotFoundError("LLM config directory not found: {}".format(target_dir))
 
-    return sorted(
-        str(path) for path in target_dir.iterdir() if path.suffix in (".yaml", ".yml")
-    )
+    return sorted(str(path) for path in target_dir.iterdir() if path.suffix in (".yaml", ".yml"))
 
 
 def select_llm(
@@ -255,16 +272,20 @@ def select_llm(
         print_fn (Callable[[str], None]): Print function used in interactive mode.
         **overrides (Any): Forwarded to the backend's ``from_config``.
 
-    Returns:
+    Returns
+    -------
         BaseLLM: A configured backend instance.
 
-    Raises:
+    Raises
+    ------
         FileNotFoundError: If no configuration file matches.
         ValueError: If an interactive selection is cancelled.
     """
     config_files = list_config_files(config_dir)
     if not config_files:
-        raise FileNotFoundError("No configuration files found in {}".format(config_dir or default_config_dir()))
+        raise FileNotFoundError(
+            "No configuration files found in {}".format(config_dir or default_config_dir())
+        )
 
     if isinstance(selection, str) and not selection.isdigit():
         candidate = Path(selection)

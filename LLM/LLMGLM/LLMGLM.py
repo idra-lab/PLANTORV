@@ -18,6 +18,7 @@ except Exception:
         from ..llm_base import BaseLLM, image_data_url, logger, resolve_config_value
     except Exception:
         import sys
+
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
         from llm_base import BaseLLM, image_data_url, logger, resolve_config_value
 
@@ -53,13 +54,17 @@ class LLMGLM(BaseLLM):
     def _create_client(self) -> OpenAI:
         """Create the GLM client.
 
-        Returns:
+        Returns
+        -------
             OpenAI: SDK client pointed at the GLM endpoint.
 
-        Raises:
+        Raises
+        ------
             ValueError: If the API key is missing.
         """
-        api_key = self.api_key or os.environ.get(self.api_key_name) or os.environ.get("ZHIPUAI_API_KEY")
+        api_key = (
+            self.api_key or os.environ.get(self.api_key_name) or os.environ.get("ZHIPUAI_API_KEY")
+        )
         if not api_key:
             raise ValueError(
                 "Missing GLM API key. Set {} (or ZHIPUAI_API_KEY) or provide API_KEY in the "

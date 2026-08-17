@@ -66,6 +66,7 @@ ImageInput = Union["Any", str, Path]
 
 ## ENVIRONMENT #########################################################################################################
 
+
 def default_env_path() -> str:
     """Return the default LLM environment file path."""
     return os.path.join(os.path.dirname(__file__), ".env")
@@ -125,16 +126,19 @@ def resolve_config_value(
 
 ## CONFIGURATION #######################################################################################################
 
+
 def load_config_file(config_file: Union[str, Path]) -> Dict[str, Any]:
     """Load a YAML configuration file and return it as a dictionary.
 
     Args:
         config_file (Union[str, Path]): Path to the YAML configuration file.
 
-    Returns:
+    Returns
+    -------
         Dict[str, Any]: Parsed configuration.
 
-    Raises:
+    Raises
+    ------
         FileNotFoundError: If the file does not exist or is not a YAML file.
         ValueError: If the file does not contain a mapping.
     """
@@ -156,6 +160,7 @@ def load_config_file(config_file: Union[str, Path]) -> Dict[str, Any]:
 
 ## MESSAGES ############################################################################################################
 
+
 def normalize_messages(
     messages: List[Dict[str, Any]],
     disable_system: bool = False,
@@ -170,7 +175,8 @@ def normalize_messages(
         disable_system (bool): Rewrite every ``system`` message as a ``user``/``assistant`` pair,
             for chat templates without a system role.
 
-    Returns:
+    Returns
+    -------
         List[Dict[str, str]]: Messages whose content is always a string.
     """
     normalized: List[Dict[str, str]] = []
@@ -185,8 +191,7 @@ def normalize_messages(
         if isinstance(content, list):
             # Keep the text parts only: a local text model cannot consume the others.
             texts = [
-                part.get("text", "") if isinstance(part, dict) else str(part)
-                for part in content
+                part.get("text", "") if isinstance(part, dict) else str(part) for part in content
             ]
             content = " ".join(text for text in texts if text)
 
@@ -205,13 +210,18 @@ def normalize_messages(
         if not system_content:
             continue
 
-        rewritten.append({"role": "user", "content": "SYSTEM INSTRUCTIONS:\n{}".format(system_content)})
-        rewritten.append({"role": "assistant", "content": "Understood. I will follow these instructions."})
+        rewritten.append(
+            {"role": "user", "content": "SYSTEM INSTRUCTIONS:\n{}".format(system_content)}
+        )
+        rewritten.append(
+            {"role": "assistant", "content": "Understood. I will follow these instructions."}
+        )
 
     return rewritten
 
 
 ## IMAGES ##############################################################################################################
+
 
 def encode_image(image: ImageInput, image_format: str = "PNG") -> Tuple[str, str]:
     """Encode an image as base64.
@@ -220,10 +230,12 @@ def encode_image(image: ImageInput, image_format: str = "PNG") -> Tuple[str, str
         image (ImageInput): A ``PIL.Image.Image``, or the path of an image file.
         image_format (str): Format used when re-encoding an in-memory image.
 
-    Returns:
+    Returns
+    -------
         Tuple[str, str]: The MIME type and the base64-encoded payload.
 
-    Raises:
+    Raises
+    ------
         TypeError: If the image is neither a PIL image nor a readable path.
         FileNotFoundError: If a path is given but does not exist.
     """
@@ -256,6 +268,7 @@ def image_data_url(image: ImageInput, image_format: str = "PNG") -> str:
 
 ## BASE CLASS ##########################################################################################################
 
+
 class BaseLLM(ABC):
     """Common interface shared by every LLM backend.
 
@@ -264,7 +277,8 @@ class BaseLLM(ABC):
     :meth:`prepare`) already work for any backend that implements those hooks, and can be
     overloaded when a provider needs something different.
 
-    Attributes:
+    Attributes
+    ----------
         PROVIDER (str): Slug used by the factory to select this backend.
         DEFAULT_PARAMS (Dict[str, Any]): Request parameters applied when the config omits them.
         PARAM_ALIASES (Dict[str, str]): Renames applied to ``LLM_CONFIG`` keys, so that a config
@@ -300,7 +314,8 @@ class BaseLLM(ABC):
             examples (Optional[Union[str, Path]]): Folder with few-shot examples, passed to
                 :meth:`prepare`.
 
-        Raises:
+        Raises
+        ------
             ValueError: If no model name is given.
         """
         if not model:
@@ -348,10 +363,12 @@ class BaseLLM(ABC):
             **overrides (Any): Values overriding the configuration, e.g. ``model="..."`` or
                 ``params={"temperature": 0.2}`` (merged on top of ``LLM_CONFIG``).
 
-        Returns:
+        Returns
+        -------
             BaseLLM: A configured backend instance.
 
-        Raises:
+        Raises
+        ------
             FileNotFoundError: If the configuration file does not exist or is not YAML.
             ValueError: If the configuration does not name a model.
         """
@@ -366,7 +383,9 @@ class BaseLLM(ABC):
         model = overrides.pop("model", None) or cls.model_from_config(config)
         if not model:
             raise ValueError(
-                "Missing model name in config {}. Expected LLM_VERSION (or MODEL/MODEL_NAME).".format(config_file)
+                "Missing model name in config {}. Expected LLM_VERSION (or MODEL/MODEL_NAME).".format(
+                    config_file
+                )
             )
 
         return cls(
@@ -401,9 +420,7 @@ class BaseLLM(ABC):
     def request_params(self) -> Dict[str, Any]:
         """Return the parameters to forward to the provider request."""
         return {
-            key: value
-            for key, value in self.params.items()
-            if key not in self.NON_REQUEST_PARAMS
+            key: value for key, value in self.params.items() if key not in self.NON_REQUEST_PARAMS
         }
 
     def _setup(self) -> None:
@@ -418,11 +435,14 @@ class BaseLLM(ABC):
         For API backends this builds the SDK client; for local backends it loads the model.
         The result is cached, so repeated :meth:`query` calls reuse the same connection.
 
-        Returns:
+        Returns
+        -------
             Any: The provider client or the loaded local model handle.
         """
         if self._client is None:
-            logger.info("Connecting to %s model '%s'", self.PROVIDER or type(self).__name__, self.model)
+            logger.info(
+                "Connecting to %s model '%s'", self.PROVIDER or type(self).__name__, self.model
+            )
             self._client = self._create_client()
         return self._client
 
@@ -444,7 +464,8 @@ class BaseLLM(ABC):
         Args:
             response (Any): Raw provider response.
 
-        Returns:
+        Returns
+        -------
             Dict[str, int]: Keys ``prompt_tokens`` and ``completion_tokens``; zeros when the
             provider does not report usage.
         """
@@ -485,16 +506,16 @@ class BaseLLM(ABC):
             keep_history (bool): Append the exchange to :attr:`messages`, so the next query
                 continues the same conversation.
 
-        Returns:
+        Returns
+        -------
             Tuple[bool, str]: Whether the request succeeded, and the model's answer.
 
-        Raises:
+        Raises
+        ------
             NotImplementedError: If images are given to a text-only backend.
         """
         if images and not self.SUPPORTS_IMAGES:
-            raise NotImplementedError(
-                "{} does not support images.".format(type(self).__name__)
-            )
+            raise NotImplementedError("{} does not support images.".format(type(self).__name__))
 
         client = self.connect()
         messages = self.build_messages(message, images=images, role=role)
@@ -532,7 +553,8 @@ class BaseLLM(ABC):
             images (Optional[Sequence[ImageInput]]): Images to attach to the message.
             role (str): Role of the message.
 
-        Returns:
+        Returns
+        -------
             List[Dict[str, Any]]: Messages in the shared chat format.
         """
         messages: List[Dict[str, Any]] = []
@@ -559,7 +581,8 @@ class BaseLLM(ABC):
             message (str): The text of the message.
             images (Optional[Sequence[ImageInput]]): Images to attach.
 
-        Returns:
+        Returns
+        -------
             Any: Provider-ready message content.
         """
         if not images:
@@ -575,10 +598,12 @@ class BaseLLM(ABC):
         Args:
             image (ImageInput): The image to encode.
 
-        Returns:
+        Returns
+        -------
             Any: A provider-specific content part.
 
-        Raises:
+        Raises
+        ------
             NotImplementedError: If the backend does not support images.
         """
         raise NotImplementedError("{} does not support images.".format(type(self).__name__))
@@ -597,7 +622,8 @@ class BaseLLM(ABC):
         Args:
             examples_dir (Union[str, Path]): Folder containing ``main.yaml``.
 
-        Raises:
+        Raises
+        ------
             NotImplementedError: Always, for the moment.
         """
         raise NotImplementedError(

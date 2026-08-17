@@ -18,6 +18,7 @@ except Exception:
         from ..llm_base import BaseLLM, image_data_url, logger, resolve_config_value
     except Exception:
         import sys
+
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
         from llm_base import BaseLLM, image_data_url, logger, resolve_config_value
 
@@ -56,10 +57,12 @@ class LLMAzureOpenAI(BaseLLM):
     def _create_client(self) -> AzureOpenAI:
         """Create the Azure OpenAI client.
 
-        Returns:
+        Returns
+        -------
             AzureOpenAI: Configured SDK client.
 
-        Raises:
+        Raises
+        ------
             ValueError: If the API key or the endpoint is missing.
         """
         api_key = self.api_key or os.environ.get(self.api_key_name)
@@ -69,7 +72,9 @@ class LLMAzureOpenAI(BaseLLM):
                 "environment, or provide API_KEY in the config.".format(self.api_key_name)
             )
         if not self.endpoint:
-            raise ValueError("Missing Azure OpenAI endpoint. Set ENDPOINT or ENDPOINT_ENV in the config.")
+            raise ValueError(
+                "Missing Azure OpenAI endpoint. Set ENDPOINT or ENDPOINT_ENV in the config."
+            )
 
         return AzureOpenAI(
             api_key=api_key,
