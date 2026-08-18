@@ -1,9 +1,3 @@
-# Copyright © University of Trento and DLR 2025.
-# This software is proprietary to the University of Trento and DLR. Use is permitted solely within
-# the Horizon Europe project “INVERSE” (Grant Agreement ID: 101136067).
-# This license does not override any rights or obligations established in the Grant Agreement.
-# Redistribution or use outside the project is prohibited.
-
 """Google Gemini backend."""
 
 import base64
@@ -62,11 +56,14 @@ class LLMGemini(BaseLLM):
 
         Returns
         -------
-            Any: Configured ``genai.Client``.
+        Any
+            Configured ``genai.Client``. The default endpoint is used when ``BASE_URL`` cannot be
+            applied by the installed SDK version.
 
         Raises
         ------
-            ValueError: If the API key is missing.
+        ValueError
+            If the API key is missing.
         """
         api_key = self.api_key or os.environ.get(self.api_key_name)
         if not api_key:
@@ -90,23 +87,63 @@ class LLMGemini(BaseLLM):
             return genai.Client(api_key=api_key)
 
     def build_content(
-        self, message: str, images: Optional[Sequence[ImageInput]] = None
+        # ImageInput is quoted on purpose: the try/except import block above declares it more than
+        # once, so type checkers only resolve it as a type alias through a forward reference.
+        self,
+        message: str,
+        images: Optional[Sequence["ImageInput"]] = None,
     ) -> List[types.Part]:
-        """Build message content as Gemini parts."""
+        """Build message content as Gemini parts.
+
+        Parameters
+        ----------
+        message : str
+            The text of the message.
+        images : Optional[Sequence[ImageInput]], optional
+            Images to attach.
+
+        Returns
+        -------
+        List[types.Part]
+            The text part followed by one inline data part per image.
+        """
         parts: List[types.Part] = [types.Part.from_text(text=message)]
         for image in images or []:
             parts.append(self.image_part(image))
         return parts
 
     def image_part(self, image: Any) -> types.Part:
-        """Encode an image as a Gemini inline data part."""
+        """Encode an image as a Gemini inline data part.
+
+        Parameters
+        ----------
+        image : Any
+            A ``PIL.Image.Image``, or the path of an image file.
+
+        Returns
+        -------
+        types.Part
+            A part holding the raw image bytes and their MIME type.
+        """
         mime_type, encoded = encode_image(image)
         return types.Part.from_bytes(data=base64.b64decode(encoded), mime_type=mime_type)
 
     def _to_contents(
         self, messages: List[Dict[str, Any]]
     ) -> Tuple[List[types.Content], Optional[str]]:
-        """Convert shared messages into Gemini contents plus the system instruction."""
+        """Convert shared messages into Gemini contents plus the system instruction.
+
+        Parameters
+        ----------
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format.
+
+        Returns
+        -------
+        Tuple[List[types.Content], Optional[str]]
+            The conversation contents, and the joined system instruction (``None`` when no
+            system message is present).
+        """
         system_chunks: List[str] = []
         contents: List[types.Content] = []
 
@@ -133,7 +170,20 @@ class LLMGemini(BaseLLM):
         return contents, (system_prompt or None)
 
     def _send(self, client: Any, messages: List[Dict[str, Any]]) -> Any:
-        """Send a generate-content request."""
+        """Send a generate-content request.
+
+        Parameters
+        ----------
+        client : Any
+            The ``genai.Client`` returned by :meth:`connect`.
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format.
+
+        Returns
+        -------
+        Any
+            The raw generate-content response.
+        """
         contents, system_prompt = self._to_contents(messages)
 
         config_kwargs: Dict[str, Any] = dict(self.request_params())
@@ -147,7 +197,19 @@ class LLMGemini(BaseLLM):
         )
 
     def _extract_text(self, response: Any) -> str:
-        """Extract the answer text from a Gemini response."""
+        """Extract the answer text from a Gemini response.
+
+        Parameters
+        ----------
+        response : Any
+            Raw generate-content response.
+
+        Returns
+        -------
+        str
+            The response ``text`` when present, otherwise the text parts of every candidate
+            joined together.
+        """
         text = getattr(response, "text", None)
         if isinstance(text, str) and text.strip():
             return text.strip()
@@ -163,7 +225,19 @@ class LLMGemini(BaseLLM):
         return "".join(chunks).strip()
 
     def _extract_usage(self, response: Any) -> Dict[str, int]:
-        """Extract token usage from the response metadata."""
+        """Extract token usage from the response metadata.
+
+        Parameters
+        ----------
+        response : Any
+            Raw generate-content response.
+
+        Returns
+        -------
+        Dict[str, int]
+            Keys ``prompt_tokens`` and ``completion_tokens``; zeros when the response carries no
+            usage metadata.
+        """
         metadata = getattr(response, "usage_metadata", None)
         if metadata is None:
             return {"prompt_tokens": 0, "completion_tokens": 0}

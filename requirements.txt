@@ -1,0 +1,16 @@
+matplotlib
+scikit-image
+ultralytics
+numpy
+pandas
+opencv-python
+torch
+torchvision
+Pillow
+segment-anything
+pyyaml
+python-dotenv
+openai
+loguru
+
+-r LLM/requirements.txt

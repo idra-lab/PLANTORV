@@ -1,9 +1,3 @@
-# Copyright © University of Trento and DLR 2025.
-# This software is proprietary to the University of Trento and DLR. Use is permitted solely within
-# the Horizon Europe project “INVERSE” (Grant Agreement ID: 101136067).
-# This license does not override any rights or obligations established in the Grant Agreement.
-# Redistribution or use outside the project is prohibited.
-
 """Generic LLM interface.
 
 A single :class:`BaseLLM` describes what every model backend must be able to do, and each
@@ -35,7 +29,7 @@ try:
 except Exception:
     import sys
 
-    def _find_repo_root(start_path):
+    def _find_repo_root(start_path: str) -> Optional[str]:
         path = os.path.abspath(start_path)
         for _ in range(8):
             candidate = os.path.join(path, "utility", "logger.py")
@@ -68,22 +62,70 @@ ImageInput = Union["Any", str, Path]
 
 
 def default_env_path() -> str:
-    """Return the default LLM environment file path."""
+    """Return the default LLM environment file path.
+
+    Returns
+    -------
+    str
+        Path of the ``.env`` file sitting next to this module.
+    """
     return os.path.join(os.path.dirname(__file__), ".env")
 
 
 def load_llm_env(env_path: Optional[str] = None) -> str:
-    """Load LLM environment variables and return the path used."""
+    """Load LLM environment variables and return the path used.
+
+    Parameters
+    ----------
+    env_path : Optional[str], optional
+        Environment file to read. Defaults to :func:`default_env_path`.
+
+    Returns
+    -------
+    str
+        Path of the environment file that was loaded.
+    """
     dotenv_path = env_path if env_path is not None else default_env_path()
     load_dotenv(dotenv_path=dotenv_path)
     return dotenv_path
 
 
 def _is_empty_config_value(value: Any) -> bool:
+    """Return whether a configuration value counts as unset.
+
+    Parameters
+    ----------
+    value : Any
+        Value read from a configuration file or from the environment.
+
+    Returns
+    -------
+    bool
+        ``True`` for ``None``, the empty string, and the literal string ``"None"``.
+    """
     return value in [None, "", "None"]
 
 
 def _resolve_env_reference(env_name: Any, config_key: str) -> Optional[str]:
+    """Read the environment variable a configuration entry points to.
+
+    Parameters
+    ----------
+    env_name : Any
+        Name of the environment variable holding the value.
+    config_key : str
+        Configuration key that declared the reference, quoted in the error message.
+
+    Returns
+    -------
+    Optional[str]
+        Value of the environment variable, or ``None`` when no variable is named.
+
+    Raises
+    ------
+    ValueError
+        If the named environment variable is unset or empty.
+    """
     if _is_empty_config_value(env_name):
         return None
 
@@ -98,6 +140,18 @@ def _resolve_env_reference(env_name: Any, config_key: str) -> Optional[str]:
 
 
 def _looks_like_env_name(value: str) -> bool:
+    """Return whether a string is shaped like an environment variable name.
+
+    Parameters
+    ----------
+    value : str
+        Candidate string, typically a raw configuration value.
+
+    Returns
+    -------
+    bool
+        ``True`` when the string holds upper-case letters, digits and underscores only.
+    """
     return re.match(r"^[A-Z_][A-Z0-9_]*$", value.strip()) is not None
 
 
@@ -108,7 +162,31 @@ def resolve_config_value(
     env_key: Optional[str] = None,
     allow_bare_env: bool = False,
 ) -> Any:
-    """Resolve a config value, allowing KEY_ENV, ${ENV_VAR}, or bare env names."""
+    """Resolve a config value, allowing KEY_ENV, ${ENV_VAR}, or bare env names.
+
+    Parameters
+    ----------
+    config : Dict[str, Any]
+        Parsed configuration.
+    key : str
+        Configuration key to resolve.
+    default : Any, optional
+        Value returned when the key is absent.
+    env_key : Optional[str], optional
+        Companion key naming an environment variable. Defaults to ``"<key>_ENV"``.
+    allow_bare_env : bool, optional
+        Read a plain upper-case value as an environment variable name.
+
+    Returns
+    -------
+    Any
+        The configured value, read from the environment when the configuration points to it.
+
+    Raises
+    ------
+    ValueError
+        If a referenced environment variable is unset or empty.
+    """
     load_llm_env()
 
     reference_key = env_key or "{}_ENV".format(key)
@@ -130,17 +208,22 @@ def resolve_config_value(
 def load_config_file(config_file: Union[str, Path]) -> Dict[str, Any]:
     """Load a YAML configuration file and return it as a dictionary.
 
-    Args:
-        config_file (Union[str, Path]): Path to the YAML configuration file.
+    Parameters
+    ----------
+    config_file : Union[str, Path]
+        Path to the YAML configuration file.
 
     Returns
     -------
-        Dict[str, Any]: Parsed configuration.
+    Dict[str, Any]
+        Parsed configuration.
 
     Raises
     ------
-        FileNotFoundError: If the file does not exist or is not a YAML file.
-        ValueError: If the file does not contain a mapping.
+    FileNotFoundError
+        If the file does not exist or is not a YAML file.
+    ValueError
+        If the file does not contain a mapping.
     """
     config_path = Path(config_file)
 
@@ -170,14 +253,18 @@ def normalize_messages(
     Used by local backends, which render the conversation into a single prompt and therefore
     cannot carry structured content.
 
-    Args:
-        messages (List[Dict[str, Any]]): Messages in the shared chat format.
-        disable_system (bool): Rewrite every ``system`` message as a ``user``/``assistant`` pair,
-            for chat templates without a system role.
+    Parameters
+    ----------
+    messages : List[Dict[str, Any]]
+        Messages in the shared chat format.
+    disable_system : bool, optional
+        Rewrite every ``system`` message as a ``user``/``assistant`` pair, for chat templates
+        without a system role.
 
     Returns
     -------
-        List[Dict[str, str]]: Messages whose content is always a string.
+    List[Dict[str, str]]
+        Messages whose content is always a string.
     """
     normalized: List[Dict[str, str]] = []
     for message in messages:
@@ -226,18 +313,24 @@ def normalize_messages(
 def encode_image(image: ImageInput, image_format: str = "PNG") -> Tuple[str, str]:
     """Encode an image as base64.
 
-    Args:
-        image (ImageInput): A ``PIL.Image.Image``, or the path of an image file.
-        image_format (str): Format used when re-encoding an in-memory image.
+    Parameters
+    ----------
+    image : ImageInput
+        A ``PIL.Image.Image``, or the path of an image file.
+    image_format : str, optional
+        Format used when re-encoding an in-memory image.
 
     Returns
     -------
-        Tuple[str, str]: The MIME type and the base64-encoded payload.
+    Tuple[str, str]
+        The MIME type and the base64-encoded payload.
 
     Raises
     ------
-        TypeError: If the image is neither a PIL image nor a readable path.
-        FileNotFoundError: If a path is given but does not exist.
+    TypeError
+        If the image is neither a PIL image nor a readable path.
+    FileNotFoundError
+        If a path is given but does not exist.
     """
     # Imported lazily: text-only deployments do not need Pillow.
     from PIL import Image
@@ -261,7 +354,20 @@ def encode_image(image: ImageInput, image_format: str = "PNG") -> Tuple[str, str
 
 
 def image_data_url(image: ImageInput, image_format: str = "PNG") -> str:
-    """Return an image encoded as a ``data:`` URL."""
+    """Return an image encoded as a ``data:`` URL.
+
+    Parameters
+    ----------
+    image : ImageInput
+        A ``PIL.Image.Image``, or the path of an image file.
+    image_format : str, optional
+        Format used when re-encoding an in-memory image.
+
+    Returns
+    -------
+    str
+        The image as a ``data:<mime>;base64,<payload>`` URL.
+    """
     mime_type, encoded = encode_image(image, image_format=image_format)
     return "data:{};base64,{}".format(mime_type, encoded)
 
@@ -279,13 +385,18 @@ class BaseLLM(ABC):
 
     Attributes
     ----------
-        PROVIDER (str): Slug used by the factory to select this backend.
-        DEFAULT_PARAMS (Dict[str, Any]): Request parameters applied when the config omits them.
-        PARAM_ALIASES (Dict[str, str]): Renames applied to ``LLM_CONFIG`` keys, so that a config
-            written with a generic name still reaches the provider under the name it expects.
-        NON_REQUEST_PARAMS (Tuple[str, ...]): ``LLM_CONFIG`` keys consumed by the backend itself
-            and never forwarded to the provider request.
-        SUPPORTS_IMAGES (bool): Whether :meth:`query` accepts images.
+    PROVIDER : str
+        Slug used by the factory to select this backend.
+    DEFAULT_PARAMS : Dict[str, Any]
+        Request parameters applied when the config omits them.
+    PARAM_ALIASES : Dict[str, str]
+        Renames applied to ``LLM_CONFIG`` keys, so that a config written with a generic name
+        still reaches the provider under the name it expects.
+    NON_REQUEST_PARAMS : Tuple[str, ...]
+        ``LLM_CONFIG`` keys consumed by the backend itself and never forwarded to the provider
+        request.
+    SUPPORTS_IMAGES : bool
+        Whether :meth:`query` accepts images.
     """
 
     PROVIDER: str = ""
@@ -304,19 +415,25 @@ class BaseLLM(ABC):
     ) -> None:
         """Initialize a backend.
 
-        Args:
-            model (str): Model/deployment identifier sent to the provider.
-            params (Optional[Dict[str, Any]]): Request parameters, normally the ``LLM_CONFIG``
-                block of the configuration file. Forwarded to the provider as-is.
-            config (Optional[Dict[str, Any]]): The full configuration dictionary, kept so that
-                backends can read their own provider-specific keys.
-            config_file (Optional[Union[str, Path]]): Path the configuration was read from.
-            examples (Optional[Union[str, Path]]): Folder with few-shot examples, passed to
-                :meth:`prepare`.
+        Parameters
+        ----------
+        model : str
+            Model/deployment identifier sent to the provider.
+        params : Optional[Dict[str, Any]], optional
+            Request parameters, normally the ``LLM_CONFIG`` block of the configuration file.
+            Forwarded to the provider as-is.
+        config : Optional[Dict[str, Any]], optional
+            The full configuration dictionary, kept so that backends can read their own
+            provider-specific keys.
+        config_file : Optional[Union[str, Path]], optional
+            Path the configuration was read from.
+        examples : Optional[Union[str, Path]], optional
+            Folder with few-shot examples, passed to :meth:`prepare`.
 
         Raises
         ------
-            ValueError: If no model name is given.
+        ValueError
+            If no model name is given.
         """
         if not model:
             raise ValueError("Missing model name. Expected LLM_VERSION (or MODEL/MODEL_NAME).")
@@ -357,20 +474,27 @@ class BaseLLM(ABC):
         model expecting ``max_completion_tokens`` and one expecting ``max_tokens`` differ only by
         their configuration file.
 
-        Args:
-            config_file (Union[str, Path]): Path to the YAML configuration file.
-            examples (Optional[Union[str, Path]]): Folder with few-shot examples.
-            **overrides (Any): Values overriding the configuration, e.g. ``model="..."`` or
-                ``params={"temperature": 0.2}`` (merged on top of ``LLM_CONFIG``).
+        Parameters
+        ----------
+        config_file : Union[str, Path]
+            Path to the YAML configuration file.
+        examples : Optional[Union[str, Path]], optional
+            Folder with few-shot examples.
+        **overrides : Any
+            Values overriding the configuration, e.g. ``model="..."`` or
+            ``params={"temperature": 0.2}`` (merged on top of ``LLM_CONFIG``).
 
         Returns
         -------
-            BaseLLM: A configured backend instance.
+        BaseLLM
+            A configured backend instance.
 
         Raises
         ------
-            FileNotFoundError: If the configuration file does not exist or is not YAML.
-            ValueError: If the configuration does not name a model.
+        FileNotFoundError
+            If the configuration file does not exist or is not YAML.
+        ValueError
+            If the configuration does not name a model.
         """
         config = load_config_file(config_file)
         logger.info("LLM configuration file: %s", config_file)
@@ -399,11 +523,34 @@ class BaseLLM(ABC):
 
     @staticmethod
     def model_from_config(config: Dict[str, Any]) -> Optional[str]:
-        """Return the model name declared by a configuration dictionary."""
+        """Return the model name declared by a configuration dictionary.
+
+        Parameters
+        ----------
+        config : Dict[str, Any]
+            Parsed configuration.
+
+        Returns
+        -------
+        Optional[str]
+            The first of ``LLM_VERSION``, ``MODEL`` and ``MODEL_NAME`` that is set, or ``None``.
+        """
         return config.get("LLM_VERSION") or config.get("MODEL") or config.get("MODEL_NAME")
 
     def _merge_params(self, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        """Merge configured parameters with the backend defaults and apply aliases."""
+        """Merge configured parameters with the backend defaults and apply aliases.
+
+        Parameters
+        ----------
+        params : Optional[Dict[str, Any]]
+            Request parameters read from the configuration.
+
+        Returns
+        -------
+        Dict[str, Any]
+            :attr:`DEFAULT_PARAMS` updated with ``params``, with :attr:`PARAM_ALIASES` applied
+            and empty values dropped.
+        """
         merged: Dict[str, Any] = dict(self.DEFAULT_PARAMS)
         merged.update(params or {})
 
@@ -414,11 +561,30 @@ class BaseLLM(ABC):
         return {key: value for key, value in merged.items() if not _is_empty_config_value(value)}
 
     def param(self, name: str, default: Any = None) -> Any:
-        """Return a configured parameter, or ``default`` when it is not set."""
+        """Return a configured parameter, or ``default`` when it is not set.
+
+        Parameters
+        ----------
+        name : str
+            Parameter name.
+        default : Any, optional
+            Value returned when the parameter is missing.
+
+        Returns
+        -------
+        Any
+            The configured value, or ``default``.
+        """
         return self.params.get(name, default)
 
     def request_params(self) -> Dict[str, Any]:
-        """Return the parameters to forward to the provider request."""
+        """Return the parameters to forward to the provider request.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The configured parameters without the :attr:`NON_REQUEST_PARAMS` keys.
+        """
         return {
             key: value for key, value in self.params.items() if key not in self.NON_REQUEST_PARAMS
         }
@@ -437,7 +603,8 @@ class BaseLLM(ABC):
 
         Returns
         -------
-            Any: The provider client or the loaded local model handle.
+        Any
+            The provider client or the loaded local model handle.
         """
         if self._client is None:
             logger.info(
@@ -448,26 +615,59 @@ class BaseLLM(ABC):
 
     @abstractmethod
     def _create_client(self) -> Any:
-        """Create the provider client (or load the local model)."""
+        """Create the provider client (or load the local model).
+
+        Returns
+        -------
+        Any
+            The provider client or the loaded local model handle.
+        """
 
     @abstractmethod
     def _send(self, client: Any, messages: List[Dict[str, Any]]) -> Any:
-        """Send a prepared message list and return the raw provider response."""
+        """Send a prepared message list and return the raw provider response.
+
+        Parameters
+        ----------
+        client : Any
+            The connection returned by :meth:`connect`.
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format.
+
+        Returns
+        -------
+        Any
+            The raw provider response.
+        """
 
     @abstractmethod
     def _extract_text(self, response: Any) -> str:
-        """Extract the assistant text from a raw provider response."""
+        """Extract the assistant text from a raw provider response.
+
+        Parameters
+        ----------
+        response : Any
+            Raw provider response.
+
+        Returns
+        -------
+        str
+            The assistant answer.
+        """
 
     def _extract_usage(self, response: Any) -> Dict[str, int]:
         """Extract token usage from a raw provider response.
 
-        Args:
-            response (Any): Raw provider response.
+        Parameters
+        ----------
+        response : Any
+            Raw provider response.
 
         Returns
         -------
-            Dict[str, int]: Keys ``prompt_tokens`` and ``completion_tokens``; zeros when the
-            provider does not report usage.
+        Dict[str, int]
+            Keys ``prompt_tokens`` and ``completion_tokens``; zeros when the provider does not
+            report usage.
         """
         usage = getattr(response, "usage", None)
         if usage is None:
@@ -495,24 +695,32 @@ class BaseLLM(ABC):
     ) -> Tuple[bool, str]:
         """Connect to the model and send a query.
 
-        Args:
-            message (str): The message sent to the model.
-            images (Optional[Sequence[ImageInput]]): Images to send along with the message, as
-                ``PIL.Image.Image`` instances (paths are also accepted). Only backends with
-                :attr:`SUPPORTS_IMAGES` set accept them.
-            role (str): Role of the message. Defaults to ``"user"``.
-            max_retry (int): How many times to attempt the request before giving up.
-            end_when_error (bool): Stop at the first failure instead of retrying.
-            keep_history (bool): Append the exchange to :attr:`messages`, so the next query
-                continues the same conversation.
+        Parameters
+        ----------
+        message : str
+            The message sent to the model.
+        images : Optional[Sequence[ImageInput]], optional
+            Images to send along with the message, as ``PIL.Image.Image`` instances (paths are
+            also accepted). Only backends with :attr:`SUPPORTS_IMAGES` set accept them.
+        role : str, optional
+            Role of the message. Defaults to ``"user"``.
+        max_retry : int, optional
+            How many times to attempt the request before giving up.
+        end_when_error : bool, optional
+            Stop at the first failure instead of retrying.
+        keep_history : bool, optional
+            Append the exchange to :attr:`messages`, so the next query continues the same
+            conversation.
 
         Returns
         -------
-            Tuple[bool, str]: Whether the request succeeded, and the model's answer.
+        Tuple[bool, str]
+            Whether the request succeeded, and the model's answer.
 
         Raises
         ------
-            NotImplementedError: If images are given to a text-only backend.
+        NotImplementedError
+            If images are given to a text-only backend.
         """
         if images and not self.SUPPORTS_IMAGES:
             raise NotImplementedError("{} does not support images.".format(type(self).__name__))
@@ -548,14 +756,19 @@ class BaseLLM(ABC):
     ) -> List[Dict[str, Any]]:
         """Build the full message list for a query, including examples and system message.
 
-        Args:
-            message (str): The message sent to the model.
-            images (Optional[Sequence[ImageInput]]): Images to attach to the message.
-            role (str): Role of the message.
+        Parameters
+        ----------
+        message : str
+            The message sent to the model.
+        images : Optional[Sequence[ImageInput]], optional
+            Images to attach to the message.
+        role : str, optional
+            Role of the message.
 
         Returns
         -------
-            List[Dict[str, Any]]: Messages in the shared chat format.
+        List[Dict[str, Any]]
+            Messages in the shared chat format.
         """
         messages: List[Dict[str, Any]] = []
 
@@ -577,13 +790,17 @@ class BaseLLM(ABC):
         Without images the content is the plain string. With images it becomes the list of parts
         expected by the provider, built through :meth:`image_part`.
 
-        Args:
-            message (str): The text of the message.
-            images (Optional[Sequence[ImageInput]]): Images to attach.
+        Parameters
+        ----------
+        message : str
+            The text of the message.
+        images : Optional[Sequence[ImageInput]], optional
+            Images to attach.
 
         Returns
         -------
-            Any: Provider-ready message content.
+        Any
+            Provider-ready message content.
         """
         if not images:
             return message
@@ -595,16 +812,20 @@ class BaseLLM(ABC):
     def image_part(self, image: ImageInput) -> Any:
         """Return a single image encoded the way the provider expects it.
 
-        Args:
-            image (ImageInput): The image to encode.
+        Parameters
+        ----------
+        image : ImageInput
+            The image to encode.
 
         Returns
         -------
-            Any: A provider-specific content part.
+        Any
+            A provider-specific content part.
 
         Raises
         ------
-            NotImplementedError: If the backend does not support images.
+        NotImplementedError
+            If the backend does not support images.
         """
         raise NotImplementedError("{} does not support images.".format(type(self).__name__))
 
@@ -619,12 +840,15 @@ class BaseLLM(ABC):
         relative to the file declaring them. Loaded examples end up in :attr:`messages` and are
         sent ahead of every query.
 
-        Args:
-            examples_dir (Union[str, Path]): Folder containing ``main.yaml``.
+        Parameters
+        ----------
+        examples_dir : Union[str, Path]
+            Folder containing ``main.yaml``.
 
         Raises
         ------
-            NotImplementedError: Always, for the moment.
+        NotImplementedError
+            Always, for the moment.
         """
         raise NotImplementedError(
             "prepare() is not implemented yet: few-shot examples from '{}' will not be loaded. "

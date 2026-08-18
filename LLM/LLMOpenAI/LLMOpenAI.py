@@ -1,9 +1,3 @@
-# Copyright © University of Trento and DLR 2025.
-# This software is proprietary to the University of Trento and DLR. Use is permitted solely within
-# the Horizon Europe project “INVERSE” (Grant Agreement ID: 101136067).
-# This license does not override any rights or obligations established in the Grant Agreement.
-# Redistribution or use outside the project is prohibited.
-
 """OpenAI backend."""
 
 import os
@@ -62,11 +56,13 @@ class LLMOpenAI(BaseLLM):
 
         Returns
         -------
-            OpenAI: Configured SDK client.
+        OpenAI
+            Configured SDK client.
 
         Raises
         ------
-            ValueError: If the API key is missing.
+        ValueError
+            If the API key is missing.
         """
         api_key = self.api_key or os.environ.get(self.api_key_name)
         if not api_key:
@@ -87,7 +83,20 @@ class LLMOpenAI(BaseLLM):
         return OpenAI(**client_kwargs)
 
     def _send(self, client: OpenAI, messages: List[Dict[str, Any]]) -> Any:
-        """Send a chat completion request."""
+        """Send a chat completion request.
+
+        Parameters
+        ----------
+        client : OpenAI
+            The SDK client returned by :meth:`connect`.
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format.
+
+        Returns
+        -------
+        Any
+            The raw chat-completion response.
+        """
         return client.chat.completions.create(
             model=self.model,
             messages=cast(Any, messages),
@@ -95,11 +104,33 @@ class LLMOpenAI(BaseLLM):
         )
 
     def _extract_text(self, response: Any) -> str:
-        """Extract the assistant message content."""
+        """Extract the assistant message content.
+
+        Parameters
+        ----------
+        response : Any
+            Raw chat-completion response.
+
+        Returns
+        -------
+        str
+            The assistant answer, or the empty string when the message has no content.
+        """
         return response.choices[0].message.content or ""
 
     def image_part(self, image: Any) -> Dict[str, Any]:
-        """Encode an image as an OpenAI ``image_url`` content part."""
+        """Encode an image as an OpenAI ``image_url`` content part.
+
+        Parameters
+        ----------
+        image : Any
+            A ``PIL.Image.Image``, or the path of an image file.
+
+        Returns
+        -------
+        Dict[str, Any]
+            An ``image_url`` content part holding a ``data:`` URL and the configured detail level.
+        """
         return {
             "type": "image_url",
             "image_url": {"url": image_data_url(image), "detail": self.image_detail},

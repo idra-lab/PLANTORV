@@ -1,9 +1,3 @@
-# Copyright © University of Trento and DLR 2025.
-# This software is proprietary to the University of Trento and DLR. Use is permitted solely within
-# the Horizon Europe project “INVERSE” (Grant Agreement ID: 101136067).
-# This license does not override any rights or obligations established in the Grant Agreement.
-# Redistribution or use outside the project is prohibited.
-
 """Anthropic backend."""
 
 import os
@@ -57,11 +51,13 @@ class LLMAnthropic(BaseLLM):
 
         Returns
         -------
-            Any: ``AnthropicFoundry`` when a base URL is configured, ``Anthropic`` otherwise.
+        Any
+            ``AnthropicFoundry`` when a base URL is configured, ``Anthropic`` otherwise.
 
         Raises
         ------
-            ValueError: If the API key is missing.
+        ValueError
+            If the API key is missing.
         """
         api_key = self.api_key or os.environ.get(self.api_key_name)
         if not api_key:
@@ -79,7 +75,19 @@ class LLMAnthropic(BaseLLM):
 
     @staticmethod
     def _split_system(messages: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
-        """Split system messages out of the message list, as the API expects them apart."""
+        """Split system messages out of the message list, as the API expects them apart.
+
+        Parameters
+        ----------
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format.
+
+        Returns
+        -------
+        Tuple[List[Dict[str, Any]], Optional[str]]
+            The ``user``/``assistant`` conversation, and the joined system prompt (``None`` when
+            no system message is present).
+        """
         system_chunks: List[str] = []
         conversation: List[Dict[str, Any]] = []
 
@@ -103,7 +111,20 @@ class LLMAnthropic(BaseLLM):
         return conversation, (system_prompt or None)
 
     def _send(self, client: Any, messages: List[Dict[str, Any]]) -> Any:
-        """Send a messages request."""
+        """Send a messages request.
+
+        Parameters
+        ----------
+        client : Any
+            The Anthropic client returned by :meth:`connect`.
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format.
+
+        Returns
+        -------
+        Any
+            The raw Anthropic message response.
+        """
         conversation, system_prompt = self._split_system(messages)
 
         request_kwargs: Dict[str, Any] = {
@@ -117,7 +138,18 @@ class LLMAnthropic(BaseLLM):
         return client.messages.create(**request_kwargs)
 
     def _extract_text(self, response: Any) -> str:
-        """Concatenate the text blocks of the response."""
+        """Concatenate the text blocks of the response.
+
+        Parameters
+        ----------
+        response : Any
+            Raw Anthropic message response.
+
+        Returns
+        -------
+        str
+            The assistant answer, with non-text blocks dropped.
+        """
         blocks = getattr(response, "content", None) or []
         chunks = [
             block.text
@@ -127,7 +159,18 @@ class LLMAnthropic(BaseLLM):
         return "".join(chunks).strip()
 
     def _extract_usage(self, response: Any) -> Dict[str, int]:
-        """Extract token usage, which Anthropic names input/output tokens."""
+        """Extract token usage, which Anthropic names input/output tokens.
+
+        Parameters
+        ----------
+        response : Any
+            Raw Anthropic message response.
+
+        Returns
+        -------
+        Dict[str, int]
+            Keys ``prompt_tokens`` and ``completion_tokens``; zeros when usage is not reported.
+        """
         usage = getattr(response, "usage", None)
         if usage is None:
             return {"prompt_tokens": 0, "completion_tokens": 0}
@@ -138,7 +181,18 @@ class LLMAnthropic(BaseLLM):
         }
 
     def image_part(self, image: Any) -> Dict[str, Any]:
-        """Encode an image as an Anthropic base64 image block."""
+        """Encode an image as an Anthropic base64 image block.
+
+        Parameters
+        ----------
+        image : Any
+            A ``PIL.Image.Image``, or the path of an image file.
+
+        Returns
+        -------
+        Dict[str, Any]
+            An ``image`` content block carrying the base64 payload.
+        """
         mime_type, encoded = encode_image(image)
         return {
             "type": "image",
