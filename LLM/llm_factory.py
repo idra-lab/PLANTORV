@@ -9,7 +9,7 @@ import importlib
 import inspect
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Type, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Type, Union, cast
 
 try:
     from llm_base import load_config_file, logger
@@ -229,7 +229,7 @@ def resolve_class(provider: str) -> Type["BaseLLM"]:
 
         backend = getattr(module, name, None) or getattr(module, "LLM", None)
         if inspect.isclass(backend):
-            return backend
+            return cast(Type["BaseLLM"], backend)
         errors.append("{}: no backend class found".format(module_name))
 
     raise ImportError(

@@ -3,7 +3,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import yaml
@@ -245,6 +245,13 @@ class LLMHuggingFace(BaseLLM):
             if is_oom and can_fallback:
                 logger.warning("8-bit load failed with OOM; retrying with 4-bit quantization.")
                 torch.cuda.empty_cache()
+                if BitsAndBytesConfig is None:
+                    logger.error(
+                        "bitsandbytes is not available; cannot fallback to 4-bit quantization."
+                    )
+                    raise RuntimeError(
+                        "bitsandbytes is not available; cannot fallback to 4-bit quantization."
+                    )
                 model_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.float16,
@@ -264,7 +271,7 @@ class LLMHuggingFace(BaseLLM):
 
         if not quantized and "device_map" not in model_kwargs:
             logger.debug("Model loaded without quantization; moving to device '%s'.", self.device)
-            model = model.to(self.device)
+            model = cast(torch.nn.Module, model).to(self.device)
 
         self.model_input_device = _resolve_model_input_device(model, fallback=self.device)
         return model
