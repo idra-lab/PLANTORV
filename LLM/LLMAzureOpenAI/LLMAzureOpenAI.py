@@ -6,15 +6,21 @@ from typing import Any, Dict, List, cast
 from openai import AzureOpenAI
 
 try:
-    from llm_base import BaseLLM, image_data_url, logger, resolve_config_value
+    from llm_base import BaseLLM, default_env_path, image_data_url, logger, resolve_config_value
 except Exception:
     try:
-        from ..llm_base import BaseLLM, image_data_url, logger, resolve_config_value
+        from ..llm_base import (
+            BaseLLM,
+            default_env_path,
+            image_data_url,
+            logger,
+            resolve_config_value,
+        )
     except Exception:
         import sys
 
         sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-        from llm_base import BaseLLM, image_data_url, logger, resolve_config_value
+        from llm_base import BaseLLM, default_env_path, image_data_url, logger, resolve_config_value
 
 
 class LLMAzureOpenAI(BaseLLM):
@@ -64,8 +70,10 @@ class LLMAzureOpenAI(BaseLLM):
         api_key = self.api_key or os.environ.get(self.api_key_name)
         if not api_key:
             raise ValueError(
-                "Missing Azure OpenAI API key. Set {} in LLM/.env or in the shell "
-                "environment, or provide API_KEY in the config.".format(self.api_key_name)
+                "Missing Azure OpenAI API key. Set {} in {} or in the shell "
+                "environment, or provide API_KEY in the config.".format(
+                    self.api_key_name, default_env_path()
+                )
             )
         if not self.endpoint:
             raise ValueError(

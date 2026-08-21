@@ -1,6 +1,7 @@
 matplotlib
 scikit-image
-ultralytics
+ultralytics>=8.4.114
+timm
 numpy
 pandas
 opencv-python
