@@ -19,15 +19,8 @@ try:
 except Exception:
     snapshot_download = None
 
-try:
-    from vllm import LLM as VLLMEngine
-    from vllm import SamplingParams
-except Exception as error:
-    VLLMEngine = None
-    SamplingParams = None
-    _VLLM_IMPORT_ERROR = error
-else:
-    _VLLM_IMPORT_ERROR = None
+from vllm import LLM as VLLMEngine
+from vllm import SamplingParams
 
 try:
     from llm_base import BaseLLM, logger, normalize_messages
@@ -49,7 +42,8 @@ class LLMVLLM(BaseLLM):
     Model weights and KV runtime are kept in a process-level cache, so creating multiple
     instances with the same engine config does not reload the model.
 
-    Configuration keys:
+    Configuration keys::
+
         MODEL_NAME: Model identifier or local path.
         DTYPE, TENSOR_PARALLEL_SIZE, MAX_MODEL_LEN, MAX_NUM_SEQS, MAX_NUM_BATCHED_TOKENS,
         GPU_MEMORY_UTILIZATION, SWAP_SPACE, TRUST_REMOTE_CODE, ENABLE_PREFIX_CACHING,
@@ -96,24 +90,22 @@ class LLMVLLM(BaseLLM):
         The engine is created on the first :meth:`query` (through :meth:`connect`) and shared
         between instances using the same engine settings.
 
-        Args:
-            model (str): Model identifier or local path.
-            params (Optional[Dict[str, Any]]): Sampling parameters (``LLM_CONFIG``).
-            config (Optional[Dict[str, Any]]): Full configuration dictionary.
-            config_file (Optional[Union[str, Path]]): Path the configuration came from.
-            examples (Optional[Union[str, Path]]): Folder with few-shot examples.
-            **overrides (Any): Engine overrides such as ``download_dir``, ``dtype``,
-                ``tensor_parallel_size``, ``max_model_len``, ``gpu_memory_utilization``.
-
-        Raises
-        ------
-            ImportError: If vLLM is not installed.
+        Parameters
+        ----------
+        model : str
+            Model identifier or local path.
+        params : Optional[Dict[str, Any]]
+            Sampling parameters (``LLM_CONFIG``).
+        config : Optional[Dict[str, Any]]
+            Full configuration dictionary.
+        config_file : Optional[Union[str, Path]]
+            Path the configuration came from.
+        examples : Optional[Union[str, Path]]
+            Folder with few-shot examples.
+        **overrides : Any
+            Engine overrides such as ``download_dir``, ``dtype``,
+            ``tensor_parallel_size``, ``max_model_len``, ``gpu_memory_utilization``.
         """
-        if VLLMEngine is None or SamplingParams is None:
-            raise ImportError(
-                "vLLM is not available. Install it with `pip install vllm`."
-            ) from _VLLM_IMPORT_ERROR
-
         self._init_overrides: Dict[str, Any] = dict(overrides)
         self._warned_missing_chat_template = False
         self.tokenizer: Any = None
@@ -313,7 +305,8 @@ class LLMVLLM(BaseLLM):
 
         Returns
         -------
-            Any: The vLLM engine instance backing this model.
+        Any
+            The vLLM engine instance backing this model.
         """
         with LLMVLLM._ENGINE_CACHE_LOCK:
             cache_entry = LLMVLLM._ENGINE_CACHE.get(self._engine_key)
@@ -724,8 +717,6 @@ def _preview_text(text: str, max_chars: int = 120) -> str:
 
 
 def _vllm_supports_init_kwarg(kwarg_name: str) -> bool:
-    if VLLMEngine is None:
-        return False
     try:
         parameters = inspect.signature(VLLMEngine.__init__).parameters.values()
     except Exception:

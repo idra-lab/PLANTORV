@@ -26,7 +26,8 @@ except Exception:
 class LLMAzureOpenAI(BaseLLM):
     """Azure OpenAI chat-completions backend.
 
-    Configuration keys:
+    Configuration keys::
+
         LLM_VERSION: Model name.
         DEPLOYMENT: Azure deployment name. Defaults to ``LLM_VERSION``.
         API_KEY_NAME: Environment variable holding the API key.

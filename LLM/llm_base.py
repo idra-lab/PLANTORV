@@ -13,6 +13,7 @@ and one that wants ``max_tokens`` are both expressed by their own configuration 
 by a flag in the code. As an example, consider a configuration file like this
 
 .. code-block:: yaml
+
     LLM_VERSION : "gpt-5.2-chat"
     API_KEY_NAME : "AZURE_OPENAI_API_KEY"
     ENDPOINT_ENV : "AZURE_OPENAI_ENDPOINT"

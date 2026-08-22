@@ -76,8 +76,8 @@ Stages 1 and 2 both talk to an LLM through a shared, backend-agnostic layer, des
 ### Install dependencies
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 make install
 ```
 
@@ -567,7 +567,7 @@ Because of the auto-fix, `pre-commit run --all-files` will rewrite files; use
 `make check` when you want to inspect without changing anything.
 
 `pyright` runs against the environment that's active when `git commit` is run (not an
-isolated pre-commit env), so make sure `make install-dev` was run in the venv you
+isolated pre-commit env), so make sure `make install-dev` was run in the `.venv` you
 commit from.
 
 ### Tool configuration
@@ -590,8 +590,8 @@ and editor language servers all work with no extra flags.
 
 | file | paths resolve against | so `include`/`exclude` are written as |
 | --- | --- | --- |
-| `.dev-config/ruff.toml` | the project root | `dataset`, `venv`, … |
-| `.dev-config/pyrightconfig.json` | **its own directory** | `../dataset`, `../venv`, … |
+| `.dev-config/ruff.toml` | the project root | `dataset`, `.venv`, … |
+| `.dev-config/pyrightconfig.json` | **its own directory** | `../dataset`, `../.venv`, … |
 
 If you drop the `../` prefixes in the Pyright config it will match nothing, analyze
 **zero files, and still exit 0** — a passing check that verified nothing. Keep the

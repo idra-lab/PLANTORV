@@ -20,12 +20,12 @@ else
     exit 1
 fi
 
-if [ -d ./venv12 ]; then
+if [ -d ./.venv ]; then
+    source ./.venv/bin/activate
+elif [ -d ./venv12 ]; then
     source ./venv12/bin/activate
-elif [ -d ./venv ]; then
-    source ./venv/bin/activate
 else
-    echo "Virtual environment $HOME/{PLANTORV,plantorv}/{venv12,venv} does not exist. Exiting."
+    echo "Virtual environment $HOME/{PLANTORV,plantorv}/{.venv,venv12} does not exist. Exiting."
     exit 1
 fi
 

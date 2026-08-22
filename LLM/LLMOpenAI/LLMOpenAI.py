@@ -20,7 +20,8 @@ except Exception:
 class LLMOpenAI(BaseLLM):
     """OpenAI chat-completions backend.
 
-    Configuration keys:
+    Configuration keys::
+
         LLM_VERSION: Model name.
         API_KEY_NAME: Environment variable holding the API key.
         BASE_URL: Optional custom base URL (also accepts ``BASE_URL_ENV``).

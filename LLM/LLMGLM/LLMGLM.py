@@ -20,7 +20,8 @@ except Exception:
 class LLMGLM(BaseLLM):
     """GLM chat-completions backend, served through the OpenAI-compatible API.
 
-    Configuration keys:
+    Configuration keys::
+
         LLM_VERSION: Model name.
         API_KEY_NAME: Environment variable holding the API key. ``ZHIPUAI_API_KEY`` is used as a
             fallback when the named variable is unset.

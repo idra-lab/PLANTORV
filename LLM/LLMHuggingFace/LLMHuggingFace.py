@@ -35,7 +35,8 @@ class LLMHuggingFace(BaseLLM):
     The weights are loaded on the first :meth:`query` (through :meth:`connect`), so building the
     instance from a configuration file stays cheap.
 
-    Configuration keys:
+    Configuration keys::
+
         MODEL_NAME: Hugging Face model identifier.
         DEVICE: Device to run on. Defaults to CUDA when available.
         QUANTIZE: 8, 4, or 0 (no quantization). Defaults to 8.
@@ -78,16 +79,26 @@ class LLMHuggingFace(BaseLLM):
     ) -> None:
         """Create a Hugging Face backend.
 
-        Args:
-            model (str): Hugging Face model identifier.
-            params (Optional[Dict[str, Any]]): Generation parameters (``LLM_CONFIG``).
-            config (Optional[Dict[str, Any]]): Full configuration dictionary.
-            config_file (Optional[Union[str, Path]]): Path the configuration came from.
-            examples (Optional[Union[str, Path]]): Folder with few-shot examples.
-            device (Optional[str]): Device override.
-            quantize (Optional[int]): Quantization override (8, 4, or 0).
-            cache_dir (Optional[str]): Cache directory override.
-            device_map (Optional[Any]): ``device_map`` override for model sharding.
+        Parameters
+        ----------
+        model : str
+            Hugging Face model identifier.
+        params : Optional[Dict[str, Any]]
+            Generation parameters (``LLM_CONFIG``).
+        config : Optional[Dict[str, Any]]
+            Full configuration dictionary.
+        config_file : Optional[Union[str, Path]]
+            Path the configuration came from.
+        examples : Optional[Union[str, Path]]
+            Folder with few-shot examples.
+        device : Optional[str]
+            Device override.
+        quantize : Optional[int]
+            Quantization override (8, 4, or 0).
+        cache_dir : Optional[str]
+            Cache directory override.
+        device_map : Optional[Any]
+            ``device_map`` override for model sharding.
         """
         self._device_override = device
         self._quantize_override = quantize
@@ -190,11 +201,13 @@ class LLMHuggingFace(BaseLLM):
 
         Returns
         -------
-            Any: The loaded ``transformers`` model.
+        Any
+            The loaded ``transformers`` model.
 
         Raises
         ------
-            torch.OutOfMemoryError: If the model does not fit, and no fallback applies.
+        torch.OutOfMemoryError
+            If the model does not fit, and no fallback applies.
         """
         os.makedirs(self.cache_dir, exist_ok=True)
 
@@ -279,13 +292,17 @@ class LLMHuggingFace(BaseLLM):
     def format_prompt(self, examples: List[Dict[str, str]], query: str) -> str:
         """Format a simple Q/A few-shot prompt.
 
-        Args:
-            examples (List[Dict[str, str]]): Few-shot examples with "question"/"answer".
-            query (str): User question to append.
+        Parameters
+        ----------
+        examples : List[Dict[str, str]]
+            Few-shot examples with "question"/"answer".
+        query : str
+            User question to append.
 
         Returns
         -------
-            str: Rendered prompt string.
+        str
+            Rendered prompt string.
         """
         prompt = ""
         for example in examples:
@@ -298,14 +315,19 @@ class LLMHuggingFace(BaseLLM):
     ) -> str:
         """Generate a response from Q/A few-shot examples.
 
-        Args:
-            examples (List[Dict[str, str]]): Few-shot examples with "question"/"answer".
-            query (str): User question to answer.
-            max_length (int): Maximum number of generated tokens.
+        Parameters
+        ----------
+        examples : List[Dict[str, str]]
+            Few-shot examples with "question"/"answer".
+        query : str
+            User question to answer.
+        max_length : int
+            Maximum number of generated tokens.
 
         Returns
         -------
-            str: Assistant response.
+        str
+            Assistant response.
         """
         prompt = self.format_prompt(examples, query)
         response, _ = self._generate_from_prompt(prompt, max_new_tokens=max_length)
@@ -316,12 +338,15 @@ class LLMHuggingFace(BaseLLM):
     def _messages_to_prompt(self, messages: List[Dict[str, Any]]) -> str:
         """Convert structured messages to a model prompt.
 
-        Args:
-            messages (List[Dict[str, Any]]): Chat-style message list.
+        Parameters
+        ----------
+        messages : List[Dict[str, Any]]
+            Chat-style message list.
 
         Returns
         -------
-            str: Prompt string for generation.
+        str
+            Prompt string for generation.
         """
         normalized = normalize_messages(messages, disable_system=self.disable_system)
 
@@ -364,12 +389,15 @@ class LLMHuggingFace(BaseLLM):
     def _truncate_at_stop_sequences(self, text: str) -> str:
         """Trim model output at configured stop sequences.
 
-        Args:
-            text (str): Raw generated text.
+        Parameters
+        ----------
+        text : str
+            Raw generated text.
 
         Returns
         -------
-            str: Trimmed text.
+        str
+            Trimmed text.
         """
         stop = self.param("stop")
         stop_sequences = []
@@ -394,13 +422,17 @@ class LLMHuggingFace(BaseLLM):
     def _generate_from_prompt(self, prompt: str, max_new_tokens: int) -> Tuple[str, int]:
         """Run generation from a raw prompt string.
 
-        Args:
-            prompt (str): Prompt text.
-            max_new_tokens (int): Maximum number of new tokens to generate.
+        Parameters
+        ----------
+        prompt : str
+            Prompt text.
+        max_new_tokens : int
+            Maximum number of new tokens to generate.
 
         Returns
         -------
-            Tuple[str, int]: Generated text and token count.
+        Tuple[str, int]
+            Generated text and token count.
         """
         model = self.connect()
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model_input_device)
@@ -435,13 +467,17 @@ class LLMHuggingFace(BaseLLM):
     def _send(self, client: Any, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Generate a completion for the given messages.
 
-        Args:
-            client (Any): The loaded model, from :meth:`connect`.
-            messages (List[Dict[str, Any]]): Chat-style message list.
+        Parameters
+        ----------
+        client : Any
+            The loaded model, from :meth:`connect`.
+        messages : List[Dict[str, Any]]
+            Chat-style message list.
 
         Returns
         -------
-            Dict[str, Any]: Response payload with text and token counts.
+        Dict[str, Any]
+            Response payload with text and token counts.
         """
         prompt = self._messages_to_prompt(messages)
         try:
@@ -467,12 +503,15 @@ class LLMHuggingFace(BaseLLM):
     def _extract_text(self, response: Dict[str, Any]) -> str:
         """Extract the text content from the response dict.
 
-        Args:
-            response (Dict[str, Any]): Backend response payload.
+        Parameters
+        ----------
+        response : Dict[str, Any]
+            Backend response payload.
 
         Returns
         -------
-            str: Assistant response text.
+        str
+            Assistant response text.
         """
         text = response["content"]
         # Strip <think>...</think> blocks produced by reasoning models
@@ -574,17 +613,22 @@ def _resolve_model_input_device(model: Any, fallback: str) -> str:
 def _load_yaml_config(config_file: str) -> Dict[str, Any]:
     """Load a YAML config file into a dict.
 
-    Args:
-        config_file (str): Path to YAML config file.
+    Parameters
+    ----------
+    config_file : str
+        Path to YAML config file.
 
     Returns
     -------
-        Dict[str, Any]: Parsed configuration.
+    Dict[str, Any]
+        Parsed configuration.
 
     Raises
     ------
-        FileNotFoundError: If the config file does not exist.
-        yaml.YAMLError: If the YAML file cannot be parsed.
+    FileNotFoundError
+        If the config file does not exist.
+    yaml.YAMLError
+        If the YAML file cannot be parsed.
     """
     with open(config_file, "r") as file:
         return yaml.safe_load(file) or {}
@@ -593,12 +637,15 @@ def _load_yaml_config(config_file: str) -> Dict[str, Any]:
 def _list_hf_configs(conf_dir: str) -> List[str]:
     """Return sorted Hugging Face config paths from a directory.
 
-    Args:
-        conf_dir (str): Config directory path.
+    Parameters
+    ----------
+    conf_dir : str
+        Config directory path.
 
     Returns
     -------
-        List[str]: Sorted list of config paths.
+    List[str]
+        Sorted list of config paths.
     """
     if not os.path.isdir(conf_dir):
         return []
@@ -612,16 +659,20 @@ def _list_hf_configs(conf_dir: str) -> List[str]:
 def _select_config(conf_dir: str) -> str:
     """Prompt the user to select a Hugging Face config file.
 
-    Args:
-        conf_dir (str): Config directory path.
+    Parameters
+    ----------
+    conf_dir : str
+        Config directory path.
 
     Returns
     -------
-        str: Selected config file path.
+    str
+        Selected config file path.
 
     Raises
     ------
-        FileNotFoundError: If no matching config files are found.
+    FileNotFoundError
+        If no matching config files are found.
     """
     configs = _list_hf_configs(conf_dir)
     if not configs:

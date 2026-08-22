@@ -20,7 +20,8 @@ except Exception:
 class LLMAnthropic(BaseLLM):
     """Anthropic Messages API backend.
 
-    Configuration keys:
+    Configuration keys::
+
         LLM_VERSION: Model name.
         API_KEY_NAME: Environment variable holding the API key.
         BASE_URL: Optional base URL. When set, the Foundry client is used.

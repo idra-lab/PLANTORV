@@ -13,10 +13,15 @@ dev = [
     "ruff",
     "pyright",
     "pre-commit",
+    # Documentation. See docs/conf.py and `make docs`.
+    "sphinx",
+    "furo",
+    "myst-parser",
+    "sphinx-autobuild",
 ]
 
 [tool.setuptools]
-packages = []
+packages = ["segmentation", "scene_understanding", "mapping", "aruco", "evaluation", "utility", "LLM"]
 
 # Linter/type-checker settings live in .dev-config/ to keep this file focused on packaging. 
 [tool.ruff]

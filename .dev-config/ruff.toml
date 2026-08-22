@@ -5,7 +5,6 @@ line-length = 100
 target-version = "py310"
 
 extend-exclude = [
-    "venv",
     ".venv",
     "dataset",
     "final_fast_segmentation",
