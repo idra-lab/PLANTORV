@@ -22,7 +22,8 @@ except Exception:
 class LLMGemini(BaseLLM):
     """Gemini backend built on the google-genai SDK.
 
-    Configuration keys:
+    Configuration keys::
+
         LLM_VERSION: Model name.
         API_KEY_NAME: Environment variable holding the API key.
         BASE_URL: Optional custom endpoint.

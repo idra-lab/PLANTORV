@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """Download the model checkpoints used by the pipeline into ``models/``.
 
-Covers SAM 1 (including MobileSAM) and SAM 2 / SAM 2.1, which
-``segmentation/sam_model.py`` drives through the same class, plus FastSAM, which
-is a YOLOv8-seg model rather than a SAM one and has its own class in
-``segmentation/fastsam_model.py``. Checkpoints are fetched from Ultralytics where
-they publish them, and from Meta otherwise.
+Covers:
+
+- SAM 1 (Ultralytics, used through SAMModel -- SAM 1 ViT-H is downloaded from Meta because Ultralytics does not publish it);
+- MobileSAM (Ultralytics, used through SAMModel);
+- SAM 2 (Ultralytics, used through SAMModel);
+- SAM 2.1 (Ultralytics, used through SAMModel);
+- FastSAM (Ultralytics' YOLOv8-seg, used through FastSAMModel);
+- SAM 3 (gated, requires a Hugging Face token).
+
 Ultralytics also downloads its own checkpoints on first use, so this script is
-mainly useful for two cases:
+mainly useful for three cases:
 
 - ``sam_h``, which Ultralytics does not publish at all. Meta's original weights
   work fine, they just have to be saved under the name Ultralytics expects.
+- ``sam3``, whose weights are gated. Meta requires an approved access request
+  on Hugging Face, so Ultralytics cannot fetch them on first use. Once access
+  is granted, a machine that ran ``hf auth login`` needs nothing further;
+  otherwise put a token in ``HF_TOKEN``, in the environment or in ``.env``.
 - Pre-seeding ``models/`` before running somewhere without outbound network
   access, such as the cluster jobs in ``scripts/PBS/``.
 
@@ -31,6 +39,12 @@ Download one or more checkpoints by name::
 
     python3 scripts/install_models.py sam_h sam_b
 
+Download the gated SAM 3 checkpoint, once the access request was approved. The
+first form uses a stored ``hf auth login``, the second an explicit token::
+
+    python3 scripts/install_models.py sam3
+    HF_TOKEN=hf_... python3 scripts/install_models.py sam3
+
 Download everything, or pick interactively when no name is given::
 
     python3 scripts/install_models.py --all
@@ -38,13 +52,18 @@ Download everything, or pick interactively when no name is given::
 """
 
 import argparse
+import os
 import shutil
 import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from http.client import HTTPMessage
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import IO, Optional, Sequence
+from urllib.parse import urlsplit
+
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -78,6 +97,10 @@ class Model:
         Directory under the models root where the file is stored.
     description : str
         Short human-readable summary shown by ``--list`` and the picker.
+    requires_hf_token : bool
+        True when the URL points at a gated Hugging Face repository, which only
+        answers to a request carrying a token of an account whose access request
+        was approved. See :func:`hf_token`.
     """
 
     key: str
@@ -85,16 +108,30 @@ class Model:
     url: str
     subdir: str
     description: str
+    requires_hf_token: bool = False
 
 
 # Checkpoints Ultralytics publishes itself, on the release its own downloader
 # defaults to. These are the same weights Ultralytics would fetch on first use.
 ULTRALYTICS_BASE_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
 # Meta's original checkpoints, from https://github.com/facebookresearch/segment-anything.
-# Only needed for ViT-H, which Ultralytics does not publish in any release. The
-# weights are unchanged, they are just stored under the `.pt` name Ultralytics
-# matches on rather than Meta's `.pth` one.
+# Only needed for ViT-H. The weights are unchanged, they are just stored under
+# the `.pt` name Ultralytics matches on rather than Meta's `.pth` one.
 META_BASE_URL = "https://dl.fbaipublicfiles.com/segment_anything"
+# SAM 3, which Meta distributes only through its gated Hugging Face repository.
+# The repository holds `sam3.pt` next to the Transformers weights, and that file
+# is the one Ultralytics loads, so it needs no renaming.
+HF_SAM3_REPO_URL = "https://huggingface.co/facebook/sam3"
+HF_SAM3_URL = f"{HF_SAM3_REPO_URL}/resolve/main/sam3.pt"
+# Environment variables searched for a Hugging Face token, in order. The first is
+# what `.env` is expected to carry; the second is the older name their own
+# libraries still honour.
+HF_TOKEN_VARS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+# Where `hf auth login` stores its token when no environment variable is set.
+# `HF_TOKEN_PATH` names the file outright, otherwise it sits under `HF_HOME`.
+# Resolved the same way `huggingface_hub` does, so a machine that is already
+# logged in needs no further setup.
+HF_HOME_DEFAULT = "~/.cache/huggingface"
 
 # SAM 1. Sources are mixed, so these stay spelled out one by one.
 MODELS: dict[str, Model] = {
@@ -153,10 +190,18 @@ for _generation, _note in (("sam2", ""), ("sam2.1", ", recommended over sam2")):
             ),
         )
 
-# FastSAM. Not a SAM architecture at all: it is YOLOv8-seg, driven by
-# Ultralytics' FastSAMPredictor rather than the SAM one, so `SAMModel` cannot
-# load these and they live outside models/sam/. They are used through
-# `segmentation/fastsam_model.py` instead.
+# SAM 3. A concept segmenter rather than a purely geometric one. Unlike every
+# other checkpoint here the weights are gated, hence the token.
+MODELS["sam3"] = Model(
+    key="sam3",
+    filename="sam3.pt",
+    url=HF_SAM3_URL,
+    subdir="sam",
+    description="SAM 3 (concept segmentation, ~3.2 GB) [from Meta, gated: needs HF access]",
+    requires_hf_token=True,
+)
+
+# FastSAM. Not a SAM architecture at all.
 for _size, _weight in (("s", "~23 MB"), ("x", "~138 MB")):
     _key = f"FastSAM-{_size}"
     MODELS[_key] = Model(
@@ -166,6 +211,84 @@ for _size, _weight in (("s", "~23 MB"), ("x", "~138 MB")):
         subdir="fastsam",
         description=f"FastSAM {_size} ({_weight}, used via FastSAMModel) [from Ultralytics]",
     )
+
+
+def hf_token() -> Optional[str]:
+    """Return the Hugging Face token, from the environment or from a stored login.
+
+    The variables in :data:`HF_TOKEN_VARS` are tried first, in order. ``.env`` has
+    already been loaded by :func:`main`, so a token written there counts as being
+    in the environment. Failing that, the token ``hf auth login`` writes to disk is
+    used, which is what makes an already logged in machine work with no setup.
+
+    Returns
+    -------
+    str or None
+        The token, or None when neither the environment nor a stored login
+        provides a non-empty one.
+    """
+    for variable in HF_TOKEN_VARS:
+        token = os.environ.get(variable, "").strip()
+        if token:
+            return token
+
+    token_path = os.environ.get("HF_TOKEN_PATH", "").strip()
+    path = (
+        Path(token_path)
+        if token_path
+        else Path(os.environ.get("HF_HOME", "").strip() or HF_HOME_DEFAULT) / "token"
+    )
+    try:
+        return path.expanduser().read_text(encoding="utf-8").strip() or None
+    except OSError:
+        # Missing or unreadable is just "not logged in", not an error worth raising.
+        return None
+
+
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Redirect handler that drops ``Authorization`` when the host changes.
+
+    Hugging Face answers a download with a redirect to a CDN that authenticates
+    the request through a signature in the URL itself. Forwarding the bearer
+    token there is useless and the CDN rejects requests that carry both, but
+    ``urllib`` copies every header onto the redirected request by default.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> Optional[urllib.request.Request]:
+        """Build the redirected request, without the token if it leaves the host.
+
+        Parameters
+        ----------
+        req : urllib.request.Request
+            The request that was redirected.
+        fp : IO[bytes]
+            The response body of the redirect.
+        code : int
+            HTTP status code of the redirect.
+        msg : str
+            HTTP status message of the redirect.
+        headers : http.client.HTTPMessage
+            Headers of the redirect response.
+        newurl : str
+            URL being redirected to.
+
+        Returns
+        -------
+        urllib.request.Request or None
+            The request to send next, or None when the redirect is not followed.
+        """
+        new_request = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_request is not None and urlsplit(newurl).netloc != urlsplit(req.full_url).netloc:
+            new_request.remove_header("Authorization")
+        return new_request
 
 
 def human_size(num_bytes: float) -> str:
@@ -195,6 +318,12 @@ def list_models() -> None:
     for model in MODELS.values():
         logger.info(f"  {model.key:<12} {model.description}")
         logger.info(f"  {'':<12} -> models/{model.subdir}/{model.filename}")
+    if any(model.requires_hf_token for model in MODELS.values()):
+        logger.info(
+            f"Models marked gated need an approved access request at {HF_SAM3_REPO_URL}, plus "
+            f"either a stored `hf auth login` token or {' or '.join(HF_TOKEN_VARS)} set in the "
+            "environment or in .env."
+        )
 
 
 def prompt_for_models() -> list[Model]:
@@ -319,8 +448,22 @@ def download(model: Model, models_dir: Path, force: bool = False) -> bool:
     if force and partial.exists():
         partial.unlink()
 
-    offset = partial.stat().st_size if partial.exists() else 0
     request = urllib.request.Request(model.url)
+    if model.requires_hf_token:
+        token = hf_token()
+        if token is None:
+            logger.error(
+                f"{model.key}: the weights are gated and no token was found in "
+                f"{' or '.join(HF_TOKEN_VARS)} or in a stored Hugging Face login."
+            )
+            logger.error(
+                f"  Request access at {HF_SAM3_REPO_URL}, then either run `hf auth login` or "
+                "put the token of the account the access was granted to in .env."
+            )
+            return False
+        request.add_header("Authorization", f"Bearer {token}")
+
+    offset = partial.stat().st_size if partial.exists() else 0
     if offset:
         logger.info(f"{model.key}: resuming from {human_size(offset)}")
         request.add_header("Range", f"bytes={offset}-")
@@ -328,8 +471,11 @@ def download(model: Model, models_dir: Path, force: bool = False) -> bool:
     logger.info(f"{model.key}: downloading {model.url}")
     downloaded = offset
     total: Optional[int] = None
+    # A plain urlopen would forward the token to whatever host the download is
+    # redirected to; see `_StripAuthOnRedirect`.
+    opener = urllib.request.build_opener(_StripAuthOnRedirect)
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with opener.open(request, timeout=TIMEOUT) as response:
             # A 206 means the range was honoured; anything else (typically 200)
             # means the server is sending the whole file, so start over.
             if offset and response.status != 206:
@@ -356,6 +502,13 @@ def download(model: Model, models_dir: Path, force: bool = False) -> bool:
                     reported = _report_progress(downloaded, total, reported)
     except urllib.error.HTTPError as error:
         logger.error(f"{model.key}: HTTP error {error.code} ({error.reason}) for {model.url}")
+        if model.requires_hf_token and error.code in (401, 403):
+            # The token was sent, so this is about the account behind it rather
+            # than about the token being missing.
+            logger.error(
+                f"  The token was rejected. Check that the access request at {HF_SAM3_REPO_URL} "
+                "was approved for this account and that the token can read gated repositories."
+            )
         return False
     except urllib.error.URLError as error:
         logger.error(f"{model.key}: could not reach {model.url} ({error.reason})")
@@ -439,6 +592,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         Process exit code: 0 if every requested checkpoint is available, 1 otherwise.
     """
     args = parse_args(argv)
+    load_dotenv(PROJECT_ROOT / ".env")
 
     if args.list:
         list_models()
@@ -446,6 +600,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.all:
         selected = list(MODELS.values())
+        if hf_token() is None:
+            # Downloading these is guaranteed to fail, and failing them would make
+            # `--all` report an error for a checkpoint the user never named.
+            gated = [model for model in selected if model.requires_hf_token]
+            if gated:
+                selected = [model for model in selected if not model.requires_hf_token]
+                logger.warning(
+                    f"Skipping {', '.join(model.key for model in gated)}: gated weights and no "
+                    "Hugging Face token found. See --list."
+                )
     elif args.models:
         selected = [MODELS[key] for key in dict.fromkeys(args.models)]
     else:

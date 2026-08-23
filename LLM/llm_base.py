@@ -10,7 +10,19 @@ provider specializes it. Three methods form the public surface and are meant to 
 Generation parameters are *not* hard-coded here. Whatever sits under ``LLM_CONFIG`` in the YAML
 file is forwarded to the provider request as-is, so a model that wants ``max_completion_tokens``
 and one that wants ``max_tokens`` are both expressed by their own configuration file rather than
-by a flag in the code.
+by a flag in the code. As an example, consider a configuration file like this
+
+.. code-block:: yaml
+
+    LLM_VERSION : "gpt-5.2-chat"
+    API_KEY_NAME : "AZURE_OPENAI_API_KEY"
+    ENDPOINT_ENV : "AZURE_OPENAI_ENDPOINT"
+    API_VERSION : "2024-12-01-preview"
+    SYSTEM_FINGERPRINT : "None"
+
+    LLM_CONFIG:
+    max_completion_tokens: 16384
+    seed: 42
 """
 
 import base64
@@ -61,18 +73,60 @@ ImageInput = Union["Any", str, Path]
 ## ENVIRONMENT #########################################################################################################
 
 
+# Environment file the LLM layer reads, as set by :func:`configure_env`. ``None`` means
+# "not configured", so the project root's ``.env`` is used.
+_ENV_PATH: Optional[str] = None
+
+# Set by :func:`configure_env` when an entry point asks for no file to be read at all.
+_ENV_DISABLED: bool = False
+
+
+def configure_env(env_path: Optional[Union[str, Path]] = None, load: bool = True) -> None:
+    """Choose the environment file the LLM layer reads, for the rest of the process.
+
+    Lets an entry point propagate its own choice: ``samgpt.py --env-file other.env`` calls
+    this so the backends read ``other.env`` too, rather than silently falling back to the
+    project root's ``.env`` and picking up credentials the caller meant to replace.
+    ``--no-env-file`` calls it with ``load=False``, which honours "use the shell environment
+    and nothing else" everywhere rather than only in the entry point.
+
+    Parameters
+    ----------
+    env_path : str or Path, optional
+        File to read. ``None`` restores the default, the project root's ``.env``.
+    load : bool, optional
+        When False, no environment file is read at all and ``env_path`` is ignored.
+    """
+    global _ENV_PATH, _ENV_DISABLED
+
+    _ENV_DISABLED = not load
+    _ENV_PATH = None if env_path is None else str(env_path)
+
+    if not _ENV_DISABLED:
+        load_llm_env()
+
+
 def default_env_path() -> str:
-    """Return the default LLM environment file path.
+    """Return the environment file path the LLM layer reads.
+
+    Whatever :func:`configure_env` was given, or else the project root's ``.env``: ``LLM/``
+    sits one directory below the root, so this resolves to the same file ``samgpt.py``
+    loads. One file rather than two means credentials cannot end up duplicated across them,
+    or worse, disagreeing about which endpoint a key belongs to.
 
     Returns
     -------
     str
-        Path of the ``.env`` file sitting next to this module.
+        Path of the configured file, or of the ``.env`` in the directory containing this
+        module's package.
     """
-    return os.path.join(os.path.dirname(__file__), ".env")
+    if _ENV_PATH is not None:
+        return _ENV_PATH
+    package_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(os.path.dirname(package_dir), ".env")
 
 
-def load_llm_env(env_path: Optional[str] = None) -> str:
+def load_llm_env(env_path: Optional[str] = None) -> Optional[str]:
     """Load LLM environment variables and return the path used.
 
     Parameters
@@ -82,9 +136,13 @@ def load_llm_env(env_path: Optional[str] = None) -> str:
 
     Returns
     -------
-    str
-        Path of the environment file that was loaded.
+    Optional[str]
+        Path of the environment file that was loaded, or None when
+        :func:`configure_env` disabled reading one and no explicit path was given.
     """
+    if env_path is None and _ENV_DISABLED:
+        return None
+
     dotenv_path = env_path if env_path is not None else default_env_path()
     load_dotenv(dotenv_path=dotenv_path)
     return dotenv_path
@@ -134,7 +192,9 @@ def _resolve_env_reference(env_name: Any, config_key: str) -> Optional[str]:
     if _is_empty_config_value(value):
         raise ValueError(
             "Missing environment variable {} referenced by {}. "
-            "Set it in LLM/.env or in the shell environment.".format(env_var, config_key)
+            "Set it in {} or in the shell environment.".format(
+                env_var, config_key, default_env_path()
+            )
         )
     return value
 

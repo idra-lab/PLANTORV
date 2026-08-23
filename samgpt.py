@@ -7,12 +7,13 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from dotenv import load_dotenv
 from PIL import Image
 
+from LLM.llm_base import configure_env
+from LLM.llm_factory import create_llm
 from mapping.rgbd_mapper import main_coords
 from scene_understanding.gpt_annotator import DEFAULT_LLM_CONFIG_FILE, GPTAnnotator
-from segmentation.fastsam_model import FastSAMModel
+from segmentation.sam3_model import SAM3Model
 from utility.utility import logger
 
 np.set_printoptions(threshold=sys.maxsize)
@@ -46,8 +47,9 @@ def main(args: argparse.Namespace) -> None:
     args : argparse.Namespace
         Command-line arguments parsed into a Namespace object.
     """
-    if not args.no_env_file:
-        load_dotenv(args.env_file)
+    # Also tells the LLM layer which file to read, so `--env-file` reaches the backends
+    # instead of them falling back to the project root's `.env`.
+    configure_env(args.env_file, load=not args.no_env_file)
 
     if args.device == "cuda" and not torch.cuda.is_available():
         logger.error(
@@ -81,11 +83,31 @@ def main(args: argparse.Namespace) -> None:
     #     points_stride=48,
     # )
 
-    sam = FastSAMModel(
-        "models/fastsam/FastSAM-s.pt",
+    # sam = FastSAMModel(
+    #     "models/fastsam/FastSAM-s.pt",
+    #     save_dir=Path(output_dir) / "segmentation_outputs",
+    #     device=args.device,
+    #     debug_masks=args.debug_masks,
+    # )
+
+    llm = create_llm(args.llm_config)
+    sam = SAM3Model(
+        llm,
+        Path(os.path.dirname(__file__)) / "models" / "sam" / "sam3.pt",
         save_dir=Path(output_dir) / "segmentation_outputs",
         device=args.device,
         debug_masks=args.debug_masks,
+        examples_file=Path(os.path.dirname(__file__))
+        / "LLM"
+        / "examples"
+        / "SAM3"
+        / "concept_prompts.yaml",
+        # task="The task considers the structures as wholes and not as individual parts.",
+        # concepts=["robotic arm", "long blue object", "red structure", "yellow structure", "tall green tower"],
+        # max_refinements=3,  # parked: segment() no longer calls the refinement loop
+        imgsz=1036,
+        conf=0.2,
+        iou=0.1,
     )
 
     # Instantiate the annotator. The YAML file selects the model, the endpoint, the credentials
@@ -109,6 +131,10 @@ def main(args: argparse.Namespace) -> None:
         masked_rgb, mask_bin = sam.obtain_bg(image, image_id)
         rgb_masks, bboxes = sam.individual_mask(image, mask_bin, masked_rgb, image_id)
 
+        # Shows the masks that were actually kept.
+        if args.view_masks and sam.visualize is not None:
+            sam.visualize(image, image_id)
+
         # Annotate elements
         logger.debug("Starting GPT annotation...")
         image_dict = gpt.main_gpt(image, rgb_masks, bboxes)
@@ -119,7 +145,6 @@ def main(args: argparse.Namespace) -> None:
 
         with open(f"{output_dir}/output_img{image_id + 1}.json", "w") as k:
             json.dump(image_dict, k, indent=4, default=np_array_to_list)
-        break
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -165,6 +190,15 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         default="DEBUG",
         help="Logging level (e.g., 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')",
+    )
+
+    parser.add_argument(
+        "--view-masks",
+        action="store_true",
+        help=(
+            "After segmenting, write an HTML page of the masks that were kept to "
+            "<output-dir>/segmentation_outputs/ and open it in a browser"
+        ),
     )
 
     parser.add_argument(
