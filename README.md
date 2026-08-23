@@ -522,7 +522,7 @@ python3 aruco/aruco_detector.py \
 Run the evaluation after `outputs_json_labeled/` and `output_aruco/` exist:
 
 ```bash
-python3 evaluation/run_evaluation.py
+python3 -m evaluation.run_evaluation
 ```
 
 Submit the existing cluster jobs:
