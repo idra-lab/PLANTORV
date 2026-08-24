@@ -10,7 +10,6 @@ import cv2
 import numpy as np
 import open3d as o3d
 import open3d.ml as _ml3d
-import open3d.ml.torch as ml3d
 
 from mapping.rgbd_pointcloud import RGBDPointCloudGenerator
 
@@ -81,8 +80,7 @@ def parse_args() -> argparse.Namespace:
         "--no-z-up",
         action="store_true",
         help=(
-            "Do not rotate camera-frame points into a gravity-aligned "
-            "Z-up frame before inference"
+            "Do not rotate camera-frame points into a gravity-aligned Z-up frame before inference"
         ),
     )
 
@@ -149,9 +147,7 @@ def create_semantic_pipeline(
         raise FileNotFoundError(f"Model config does not exist: {config_path}")
 
     if not checkpoint_path.exists():
-        raise FileNotFoundError(
-            f"Model checkpoint does not exist: {checkpoint_path}"
-        )
+        raise FileNotFoundError(f"Model checkpoint does not exist: {checkpoint_path}")
 
     cfg = _ml3d.utils.Config.load_from_file(str(config_path))
 
@@ -313,11 +309,7 @@ def print_semantic_statistics(
 
         name = label_names.get(int(label), f"class_{label}")
 
-        print(
-            f"  {label:2d}  {name:<20} "
-            f"{count:7d} points  "
-            f"confidence={mean_confidence:.3f}"
-        )
+        print(f"  {label:2d}  {name:<20} {count:7d} points  confidence={mean_confidence:.3f}")
 
 
 def semantic_palette(num_classes: int) -> np.ndarray:
@@ -351,9 +343,7 @@ def create_semantic_cloud(
     num_classes = int(labels.max()) + 1
     palette = semantic_palette(num_classes)
 
-    semantic_cloud.colors = o3d.utility.Vector3dVector(
-        palette[labels]
-    )
+    semantic_cloud.colors = o3d.utility.Vector3dVector(palette[labels])
 
     return semantic_cloud
 
@@ -375,10 +365,7 @@ def point_values_to_image(
     """
     depth = np.asarray(aligned_depth_mm)
 
-    valid_mask = (
-        (depth > 0.0)
-        & (depth <= depth_trunc_m * 1000.0)
-    )
+    valid_mask = (depth > 0.0) & (depth <= depth_trunc_m * 1000.0)
 
     expected_points = int(np.count_nonzero(valid_mask))
 
@@ -416,9 +403,7 @@ def write_outputs(
         output.parent.mkdir(parents=True, exist_ok=True)
 
         if not o3d.io.write_point_cloud(str(output), point_cloud):
-            raise RuntimeError(
-                f"Open3D could not write point cloud: {output}"
-            )
+            raise RuntimeError(f"Open3D could not write point cloud: {output}")
 
         print(f"Wrote {output}")
 
@@ -429,10 +414,7 @@ def write_outputs(
             str(semantic_output),
             semantic_cloud,
         ):
-            raise RuntimeError(
-                "Open3D could not write semantic point cloud: "
-                f"{semantic_output}"
-            )
+            raise RuntimeError(f"Open3D could not write semantic point cloud: {semantic_output}")
 
         print(f"Wrote {semantic_output}")
 
