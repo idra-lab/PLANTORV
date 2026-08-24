@@ -60,9 +60,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "pytest",
     "ruff",
     "pyright",
     "pre-commit",
+]
+
+depth-anything = [
+    "transformers>=4.45,<5",
 ]
 
 [tool.setuptools]

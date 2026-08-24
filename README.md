@@ -99,6 +99,19 @@ Run the main segmentation, labeling, and RGB-D coordinate pipeline:
 python3 samgpt.py
 ```
 
+Use the indoor metric Depth Anything V2 backend instead of camera depth:
+
+```bash
+pip install -e ".[depth-anything]"
+python3 samgpt.py --depth-source depth-anything-v2
+```
+
+The default checkpoint is
+`depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf`. Use `--depth-model`
+to select another metric Transformers checkpoint and `--depth-device cpu|cuda`
+to override automatic device selection. Model predictions are produced directly
+in the RGB image plane, so they bypass Femto depth-to-colour registration.
+
 Create a coloured point cloud from a Femto Mega RGB/depth pair. The command aligns
 the raw depth frame to the RGB camera before passing both images and the calibrated
 RGB intrinsics to Open3D:

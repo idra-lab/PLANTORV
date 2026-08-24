@@ -381,6 +381,61 @@ def _depth_to_colormap(depth_image: np.ndarray) -> np.ndarray:
     return cv2.applyColorMap(vis, cv2.COLORMAP_JET)
 
 
+def attach_object_depths(
+    dict_objects: dict,
+    aligned_depth_mm: np.ndarray,
+    *,
+    neighborhood: int = 1,
+) -> dict:
+    """Attach RGB centre coordinates and aligned depth to detected objects."""
+    if aligned_depth_mm.ndim != 2:
+        raise ValueError("aligned_depth_mm must be a two-dimensional array")
+    if neighborhood < 0:
+        raise ValueError("neighborhood cannot be negative")
+
+    height, width = aligned_depth_mm.shape
+    for mask_id in dict_objects.keys():
+        coords = dict_objects[mask_id]["bbox"]
+        ix, iy, delta_x, delta_y = coords
+        cx = (ix + ix + delta_x) // 2
+        cy = (iy + iy + delta_y) // 2
+
+        depth_mm = _find_depth_at_rgb(
+            aligned_depth_mm,
+            cx,
+            cy,
+            neighborhood,
+        )
+        dict_objects[mask_id]["coord_center&depth"] = [cx, cy, depth_mm]
+
+    return dict_objects
+
+
+def _find_depth_at_rgb(
+    aligned_depth_mm: np.ndarray,
+    rgb_u: int,
+    rgb_v: int,
+    neighborhood: int,
+) -> Optional[float]:
+    height, width = aligned_depth_mm.shape
+    if rgb_u < 0 or rgb_u >= width or rgb_v < 0 or rgb_v >= height:
+        return None
+
+    depth = float(aligned_depth_mm[rgb_v, rgb_u])
+    if np.isfinite(depth) and depth > 0.0:
+        return depth
+    if neighborhood <= 0:
+        return None
+
+    u0 = max(0, rgb_u - neighborhood)
+    u1 = min(width - 1, rgb_u + neighborhood)
+    v0 = max(0, rgb_v - neighborhood)
+    v1 = min(height - 1, rgb_v + neighborhood)
+    patch = aligned_depth_mm[v0 : v1 + 1, u0 : u1 + 1]
+    valid = patch[np.isfinite(patch) & (patch > 0.0)]
+    return None if valid.size == 0 else float(np.min(valid))
+
+
 def main_coords(rgb_path: str, depth_path: str, dict_objects: dict) -> dict:
     """
     Given the paths to an RGB image and a depth image, along with a dictionary of objects containing their bounding boxes, this function aligns the depth image to the RGB image and retrieves the depth information for each object's center pixel.
@@ -407,40 +462,9 @@ def main_coords(rgb_path: str, depth_path: str, dict_objects: dict) -> dict:
     if depth is None:
         raise FileNotFoundError(f"Depth image not found at path: {depth_path}")
 
-    color_size = (rgb.shape[1], rgb.shape[0])
-    depth_size = (depth.shape[1], depth.shape[0])
+    # Local import avoids a module cycle: providers reuse RGBDMapper itself.
+    from mapping.depth_provider import SensorDepthProvider
 
-    mapper = RGBDMapper.from_hardcoded(color_size=color_size, depth_size=depth_size)
-    aligned_depth_mm, src_u_map, src_v_map = mapper.align_depth_to_color_with_correspondence(
-        depth,
-        depth_unit_scale=1,  # Scale from depth pixel units to milimeters
-    )
-
-    rgb_h, rgb_w = rgb.shape[:2]
-    if aligned_depth_mm.shape[1] != rgb_w or aligned_depth_mm.shape[0] != rgb_h:
-        aligned_depth_mm = cv2.resize(
-            aligned_depth_mm, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST
-        )
-        src_u_map = cv2.resize(src_u_map, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
-        src_v_map = cv2.resize(src_v_map, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
-
-    for mask_id in dict_objects.keys():
-        coords = dict_objects[mask_id]["bbox"]
-        ix, iy, delta_x, delta_y = coords
-        fin_x = ix + delta_x
-        fin_y = iy + delta_y
-        cx = (ix + fin_x) // 2
-        cy = (iy + fin_y) // 2
-
-        depth_mm, src_uv = _find_depth_and_source(
-            aligned_depth_mm,
-            src_u_map,
-            src_v_map,
-            cx,
-            cy,
-            max(0, 1),
-        )
-        # logger.debug(f"Object {mask_id}: depth={depth_mm} mm, src_uv={src_uv}")
-        dict_objects[mask_id]["coord_center&depth"] = [cx, cy, depth_mm]
-
-    return dict_objects
+    provider = SensorDepthProvider.from_frames(rgb, depth, depth_unit_scale=1.0)
+    result = provider.estimate(rgb, depth)
+    return attach_object_depths(dict_objects, result.depth_mm)
