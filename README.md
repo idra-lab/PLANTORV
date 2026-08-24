@@ -91,11 +91,60 @@ in [samgpt.py](samgpt.py) — edit them there to match your Azure deployment.
 
 ## Useful Commands
 
+### PCD Utils
+
 Run the main segmentation, labeling, and RGB-D coordinate pipeline:
 
 ```bash
 python3 samgpt.py
 ```
+
+Create a coloured point cloud from a Femto Mega RGB/depth pair. The command aligns
+the raw depth frame to the RGB camera before passing both images and the calibrated
+RGB intrinsics to Open3D:
+
+```bash
+python3 cluster_pcd.py \
+  dataset/rgb/rgb_dataset_1.png \
+  dataset/depth/depth_dataset_1.png \
+  --output results/scene_1.ply \
+  --cluster-output results/scene_1_clusters.ply \
+  --labels-output results/scene_1_geometric_labels.npy
+```
+
+Use `--no-visualize` on a headless machine. If the stored depth values are not
+millimetres, pass their conversion factor with `--depth-unit-scale`. Plane RANSAC
+and DBSCAN can be tuned with `--plane-distance`, `--min-plane-points`,
+`--cluster-eps`, and `--cluster-min-points`. In the saved label image, clusters are
+numbered from `0`, unclustered/background pixels are `-1`, and planes start at `-2`.
+
+
+#### Segmentation with Models
+
+With Rand-LA net: 
+
+```bash
+python segment_pcd.py \
+    dataset/rgb/rgb_dataset_1.png \
+    dataset/depth/depth_dataset_1.png \
+    --config models/randla_net/randlanet_s3dis.yml \
+    --checkpoint models/randla_net/randlanet_s3dis_202201071330utc.pth \
+    --semantic-output semantic.ply \
+    --labels-output labels.npy \
+    --confidence-output confidence.npy
+```
+With Pointtrasnformer (not yet well interfaced): 
+```bash
+python segment_pcd.py \
+    dataset/rgb/rgb_dataset_1.png \
+    dataset/depth/depth_dataset_1.png \
+    --config models/pointtrasformer/pointtransformer_s3dis.yml \
+    --checkpoint models/pointtrasformer/pointtransformer_s3dis_202109241350utc.pth \
+    --semantic-output semantic.ply \
+    --labels-output labels.npy \
+    --confidence-output confidence.npy
+```
+### Aruco Generation
 
 Generate ArUco annotations from the configured RGB/marker image folders:
 

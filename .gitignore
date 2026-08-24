@@ -82,3 +82,7 @@ models/*
 !models/.gitkeep
 # Dev tool configs (Ruff/Pyright) live here; keep them tracked despite *.json above.
 !.dev-config/pyrightconfig.json
+
+confidence.npy 
+labels.npy
+semantic.ply
