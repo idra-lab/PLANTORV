@@ -86,3 +86,4 @@ models/*
 confidence.npy 
 labels.npy
 semantic.ply
+results/
