@@ -1,6 +1,6 @@
 """Mapping utilities."""
 
-from mapping.depth_anything import DepthAnythingV2Provider
+from mapping.depth_anything import DepthAnythingV2Provider, DepthAnythingV3Provider
 from mapping.depth_provider import DepthProvider, DepthResult, SensorDepthProvider
 from mapping.geometric_clustering import (
     GeometricSegmentation,
@@ -18,6 +18,7 @@ from mapping.rgbd_pointcloud import (
 __all__ = [
     "GeometricSegmentation",
     "DepthAnythingV2Provider",
+    "DepthAnythingV3Provider",
     "DepthProvider",
     "DepthResult",
     "RGBDPointCloud",

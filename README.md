@@ -112,6 +112,31 @@ to select another metric Transformers checkpoint and `--depth-device cpu|cuda`
 to override automatic device selection. Model predictions are produced directly
 in the RGB image plane, so they bypass Femto depth-to-colour registration.
 
+#### Monocular Depth Anything 3
+
+Install the upstream package from a local checkout (the `models/` directory is
+git-ignored):
+
+```bash
+git clone https://github.com/ByteDance-Seed/Depth-Anything-3 \
+  models/depth-anything-3
+pip install -e models/depth-anything-3
+```
+
+Then run the Depth Anything 3 monocular metric path:
+
+```bash
+python3 samgpt.py --depth-source monocular
+```
+
+This uses `depth-anything/da3metric-large`, loads the model once, converts its
+focal-normalized output to millimetres, and resizes it into the RGB image plane.
+The default focal length (1138.1085 px) is the mean of the calibrated 1920x1080
+Femto RGB values in `aruco/camera.yaml`. For another camera or resolution, pass
+the matching value with `--depth-focal-length-px`; use `--depth-process-res` to
+trade inference detail for speed and memory. The `depth-anything-3` Python package
+must be installed as described by its upstream project.
+
 Create a coloured point cloud from a Femto Mega RGB/depth pair. The command aligns
 the raw depth frame to the RGB camera before passing both images and the calibrated
 RGB intrinsics to Open3D:

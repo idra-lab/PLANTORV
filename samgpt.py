@@ -3,26 +3,25 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence
 
 import cv2
-import numpy as np
 import torch
 from dotenv import load_dotenv
 
-from mapping.depth_anything import DEFAULT_MODEL_ID, DepthAnythingV2Provider
+from mapping.depth_anything import (
+    DEFAULT_FOCAL_LENGTH_PX,
+    DEFAULT_MODEL_ID,
+    DEFAULT_V3_MODEL_ID,
+    DepthAnythingV2Provider,
+    DepthAnythingV3Provider,
+)
 from mapping.depth_provider import DepthProvider
 from mapping.rgbd_mapper import attach_object_depths, main_coords
 from scene_understanding.gpt_annotator import GPTAnnotator
 from segmentation.sam_model import SAMModel
+from utility.json_serialization import to_json_compatible as convert
 from utility.utility import logger
-
-
-def convert(o: Any) -> Any:
-    if isinstance(o, np.ndarray):
-        return o.tolist()
-    return o
-
 
 """Main Function"""
 
@@ -102,11 +101,26 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the PLANTORV image pipeline")
     parser.add_argument(
         "--depth-source",
-        choices=("sensor", "depth-anything-v2"),
+        choices=("sensor", "depth-anything-v2", "monocular"),
         default="sensor",
     )
-    parser.add_argument("--depth-model", default=DEFAULT_MODEL_ID)
+    parser.add_argument(
+        "--depth-model",
+        help="Checkpoint ID (defaults depend on --depth-source)",
+    )
     parser.add_argument("--depth-device", choices=("cpu", "cuda"))
+    parser.add_argument(
+        "--depth-focal-length-px",
+        type=float,
+        default=DEFAULT_FOCAL_LENGTH_PX,
+        help="Mean RGB focal length for monocular metric scaling",
+    )
+    parser.add_argument(
+        "--depth-process-res",
+        type=int,
+        default=504,
+        help="Depth Anything 3 processing resolution",
+    )
     return parser.parse_args()
 
 
@@ -131,7 +145,14 @@ if __name__ == "__main__":
     provider = None
     if args.depth_source == "depth-anything-v2":
         provider = DepthAnythingV2Provider(
-            model_id=args.depth_model,
+            model_id=args.depth_model or DEFAULT_MODEL_ID,
+            device=args.depth_device,
+        )
+    elif args.depth_source == "monocular":
+        provider = DepthAnythingV3Provider(
+            model_id=args.depth_model or DEFAULT_V3_MODEL_ID,
+            focal_length_px=args.depth_focal_length_px,
+            process_res=args.depth_process_res,
             device=args.depth_device,
         )
     main(images, depth if provider is None else None, depth_provider=provider)

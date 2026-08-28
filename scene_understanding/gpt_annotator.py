@@ -177,7 +177,7 @@ class GPTAnnotator:
                     "description": "unknown",
                     "full_object": False,
                 }
-            dict_outputs[f"mask_{p}"]["mask"] = mask_path[p]
+            dict_outputs[f"mask_{p}"]["mask"] = str(mask_path[p])
             dict_outputs[f"mask_{p}"]["bbox"] = bboxes[p]
 
         return dict_outputs

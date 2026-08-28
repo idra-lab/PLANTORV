@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from mapping.camera_model import Intrinsics
-from mapping.depth_anything import DepthAnythingV2Provider
+from mapping.depth_anything import DepthAnythingV2Provider, DepthAnythingV3Provider
 from mapping.depth_provider import DepthResult, SensorDepthProvider
 from mapping.rgbd_mapper import attach_object_depths
 from mapping.rgbd_pointcloud import create_point_cloud_from_aligned_depth
@@ -56,6 +56,32 @@ class _FakeMetricModel:
     def __call__(self, **inputs: np.ndarray) -> object:
         assert "pixel_values" in inputs
         return object()
+
+
+class _FakeDA3Model:
+    def to(self, *, device: str) -> "_FakeDA3Model":
+        self.device = device
+        return self
+
+    def eval(self) -> "_FakeDA3Model":
+        return self
+
+    def inference(
+        self,
+        images: list[np.ndarray],
+        *,
+        process_res: int,
+        process_res_method: str,
+    ) -> SimpleNamespace:
+        assert images[0].shape == (4, 6, 3)
+        assert images[0][0, 0].tolist() == [30, 20, 10]
+        assert process_res == 504
+        assert process_res_method == "upper_bound_resize"
+        return SimpleNamespace(
+            depth=np.asarray([[[1.0, 2.0, np.nan], [0.5, -1.0, 3.0]]]),
+            conf=np.asarray([[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]]),
+            sky=np.asarray([[[False, False, True], [False, False, False]]]),
+        )
 
 
 def test_attach_object_depths_preserves_center_and_nearest_fallback() -> None:
@@ -124,6 +150,28 @@ def test_depth_anything_converts_metric_metres_to_millimetres() -> None:
         np.asarray([[1000.0, 2000.0, 0.0], [500.0, 0.0, 3000.0]], dtype=np.float32),
     )
     assert result.metadata["source"] == "depth_anything_v2"
+
+
+def test_depth_anything_v3_scales_metric_depth_and_aligns_to_rgb() -> None:
+    provider = DepthAnythingV3Provider(
+        model=_FakeDA3Model(),
+        focal_length_px=600.0,
+        device="cpu",
+    )
+    color = np.zeros((4, 6, 3), dtype=np.uint8)
+    color[0, 0] = [10, 20, 30]
+
+    result = provider.estimate(color)
+
+    assert result.depth_mm.shape == (4, 6)
+    assert result.depth_mm.dtype == np.float32
+    assert result.confidence is not None
+    assert result.confidence.shape == (4, 6)
+    # The prediction is half-sized, so focal=300 px and 1 raw unit = 1 metre.
+    assert result.depth_mm[0, 0] == 1000.0
+    assert result.depth_mm[0, 4] == 0.0
+    assert not result.valid_mask[0, 4]
+    assert result.metadata["source"] == "depth_anything_v3"
 
 
 def test_point_cloud_accepts_depth_already_aligned_to_rgb() -> None:

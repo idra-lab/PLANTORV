@@ -1,4 +1,4 @@
-"""Depth Anything V2 metric-depth provider."""
+"""Depth Anything metric-depth providers."""
 
 from __future__ import annotations
 
@@ -11,6 +11,10 @@ import numpy as np
 from mapping.depth_provider import DepthResult, _normalize_depth, _validate_color
 
 DEFAULT_MODEL_ID = "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf"
+DEFAULT_V3_MODEL_ID = "depth-anything/da3metric-large"
+
+# Mean of fx and fy in aruco/camera.yaml for the 1920x1080 Femto RGB stream.
+DEFAULT_FOCAL_LENGTH_PX = (1144.083 + 1132.134) / 2.0
 
 
 class DepthAnythingV2Provider:
@@ -117,6 +121,134 @@ class DepthAnythingV2Provider:
                 "output_units": "mm",
             },
         )
+
+
+class DepthAnythingV3Provider:
+    """Infer monocular metric depth with Depth Anything 3.
+
+    ``DA3METRIC-LARGE`` predicts focal-normalized depth. Its documented metric
+    conversion is ``depth_m = focal_px * prediction / 300``. The focal length
+    is scaled to the model's processing resolution before the conversion, and
+    the result is then resized back to the input RGB resolution.
+    """
+
+    def __init__(
+        self,
+        model_id: str = DEFAULT_V3_MODEL_ID,
+        *,
+        focal_length_px: float = DEFAULT_FOCAL_LENGTH_PX,
+        process_res: int = 504,
+        device: str | None = None,
+        model: Any | None = None,
+    ) -> None:
+        if focal_length_px <= 0.0:
+            raise ValueError("focal_length_px must be positive")
+        if process_res <= 0:
+            raise ValueError("process_res must be positive")
+        if model is None and "metric" not in model_id.lower():
+            raise ValueError("DepthAnythingV3Provider requires a DA3 metric checkpoint")
+
+        self.model_id = model_id
+        self.focal_length_px = float(focal_length_px)
+        self.process_res = process_res
+        self.device = device or _default_device()
+
+        if model is None:
+            try:
+                from depth_anything_3.api import DepthAnything3
+            except ImportError as exc:
+                raise ImportError(
+                    "Depth Anything 3 support requires the depth-anything-3 package; "
+                    "see the Monocular depth section in README.md"
+                ) from exc
+            model = DepthAnything3.from_pretrained(model_id)
+
+        self._model: Any = model
+        if hasattr(self._model, "to"):
+            self._model.to(device=self.device)
+        if hasattr(self._model, "eval"):
+            self._model.eval()
+
+    def estimate(
+        self,
+        color_bgr: np.ndarray,
+        depth_raw: np.ndarray | None = None,
+    ) -> DepthResult:
+        """Estimate RGB-aligned metric depth and return it in millimetres."""
+        _validate_color(color_bgr)
+        if depth_raw is not None:
+            raise ValueError("DepthAnythingV3Provider does not accept sensor depth")
+
+        color_rgb = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
+        prediction = self._model.inference(
+            [color_rgb],
+            process_res=self.process_res,
+            process_res_method="upper_bound_resize",
+        )
+
+        raw_depth = _single_prediction_map(prediction.depth, "depth")
+        input_h, input_w = color_bgr.shape[:2]
+        predicted_h, predicted_w = raw_depth.shape
+        focal_scale = 0.5 * (predicted_w / input_w + predicted_h / input_h)
+        processed_focal_px = self.focal_length_px * focal_scale
+        depth_mm = raw_depth * (processed_focal_px / 300.0) * 1000.0
+
+        target_size = (input_w, input_h)
+        if depth_mm.shape != (input_h, input_w):
+            depth_mm = cv2.resize(depth_mm, target_size, interpolation=cv2.INTER_LINEAR)
+
+        sky = getattr(prediction, "sky", None)
+        if sky is not None:
+            sky_mask = _single_prediction_map(sky, "sky").astype(bool)
+            if sky_mask.shape != (input_h, input_w):
+                sky_mask = cv2.resize(
+                    sky_mask.astype(np.uint8),
+                    target_size,
+                    interpolation=cv2.INTER_NEAREST,
+                ).astype(bool)
+            depth_mm[sky_mask] = 0.0
+
+        depth_mm = _normalize_depth(depth_mm)
+        confidence = _resize_optional_prediction(
+            getattr(prediction, "conf", None), target_size, "confidence"
+        )
+        return DepthResult(
+            depth_mm=depth_mm,
+            valid_mask=depth_mm > 0.0,
+            confidence=confidence,
+            metric=True,
+            metadata={
+                "source": "depth_anything_v3",
+                "model_id": self.model_id,
+                "device": self.device,
+                "focal_length_px": self.focal_length_px,
+                "process_res": self.process_res,
+                "output_units": "mm",
+            },
+        )
+
+
+def _single_prediction_map(value: Any, name: str) -> np.ndarray:
+    result = np.asarray(value, dtype=np.float32)
+    if result.ndim != 3 or result.shape[0] != 1:
+        raise RuntimeError(
+            f"Depth Anything 3 returned {name} shape {result.shape}; expected (1, H, W)"
+        )
+    return np.ascontiguousarray(result[0])
+
+
+def _resize_optional_prediction(
+    value: Any | None,
+    target_size: tuple[int, int],
+    name: str,
+) -> np.ndarray | None:
+    if value is None:
+        return None
+    result = _single_prediction_map(value, name)
+    target_w, target_h = target_size
+    if result.shape != (target_h, target_w):
+        result = cv2.resize(result, target_size, interpolation=cv2.INTER_LINEAR)
+    return np.ascontiguousarray(result, dtype=np.float32)
 
 
 def _default_device() -> str:
