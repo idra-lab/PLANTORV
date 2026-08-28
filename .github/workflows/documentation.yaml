@@ -2,7 +2,7 @@ name: Sphinx Build
 
 on:
   push:
-    branches: [dev, 11-create-documentation]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
