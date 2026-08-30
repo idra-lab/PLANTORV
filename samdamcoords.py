@@ -1,19 +1,19 @@
-from skimage.morphology import erosion, dilation, remove_small_objects, disk
-from skimage import measure
+import argparse
+import json
+import os
+import time
+from dataclasses import dataclass
+from typing import List, Optional, Sequence, Tuple
+
+import cv2
 import numpy as np
 import torch
-import cv2
+from dam.describe_anything_model import DescribeAnythingModel
+from dotenv import load_dotenv
 from PIL import Image
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
-import time
-import os
-import argparse
-from dotenv import load_dotenv
-import json
-from typing import List, Optional, Sequence, Tuple
-from dataclasses import dataclass
-from dam.describe_anything_model import DescribeAnythingModel
-
+from skimage import measure
+from skimage.morphology import dilation, disk, erosion, remove_small_objects
 from utiliity.utility import logger
 
 
@@ -84,7 +84,6 @@ class SAMModel:
         - mask_crop: cropped mask
         - rgb_crop: cropped rgb
         """
-
         masks = np.array(masks)
         rgb = np.array(rgb)
         ys, xs = np.where(masks > 0)
@@ -114,7 +113,8 @@ class SAMModel:
         - idx: index of the image, used for saving the masked RGB for visualization.
         Outputs:
         - masked_rgb: the RGB image with the background mask applied. Numpy array. Output is a 3-channel uint8 image (H,W,3)
-        - mask_bin: the binary background mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask."""
+        - mask_bin: the binary background mask that is applied over the RGB. Numpy array. Output is a 3-channel uint8 image (H,W,3) where each channel is the same binary mask.
+        """
         start = time.time()
         image_read = Image.open(image)
         image_np = np.array(image_read)
@@ -526,7 +526,8 @@ class DepthRgbMapper:
             depth_unit_scale: Converts depth_image units to millimeters (mm).
                 Example: 1.0 if already in mm, 0.1 if each unit is 0.1 mm.
 
-        Returns:
+        Returns
+        -------
             aligned_depth_mm: Hc x Wc float32 depth image in millimeters, aligned to RGB.
             src_u_map: Hc x Wc int32 map of source depth-u for each RGB pixel (-1 if invalid).
             src_v_map: Hc x Wc int32 map of source depth-v for each RGB pixel (-1 if invalid).
@@ -827,8 +828,8 @@ def main(images, depth_path, query):
 
     load_dotenv()
 
-    azure_endpoint = os.getenv("AZURE_ENDPOINT")
-    azure_key = os.getenv("AZURE_API_KEY")
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_key = os.getenv("AZURE_OPENAI_API_KEY")
 
     sam = SAMModel("sam_vit_h_4b8939.pth")
 
@@ -853,7 +854,9 @@ def main(images, depth_path, query):
         start_coords = time.time()
         dict_masks[f"Image_{f}"] = main_coords(image, depth_path[f], dict_masks[f"Image_{f}"])
         end_coords = time.time()
-        logger.debug(f"Coordinates and depth for image {f + 1} obtained in {end_coords - start_coords}s")
+        logger.debug(
+            f"Coordinates and depth for image {f + 1} obtained in {end_coords - start_coords}s"
+        )
 
         logger.info(f"Image {f + 1}: {dict_masks[f'Image_{f}']}")
 

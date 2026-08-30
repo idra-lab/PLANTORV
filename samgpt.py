@@ -34,8 +34,8 @@ def main(
 
     load_dotenv()
 
-    azure_endpoint = os.getenv("AZURE_ENDPOINT")
-    azure_key = os.getenv("AZURE_API_KEY")
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_key = os.getenv("AZURE_OPENAI_API_KEY")
 
     full_dict = {}
 
@@ -49,7 +49,7 @@ def main(
     api_version = "2024-12-01-preview"
 
     if endpoint is None or subscription_key is None:
-        raise RuntimeError("AZURE_ENDPOINT and AZURE_API_KEY must be configured")
+        raise RuntimeError("AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be configured")
     gpt = GPTAnnotator(endpoint, model_name, deployment, subscription_key, api_version)
 
     for f, image in enumerate(images):

@@ -77,14 +77,14 @@ Create a `.env` file in the project root (it is git-ignored):
 
 ```dotenv
 # .env
-AZURE_ENDPOINT=https://<your-resource-name>.openai.azure.com/
-AZURE_API_KEY=<your-azure-openai-api-key>
+AZURE_OPENAI_ENDPOINT=https://<your-resource-name>.openai.azure.com/
+AZURE_OPENAI_API_KEY=<your-azure-openai-api-key>
 ```
 
-| Variable         | Used in                 | Description                              |
-|------------------|-------------------------|-------------------------------------------|
-| `AZURE_ENDPOINT` | [samgpt.py](samgpt.py)  | Base URL of your Azure OpenAI resource    |
-| `AZURE_API_KEY`  | [samgpt.py](samgpt.py)  | API key for that resource                 |
+| Variable                | Used in                | Description                           |
+|-------------------------|------------------------|---------------------------------------|
+| `AZURE_OPENAI_ENDPOINT` | [samgpt.py](samgpt.py) | Base URL of your Azure OpenAI resource |
+| `AZURE_OPENAI_API_KEY`  | [samgpt.py](samgpt.py) | API key for that resource              |
 
 The deployment name (`gpt-5.2-chat`) and API version (`2024-12-01-preview`) are set
 in [samgpt.py](samgpt.py) — edit them there to match your Azure deployment.
@@ -114,13 +114,15 @@ in the RGB image plane, so they bypass Femto depth-to-colour registration.
 
 #### Monocular Depth Anything 3
 
-Install the upstream package from a local checkout (the `models/` directory is
-git-ignored):
+Depth Anything 3 is not installed by the main requirements file. From the
+PLANTORV repository root, clone it into the local `models/` folder and install
+that checkout as an editable package (`models/` is git-ignored):
 
 ```bash
+mkdir -p models
 git clone https://github.com/ByteDance-Seed/Depth-Anything-3 \
   models/depth-anything-3
-pip install -e models/depth-anything-3
+python3 -m pip install -e models/depth-anything-3
 ```
 
 Then run the Depth Anything 3 monocular metric path:
@@ -128,6 +130,15 @@ Then run the Depth Anything 3 monocular metric path:
 ```bash
 python3 samgpt.py --depth-source monocular
 ```
+
+For a quick model smoke test on a single image, run:
+
+```bash
+python3 monocular_depth.py [path/to/image.png]
+```
+
+The test prints depth statistics and saves a colorized preview to
+`output/monocular_depth_preview.png`.
 
 This uses `depth-anything/da3metric-large`, loads the model once, converts its
 focal-normalized output to millimetres, and resizes it into the RGB image plane.
