@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-from matching import IGNORE_LABELS, normalize_name
+
+from .matching import IGNORE_LABELS, normalize_name
 
 
 def extract_aruco_depth_mm(aruco_data: dict, obj: dict) -> float:

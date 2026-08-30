@@ -7,76 +7,25 @@ name = "plantorv"
 version = "0.1.0"
 description = "Object segmentation, VLM tagging, and depth estimation pipeline."
 
-# Open3D 0.19 provides wheels for Python 3.8–3.12.
-# Keep this aligned with the environment defined in requirements.txt.
 requires-python = ">=3.10,<3.13"
 
-dependencies = [
-    # General scientific / plotting dependencies
-    "matplotlib",
-    "scikit-image",
-    "pandas",
-    "Pillow",
-
-    # ------------------------------------------------------------------
-    # Core numerical / CV stack
-    #
-    # Exact versions are pinned in requirements.txt.
-    # These ranges deliberately include those pins while preventing pip
-    # from upgrading to a newer incompatible major/minor stack when this
-    # project is installed before requirements.txt.
-    # ------------------------------------------------------------------
-    "numpy>=1.26,<2",
-    "opencv-python>=4.10,<4.11",
-
-    # ------------------------------------------------------------------
-    # PyTorch stack
-    #
-    # requirements.txt selects the exact CUDA-enabled builds.
-    # Do not put CUDA index URLs or +cu121 pins here.
-    # ------------------------------------------------------------------
-    "torch>=2.2,<2.3",
-    "torchvision>=0.17,<0.18",
-
-    # Computer vision / ML
-    "ultralytics",
-    "segment-anything",
-
-    # ------------------------------------------------------------------
-    # Open3D
-    #
-    # requirements.txt pins open3d==0.19.0.
-    # Open3D 0.19 is the release intended for the PyTorch 2.2 /
-    # CUDA 12.x stack.
-    # ------------------------------------------------------------------
-    "open3d>=0.19,<0.20",
-
-    # Configuration / utilities
-    "pyyaml",
-    "python-dotenv",
-    "openai",
-    "loguru",
-]
 
 [project.optional-dependencies]
 dev = [
     "ruff",
     "pyright",
     "pre-commit",
+    "pandas-stubs",
+    "sphinx",
+    "furo",
+    "myst-parser",
+    "sphinx-autobuild",
 ]
 
 [tool.setuptools]
+packages = ["segmentation", "scene_understanding", "mapping", "aruco", "evaluation", "utility", "LLM"]
 
-# This project is run in place
-# (python3 samgpt.py, python3 aruco/aruco_detector.py, ...),
-# not imported as an installed library, so no packages need to be
-# built/installed.
-packages = []
-
-# Linter/type-checker settings live in .dev-config/ to keep this file focused
-# on packaging. Both tools follow these pointers, so ruff/pyright still work
-# with no CLI flags and editors/language servers pick them up too.
-
+# Linter/type-checker settings live in .dev-config/ to keep this file focused on packaging. 
 [tool.ruff]
 extend = ".dev-config/ruff.toml"
 

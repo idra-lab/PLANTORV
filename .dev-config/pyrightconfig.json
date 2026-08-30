@@ -9,6 +9,7 @@
     "../segmentation",
     "../mapping",
     "../scene_understanding",
+    "../LLM",
     "../evaluation",
     "../aruco",
     "../utility"
@@ -16,13 +17,12 @@
   "exclude": [
     "../**/__pycache__",
     "../.venv",
-    "../venv",
     "../dataset",
     "../final_fast_segmentation",
     "../segmentation/checkpoints"
   ],
   // Same ../ caveat as above: venvPath is resolved against THIS file's
-  // directory, so ".." is the project root and "venv" names the dir inside it.
+  // directory, so ".." is the project root and ".venv" names the dir inside it.
   "venvPath": "..",
   "venv": ".venv",
   "pythonVersion": "3.10",
@@ -32,5 +32,17 @@
   "reportUnknownMemberType": "none",
   "reportUnknownArgumentType": "none",
   "reportUnknownVariableType": "none",
-  "reportUnknownParameterType": "none"
+  "reportUnknownParameterType": "none",
+  // Dead-code checks, off by default in "standard" mode. Kept at "warning" on
+  // purpose: Pyright only exits non-zero on errors, so these surface in the
+  // editor and in `make typecheck` without blocking commits via the pre-commit
+  // hook. Promote to "error" once the pre-existing type errors are cleared.
+  // Note these are per-file checks - reportUnusedFunction/Class only fire on
+  // private (underscore-prefixed) symbols, so an uncalled public function is
+  // still invisible to them.
+  "reportUnusedImport": "warning",
+  "reportUnusedVariable": "warning",
+  "reportUnusedFunction": "warning",
+  "reportUnusedClass": "warning",
+  "reportUnusedExpression": "warning"
 }

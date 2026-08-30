@@ -1,10 +1,43 @@
 #!/usr/bin/env python3
 """Download the model checkpoints used by the pipeline into ``models/``.
 
-The script only uses the standard library, so it can be run before
-``make install``. Downloads are resumable: an interrupted transfer leaves a
-``.part`` file next to the target and re-running the script continues from
-where it stopped.
+Covers:
+
+- SAM 1 (Ultralytics, used through SAMModel -- SAM 1 ViT-H is downloaded from Meta because Ultralytics does not publish it);
+- MobileSAM (Ultralytics, used through SAMModel);
+- SAM 2 (Ultralytics, used through SAMModel);
+- SAM 2.1 (Ultralytics, used through SAMModel);
+- FastSAM (Ultralytics' YOLOv8-seg, used through FastSAMModel);
+- SAM 3 (gated, requires a Hugging Face token);
+- RandLA-Net trained on S3DIS (Open3D-ML, used through ``segment_pcd.py``).
+
+Ultralytics also downloads its own checkpoints on first use, so this script is
+mainly useful for three cases:
+
+- ``sam_h``, which Ultralytics does not publish at all. Meta's original weights
+  work fine, they just have to be saved under the name Ultralytics expects.
+- ``sam3``, whose weights are gated. Meta requires an approved access request
+  on Hugging Face, so Ultralytics cannot fetch them on first use. Once access
+  is granted, a machine that ran ``hf auth login`` needs nothing further;
+  otherwise put a token in ``HF_TOKEN``, in the environment or in ``.env``.
+- Pre-seeding ``models/`` before running somewhere without outbound network
+  access, such as the cluster jobs in ``scripts/PBS/``.
+
+Every checkpoint is saved under the name Ultralytics needs, because
+``segmentation/sam_model.py`` selects the architecture from the file name; see
+``SAM_CHECKPOINTS`` there for the full list. Meta distributes the same weights
+as ``.pth``; the extension is only a naming convention, so saving them as
+``.pt`` changes nothing about the contents. The Open3D-ML checkpoints are the
+exception: ``segment_pcd.py`` is given their path explicitly, so they keep the
+upstream file name.
+
+Open3D-ML models also need a configuration file, which Open3D ships inside the
+installed package rather than publishing as a download. Those are copied out of
+the ``open3d`` package of the interpreter running this script, so the version of
+the configuration always matches the version of Open3D that will read it. A
+missing one is reported as a warning, not an error: the checkpoint is still
+usable with a configuration obtained by hand.
+
 
 Examples
 --------
@@ -14,7 +47,13 @@ List what can be downloaded::
 
 Download one or more checkpoints by name::
 
-    python3 scripts/install_models.py sam_vit_h sam_vit_b
+    python3 scripts/install_models.py sam_h sam_b
+
+Download the gated SAM 3 checkpoint, once the access request was approved. The
+first form uses a stored ``hf auth login``, the second an explicit token::
+
+    python3 scripts/install_models.py sam3
+    HF_TOKEN=hf_... python3 scripts/install_models.py sam3
 
 Download everything, or pick interactively when no name is given::
 
@@ -23,13 +62,19 @@ Download everything, or pick interactively when no name is given::
 """
 
 import argparse
+import importlib.util
+import os
 import shutil
 import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from http.client import HTTPMessage
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import IO, Optional, Sequence
+from urllib.parse import urlsplit
+
+from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -51,17 +96,26 @@ class Model:
     Attributes
     ----------
     key : str
-        Name used to select the model on the command line.
+        Name used to select the model on the command line. Identical to the
+        file name without its extension. For the SAM checkpoints this is also
+        what gets passed to ``SAMModel``.
     filename : str
-        Name the checkpoint is saved as. Kept identical to the upstream name,
-        because the code loading it (for example ``models/sam/sam_vit_h_4b8939.pth``
-        in ``samgpt.py``) refers to that exact file.
+        Name the checkpoint is saved as. This is the name Ultralytics needs to
+        recognise the architecture, not necessarily the upstream one.
     url : str
         Direct download URL.
     subdir : str
         Directory under the models root where the file is stored.
     description : str
         Short human-readable summary shown by ``--list`` and the picker.
+    requires_hf_token : bool
+        True when the URL points at a gated Hugging Face repository, which only
+        answers to a request carrying a token of an account whose access request
+        was approved. See :func:`hf_token`.
+    config : str or None
+        File name of the Open3D-ML configuration the checkpoint is used with,
+        copied next to it out of the installed ``open3d`` package. None for the
+        checkpoints that need no configuration file. See :func:`install_config`.
     """
 
     key: str
@@ -69,35 +123,215 @@ class Model:
     url: str
     subdir: str
     description: str
+    requires_hf_token: bool = False
+    config: Optional[str] = None
 
 
-SAM_BASE_URL = "https://dl.fbaipublicfiles.com/segment_anything"
+# Checkpoints Ultralytics publishes itself, on the release its own downloader
+# defaults to. These are the same weights Ultralytics would fetch on first use.
+ULTRALYTICS_BASE_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
+# Meta's original checkpoints, from https://github.com/facebookresearch/segment-anything.
+# Only needed for ViT-H. The weights are unchanged, they are just stored under
+# the `.pt` name Ultralytics matches on rather than Meta's `.pth` one.
+META_BASE_URL = "https://dl.fbaipublicfiles.com/segment_anything"
+# SAM 3, which Meta distributes only through its gated Hugging Face repository.
+# The repository holds `sam3.pt` next to the Transformers weights, and that file
+# is the one Ultralytics loads, so it needs no renaming.
+HF_SAM3_REPO_URL = "https://huggingface.co/facebook/sam3"
+HF_SAM3_URL = f"{HF_SAM3_REPO_URL}/resolve/main/sam3.pt"
+# Environment variables searched for a Hugging Face token, in order. The first is
+# what `.env` is expected to carry; the second is the older name their own
+# libraries still honour.
+HF_TOKEN_VARS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+# Where `hf auth login` stores its token when no environment variable is set.
+# `HF_TOKEN_PATH` names the file outright, otherwise it sits under `HF_HOME`.
+# Resolved the same way `huggingface_hub` does, so a machine that is already
+# logged in needs no further setup.
+HF_HOME_DEFAULT = "~/.cache/huggingface"
+# Open3D-ML's model zoo, which hosts the point-cloud semantic segmentation weights.
+OPEN3D_ZOO_URL = "https://storage.googleapis.com/open3d-releases/model-zoo"
+# Where the matching configurations sit inside an installed `open3d`, relative to the
+# package root. Open3D vendors Open3D-ML as `open3d._ml3d`, so they ship with the wheel
+# and are never downloaded.
+OPEN3D_CONFIG_SUBDIR = ("_ml3d", "configs")
+# Upstream copy of the same configurations, for the warning shown when the installed
+# Open3D has none.
+OPEN3D_ML_CONFIGS_URL = "https://github.com/isl-org/Open3D-ML/tree/main/ml3d/configs"
 
-# Checkpoints published on https://github.com/facebookresearch/segment-anything.
-# The `model_type` string SAMModel expects is the `vit_*` suffix of the key.
+# SAM 1. Sources are mixed, so these stay spelled out one by one.
 MODELS: dict[str, Model] = {
-    "sam_vit_h": Model(
-        key="sam_vit_h",
-        filename="sam_vit_h_4b8939.pth",
-        url=f"{SAM_BASE_URL}/sam_vit_h_4b8939.pth",
+    "sam_h": Model(
+        key="sam_h",
+        filename="sam_h.pt",
+        url=f"{META_BASE_URL}/sam_vit_h_4b8939.pth",
         subdir="sam",
-        description="SAM ViT-H (default, best quality, ~2.4 GB)",
+        description="SAM 1 ViT-H (pipeline default, best quality, ~2.4 GB) [from Meta]",
     ),
-    "sam_vit_l": Model(
-        key="sam_vit_l",
-        filename="sam_vit_l_0b3195.pth",
-        url=f"{SAM_BASE_URL}/sam_vit_l_0b3195.pth",
+    "sam_l": Model(
+        key="sam_l",
+        filename="sam_l.pt",
+        url=f"{ULTRALYTICS_BASE_URL}/sam_l.pt",
         subdir="sam",
-        description="SAM ViT-L (~1.2 GB)",
+        description="SAM 1 ViT-L (~1.2 GB) [from Ultralytics]",
     ),
-    "sam_vit_b": Model(
-        key="sam_vit_b",
-        filename="sam_vit_b_01ec64.pth",
-        url=f"{SAM_BASE_URL}/sam_vit_b_01ec64.pth",
+    "sam_b": Model(
+        key="sam_b",
+        filename="sam_b.pt",
+        url=f"{ULTRALYTICS_BASE_URL}/sam_b.pt",
         subdir="sam",
-        description="SAM ViT-B (smallest and fastest, ~360 MB)",
+        description="SAM 1 ViT-B (~360 MB) [from Ultralytics]",
+    ),
+    "mobile_sam": Model(
+        key="mobile_sam",
+        filename="mobile_sam.pt",
+        url=f"{ULTRALYTICS_BASE_URL}/mobile_sam.pt",
+        subdir="sam",
+        description="MobileSAM (SAM 1, tiny distilled encoder, ~39 MB) [from Ultralytics]",
     ),
 }
+
+# SAM 2 and SAM 2.1. Both generations ship the same four sizes from the same
+# place, so they are generated rather than repeated eight times. SAM 2.1 is the
+# later release of the same architecture and supersedes SAM 2 at equal size;
+# SAM 2 is kept so older runs stay reproducible.
+_SAM2_VARIANTS = {
+    "t": ("tiny", "~75 MB"),
+    "s": ("small", "~88 MB"),
+    "b": ("base+", "~154 MB"),
+    "l": ("large", "~428 MB"),
+}
+
+for _generation, _note in (("sam2", ""), ("sam2.1", ", recommended over sam2")):
+    for _size, (_label, _weight) in _SAM2_VARIANTS.items():
+        _key = f"{_generation}_{_size}"
+        MODELS[_key] = Model(
+            key=_key,
+            filename=f"{_key}.pt",
+            url=f"{ULTRALYTICS_BASE_URL}/{_key}.pt",
+            subdir="sam",
+            description=(
+                f"SAM {_generation.removeprefix('sam')} {_label} "
+                f"({_weight}{_note}) [from Ultralytics]"
+            ),
+        )
+
+# SAM 3. A concept segmenter rather than a purely geometric one. Unlike every
+# other checkpoint here the weights are gated, hence the token.
+MODELS["sam3"] = Model(
+    key="sam3",
+    filename="sam3.pt",
+    url=HF_SAM3_URL,
+    subdir="sam",
+    description="SAM 3 (concept segmentation, ~3.2 GB) [from Meta, gated: needs HF access]",
+    requires_hf_token=True,
+)
+
+# FastSAM. Not a SAM architecture at all.
+for _size, _weight in (("s", "~23 MB"), ("x", "~138 MB")):
+    _key = f"FastSAM-{_size}"
+    MODELS[_key] = Model(
+        key=_key,
+        filename=f"{_key}.pt",
+        url=f"{ULTRALYTICS_BASE_URL}/{_key}.pt",
+        subdir="fastsam",
+        description=f"FastSAM {_size} ({_weight}, used via FastSAMModel) [from Ultralytics]",
+    )
+
+# Open3D-ML point-cloud semantic segmentation, used through `segment_pcd.py` rather
+# than through any of the SAM wrappers. The name encodes the training run, and
+# `segment_pcd.py` takes the path explicitly, so it is kept exactly as published.
+MODELS["randlanet_s3dis"] = Model(
+    key="randlanet_s3dis",
+    filename="randlanet_s3dis_202201071330utc.pth",
+    url=f"{OPEN3D_ZOO_URL}/randlanet_s3dis_202201071330utc.pth",
+    subdir="randla_net",
+    description=(
+        "RandLA-Net, 13 S3DIS indoor classes (~57 MB, used via segment_pcd.py) [from Open3D-ML]"
+    ),
+    config="randlanet_s3dis.yml",
+)
+
+# Width of the key column in `--list` and in the interactive picker, sized to the
+# longest key so a new model cannot silently break the alignment.
+KEY_WIDTH = max(len(key) for key in MODELS) + 1
+
+
+def hf_token() -> Optional[str]:
+    """Return the Hugging Face token, from the environment or from a stored login.
+
+    The variables in :data:`HF_TOKEN_VARS` are tried first, in order. ``.env`` has
+    already been loaded by :func:`main`, so a token written there counts as being
+    in the environment. Failing that, the token ``hf auth login`` writes to disk is
+    used, which is what makes an already logged in machine work with no setup.
+
+    Returns
+    -------
+    str or None
+        The token, or None when neither the environment nor a stored login
+        provides a non-empty one.
+    """
+    for variable in HF_TOKEN_VARS:
+        token = os.environ.get(variable, "").strip()
+        if token:
+            return token
+
+    token_path = os.environ.get("HF_TOKEN_PATH", "").strip()
+    path = (
+        Path(token_path)
+        if token_path
+        else Path(os.environ.get("HF_HOME", "").strip() or HF_HOME_DEFAULT) / "token"
+    )
+    try:
+        return path.expanduser().read_text(encoding="utf-8").strip() or None
+    except OSError:
+        # Missing or unreadable is just "not logged in", not an error worth raising.
+        return None
+
+
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Redirect handler that drops ``Authorization`` when the host changes.
+
+    Hugging Face answers a download with a redirect to a CDN that authenticates
+    the request through a signature in the URL itself. Forwarding the bearer
+    token there is useless and the CDN rejects requests that carry both, but
+    ``urllib`` copies every header onto the redirected request by default.
+    """
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: HTTPMessage,
+        newurl: str,
+    ) -> Optional[urllib.request.Request]:
+        """Build the redirected request, without the token if it leaves the host.
+
+        Parameters
+        ----------
+        req : urllib.request.Request
+            The request that was redirected.
+        fp : IO[bytes]
+            The response body of the redirect.
+        code : int
+            HTTP status code of the redirect.
+        msg : str
+            HTTP status message of the redirect.
+        headers : http.client.HTTPMessage
+            Headers of the redirect response.
+        newurl : str
+            URL being redirected to.
+
+        Returns
+        -------
+        urllib.request.Request or None
+            The request to send next, or None when the redirect is not followed.
+        """
+        new_request = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_request is not None and urlsplit(newurl).netloc != urlsplit(req.full_url).netloc:
+            new_request.remove_header("Authorization")
+        return new_request
 
 
 def human_size(num_bytes: float) -> str:
@@ -121,12 +355,118 @@ def human_size(num_bytes: float) -> str:
     return f"{size:.1f} GiB"
 
 
+def open3d_configs_dir() -> Optional[Path]:
+    """Locate the Open3D-ML configuration directory of the interpreter running this script.
+
+    Found through the import system rather than by building a path out of a
+    Python version, so it resolves to whichever ``open3d`` the interpreter would
+    actually import: the virtualenv's, a user install, or a system one.
+    ``importlib.util.find_spec`` only locates the package, it does not execute
+    it, which keeps this off Open3D's slow native import.
+
+    Returns
+    -------
+    pathlib.Path or None
+        The directory holding the bundled ``*.yml`` configurations, or None when
+        Open3D is not installed or ships no Open3D-ML configurations.
+    """
+    try:
+        spec = importlib.util.find_spec("open3d")
+    except (ImportError, ValueError):
+        # ImportError: no such package. ValueError: `open3d` is in sys.modules
+        # without a spec, which a broken or partial install can produce.
+        return None
+
+    if spec is None or spec.submodule_search_locations is None:
+        return None
+
+    for location in spec.submodule_search_locations:
+        candidate = Path(location).joinpath(*OPEN3D_CONFIG_SUBDIR)
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def install_config(model: Model, models_dir: Path, force: bool = False) -> bool:
+    """Copy a model's Open3D-ML configuration next to its checkpoint.
+
+    A missing configuration is a warning rather than a failure: the checkpoint is
+    downloaded and usable, and the file can be fetched by hand from Open3D-ML.
+
+    Parameters
+    ----------
+    model : Model
+        Model whose configuration to install. Does nothing when it needs none.
+    models_dir : Path
+        Root directory the model subdirectories are created in.
+    force : bool, optional
+        Copy again even if the configuration is already there.
+
+    Returns
+    -------
+    bool
+        True if the configuration is present after the call, False if it could
+        not be found or copied.
+    """
+    if model.config is None:
+        return True
+
+    target = models_dir / model.subdir / model.config
+    if target.exists() and not force:
+        logger.info(f"{model.key}: configuration already present at {target}")
+        return True
+
+    configs_dir = open3d_configs_dir()
+    if configs_dir is None:
+        logger.warning(
+            f"{model.key}: no Open3D-ML configurations found for {sys.executable}, so "
+            f"{model.config} was not installed."
+        )
+        logger.warning(
+            f"  Install Open3D for this interpreter, or copy {model.config} by hand from "
+            f"{OPEN3D_ML_CONFIGS_URL} into {target.parent}."
+        )
+        return False
+
+    source = configs_dir / model.config
+    if not source.is_file():
+        logger.warning(
+            f"{model.key}: {model.config} is not in {configs_dir}, so it was not installed."
+        )
+        logger.warning(
+            f"  The installed Open3D may be too old or too new for this checkpoint. Copy the file "
+            f"by hand from {OPEN3D_ML_CONFIGS_URL} into {target.parent}."
+        )
+        return False
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    except OSError as error:
+        logger.warning(f"{model.key}: could not copy {source} to {target} ({error}).")
+        return False
+
+    logger.info(f"{model.key}: configuration copied from {source} to {target}")
+    return True
+
+
 def list_models() -> None:
     """Print the available models, their destination, and their description."""
     logger.info(bold("Available models:"))
     for model in MODELS.values():
-        logger.info(f"  {model.key:<12} {model.description}")
-        logger.info(f"  {'':<12} -> models/{model.subdir}/{model.filename}")
+        logger.info(f"  {model.key:<{KEY_WIDTH}} {model.description}")
+        logger.info(f"  {'':<{KEY_WIDTH}} -> models/{model.subdir}/{model.filename}")
+        if model.config is not None:
+            logger.info(
+                f"  {'':<{KEY_WIDTH}} -> models/{model.subdir}/{model.config} "
+                "(copied from the installed open3d)"
+            )
+    if any(model.requires_hf_token for model in MODELS.values()):
+        logger.info(
+            f"Models marked gated need an approved access request at {HF_SAM3_REPO_URL}, plus "
+            f"either a stored `hf auth login` token or {' or '.join(HF_TOKEN_VARS)} set in the "
+            "environment or in .env."
+        )
 
 
 def prompt_for_models() -> list[Model]:
@@ -141,7 +481,7 @@ def prompt_for_models() -> list[Model]:
 
     print(bold("Which models do you want to download?"), file=sys.stderr)
     for position, model in enumerate(models, start=1):
-        print(f"  {position}) {model.key:<12} {model.description}", file=sys.stderr)
+        print(f"  {position}) {model.key:<{KEY_WIDTH}} {model.description}", file=sys.stderr)
     print("  a) all of them", file=sys.stderr)
 
     try:
@@ -251,8 +591,22 @@ def download(model: Model, models_dir: Path, force: bool = False) -> bool:
     if force and partial.exists():
         partial.unlink()
 
-    offset = partial.stat().st_size if partial.exists() else 0
     request = urllib.request.Request(model.url)
+    if model.requires_hf_token:
+        token = hf_token()
+        if token is None:
+            logger.error(
+                f"{model.key}: the weights are gated and no token was found in "
+                f"{' or '.join(HF_TOKEN_VARS)} or in a stored Hugging Face login."
+            )
+            logger.error(
+                f"  Request access at {HF_SAM3_REPO_URL}, then either run `hf auth login` or "
+                "put the token of the account the access was granted to in .env."
+            )
+            return False
+        request.add_header("Authorization", f"Bearer {token}")
+
+    offset = partial.stat().st_size if partial.exists() else 0
     if offset:
         logger.info(f"{model.key}: resuming from {human_size(offset)}")
         request.add_header("Range", f"bytes={offset}-")
@@ -260,8 +614,11 @@ def download(model: Model, models_dir: Path, force: bool = False) -> bool:
     logger.info(f"{model.key}: downloading {model.url}")
     downloaded = offset
     total: Optional[int] = None
+    # A plain urlopen would forward the token to whatever host the download is
+    # redirected to; see `_StripAuthOnRedirect`.
+    opener = urllib.request.build_opener(_StripAuthOnRedirect)
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with opener.open(request, timeout=TIMEOUT) as response:
             # A 206 means the range was honoured; anything else (typically 200)
             # means the server is sending the whole file, so start over.
             if offset and response.status != 206:
@@ -288,6 +645,13 @@ def download(model: Model, models_dir: Path, force: bool = False) -> bool:
                     reported = _report_progress(downloaded, total, reported)
     except urllib.error.HTTPError as error:
         logger.error(f"{model.key}: HTTP error {error.code} ({error.reason}) for {model.url}")
+        if model.requires_hf_token and error.code in (401, 403):
+            # The token was sent, so this is about the account behind it rather
+            # than about the token being missing.
+            logger.error(
+                f"  The token was rejected. Check that the access request at {HF_SAM3_REPO_URL} "
+                "was approved for this account and that the token can read gated repositories."
+            )
         return False
     except urllib.error.URLError as error:
         logger.error(f"{model.key}: could not reach {model.url} ({error.reason})")
@@ -369,8 +733,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     -------
     int
         Process exit code: 0 if every requested checkpoint is available, 1 otherwise.
+        A configuration file that could not be installed only warns; see
+        :func:`install_config`.
     """
     args = parse_args(argv)
+    load_dotenv(PROJECT_ROOT / ".env")
 
     if args.list:
         list_models()
@@ -378,6 +745,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.all:
         selected = list(MODELS.values())
+        if hf_token() is None:
+            # Downloading these is guaranteed to fail, and failing them would make
+            # `--all` report an error for a checkpoint the user never named.
+            gated = [model for model in selected if model.requires_hf_token]
+            if gated:
+                selected = [model for model in selected if not model.requires_hf_token]
+                logger.warning(
+                    f"Skipping {', '.join(model.key for model in gated)}: gated weights and no "
+                    "Hugging Face token found. See --list."
+                )
     elif args.models:
         selected = [MODELS[key] for key in dict.fromkeys(args.models)]
     else:
@@ -392,7 +769,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         f"({human_size(free_space)} free on disk)"
     )
 
-    failed = [model.key for model in selected if not download(model, args.models_dir, args.force)]
+    failed: list[str] = []
+    for model in selected:
+        if not download(model, args.models_dir, args.force):
+            failed.append(model.key)
+            continue
+        # A configuration that could not be installed only warns, so it does not
+        # count as a failure: the checkpoint itself is there.
+        install_config(model, args.models_dir, args.force)
 
     if failed:
         logger.error(f"Failed: {', '.join(failed)}")

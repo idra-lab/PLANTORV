@@ -11,16 +11,17 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from depth_correlation import compute_depth_correlation
-from matching import match_objects
-from metrics import (
+
+from .depth_correlation import compute_depth_correlation
+from .matching import match_objects
+from .metrics import (
     compute_detection_metrics,
     compute_global_metrics,
     image_statistics,
     object_statistics,
     save_summary,
 )
-from visualization import create_overlay
+from .visualization import create_overlay
 
 RGB_DIR = Path("dataset/rgb")
 SEG_DIR = Path("outputs_json_labeled")
