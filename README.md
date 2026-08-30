@@ -119,31 +119,62 @@ and DBSCAN can be tuned with `--plane-distance`, `--min-plane-points`,
 numbered from `0`, unclustered/background pixels are `-1`, and planes start at `-2`.
 
 
-#### Segmentation with Models
+#### Point-cloud semantic segmentation
 
-With Rand-LA net: 
+`segment_pcd.py` selects the Open3D-ML architecture from `model.name` in the
+configuration file. The same interface therefore works with either RandLA-Net
+or PointTransformer; no model-specific command-line flag is needed. Both
+checked-in configurations use models trained on the 13 S3DIS indoor classes.
+
+RandLA-Net supports CPU and GPU inference:
 
 ```bash
-python segment_pcd.py \
-    dataset/rgb/rgb_dataset_1.png \
-    dataset/depth/depth_dataset_1.png \
-    --config models/randla_net/randlanet_s3dis.yml \
-    --checkpoint models/randla_net/randlanet_s3dis_202201071330utc.pth \
-    --semantic-output semantic.ply \
-    --labels-output labels.npy \
-    --confidence-output confidence.npy
+python3 segment_pcd.py \
+  dataset/rgb/rgb_dataset_1.png \
+  dataset/depth/depth_dataset_1.png \
+  --config models/randla_net/randlanet_s3dis.yml \
+  --checkpoint models/randla_net/randlanet_s3dis_202201071330utc.pth \
+  --device gpu \
+  --semantic-output results/randla_semantic.ply \
+  --labels-output results/randla_labels.npy \
+  --confidence-output results/randla_confidence.npy
 ```
-With Pointtrasnformer (not yet well interfaced): 
+
+Use `--device cpu` instead if CUDA is unavailable. PointTransformer requires a
+CUDA-capable GPU with the Open3D/PyTorch versions from this project:
+
 ```bash
-python segment_pcd.py \
-    dataset/rgb/rgb_dataset_1.png \
-    dataset/depth/depth_dataset_1.png \
-    --config models/pointtrasformer/pointtransformer_s3dis.yml \
-    --checkpoint models/pointtrasformer/pointtransformer_s3dis_202109241350utc.pth \
-    --semantic-output semantic.ply \
-    --labels-output labels.npy \
-    --confidence-output confidence.npy
+python3 segment_pcd.py \
+  dataset/rgb/rgb_dataset_1.png \
+  dataset/depth/depth_dataset_1.png \
+  --config models/pointtrasformer/pointtransformer_s3dis.yml \
+  --checkpoint models/pointtrasformer/pointtransformer_s3dis_202109241350utc.pth \
+  --device gpu \
+  --semantic-output results/pointtransformer_semantic.ply \
+  --labels-output results/pointtransformer_labels.npy \
+  --confidence-output results/pointtransformer_confidence.npy
 ```
+
+The interface transparently handles Open3D 0.19's PointTransformer inference
+limitations: it uses a single-cloud batch, moves the complete batch to CUDA,
+and pads KNN neighborhoods when deep encoder levels contain fewer than 16
+points. Open3D's KNN and furthest-point sampling operations for this model are
+CUDA-only, so `--device cpu` is rejected with an explanatory error.
+
+The outputs are:
+
+- `--semantic-output`: point cloud colored by predicted semantic class.
+- `--labels-output`: `int32` image containing a class ID for every valid-depth
+  pixel and `-1` where no point exists.
+- `--confidence-output`: `float32` image containing the highest class score for
+  every valid-depth pixel and `0` where no point exists.
+- `--output`: optional original RGB point cloud before semantic coloring.
+
+Add `--no-visualize` on a headless machine. By default, camera-frame points are
+rotated into a gravity-aligned Z-up frame before inference; pass `--no-z-up` to
+disable that rotation. `--depth-unit-scale` and `--depth-trunc` have the same
+meaning as in the geometric point-cloud command above.
+
 ### Aruco Generation
 
 Generate ArUco annotations from the configured RGB/marker image folders:
