@@ -10,10 +10,9 @@ import torch
 from PIL import Image
 
 from LLM.llm_base import configure_env
-from LLM.llm_factory import create_llm
 from mapping.rgbd_mapper import main_coords
 from scene_understanding.gpt_annotator import DEFAULT_LLM_CONFIG_FILE, GPTAnnotator
-from segmentation.sam3_model import SAM3Model
+from segmentation.sam_model import SAMModel
 from utility.utility import logger
 
 np.set_printoptions(threshold=sys.maxsize)
@@ -71,17 +70,17 @@ def main(args: argparse.Namespace) -> None:
     images_path = Path(args.images_dir)
 
     # Instantiate the segmentation model
-    # sam = SAMModel(
-    #     # "models/sam/sam_b.pt",
-    #     # "models/sam/sam_h.pt",
-    #     # "models/sam/sam_l.pt",
-    #     # "models/sam/sam2.1_l.pt",
-    #     "models/sam/mobile_sam.pt",
-    #     save_dir=Path(output_dir) / "segmentation_outputs",
-    #     device=args.device,
-    #     debug_masks=args.debug_masks,
-    #     points_stride=48,
-    # )
+    sam = SAMModel(
+        # "models/sam/sam_b.pt",
+        # "models/sam/sam_h.pt",
+        # "models/sam/sam_l.pt",
+        # "models/sam/sam2.1_l.pt",
+        "models/sam/mobile_sam.pt",
+        save_dir=Path(output_dir) / "segmentation_outputs",
+        device=args.device,
+        debug_masks=args.debug_masks,
+        points_stride=48,
+    )
 
     # sam = FastSAMModel(
     #     "models/fastsam/FastSAM-s.pt",
@@ -90,25 +89,25 @@ def main(args: argparse.Namespace) -> None:
     #     debug_masks=args.debug_masks,
     # )
 
-    llm = create_llm(args.llm_config)
-    sam = SAM3Model(
-        llm,
-        Path(os.path.dirname(__file__)) / "models" / "sam" / "sam3.pt",
-        save_dir=Path(output_dir) / "segmentation_outputs",
-        device=args.device,
-        debug_masks=args.debug_masks,
-        examples_file=Path(os.path.dirname(__file__))
-        / "LLM"
-        / "examples"
-        / "SAM3"
-        / "concept_prompts.yaml",
-        # task="The task considers the structures as wholes and not as individual parts.",
-        # concepts=["robotic arm", "long blue object", "red structure", "yellow structure", "tall green tower"],
-        # max_refinements=3,  # parked: segment() no longer calls the refinement loop
-        imgsz=1036,
-        conf=0.2,
-        iou=0.1,
-    )
+    # llm = create_llm(args.llm_config)
+    # sam = SAM3Model(
+    #     llm,
+    #     Path(os.path.dirname(__file__)) / "models" / "sam" / "sam3.pt",
+    #     save_dir=Path(output_dir) / "segmentation_outputs",
+    #     device=args.device,
+    #     debug_masks=args.debug_masks,
+    #     examples_file=Path(os.path.dirname(__file__))
+    #     / "LLM"
+    #     / "examples"
+    #     / "SAM3"
+    #     / "concept_prompts.yaml",
+    #     # task="The task considers the structures as wholes and not as individual parts.",
+    #     # concepts=["robotic arm", "long blue object", "red structure", "yellow structure", "tall green tower"],
+    #     # max_refinements=3,  # parked: segment() no longer calls the refinement loop
+    #     imgsz=1036,
+    #     conf=0.2,
+    #     iou=0.1,
+    # )
 
     # Instantiate the annotator. The YAML file selects the model, the endpoint, the credentials
     # and the request parameters, so switching model means pointing --llm-config elsewhere.
@@ -131,9 +130,9 @@ def main(args: argparse.Namespace) -> None:
         masked_rgb, mask_bin = sam.obtain_bg(image, image_id)
         rgb_masks, bboxes = sam.individual_mask(image, mask_bin, masked_rgb, image_id)
 
-        # Shows the masks that were actually kept.
-        if args.view_masks and sam.visualize is not None:
-            sam.visualize(image, image_id)
+        visualize = getattr(sam, "visualize", None)
+        if args.view_masks and visualize is not None:
+            visualize(image, image_id)
 
         # Annotate elements
         logger.debug("Starting GPT annotation...")
@@ -210,7 +209,39 @@ def parse_arguments() -> argparse.Namespace:
         ),
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    if not Path(args.images_dir).exists():
+        logger.error(f"Images directory does not exist: {args.images_dir}")
+        sys.exit(1)
+    if not Path(args.images_dir).is_dir():
+        logger.error(f"Images path is not a directory: {args.images_dir}")
+        sys.exit(1)
+
+    if not Path(args.depth_dir).exists():
+        logger.error(f"Depth images directory does not exist: {args.depth_dir}")
+        sys.exit(1)
+    if not Path(args.depth_dir).is_dir():
+        logger.error(f"Depth images path is not a directory: {args.depth_dir}")
+        sys.exit(1)
+
+    if not Path(args.llm_config).exists():
+        logger.error(f"LLM configuration file does not exist: {args.llm_config}")
+        sys.exit(1)
+    if not Path(args.llm_config).is_file():
+        logger.error(f"LLM configuration path is not a file: {args.llm_config}")
+        sys.exit(1)
+
+    if args.device not in ["cuda", "cpu"]:
+        logger.error(f"Invalid device specified: {args.device}. Must be 'cuda' or 'cpu'.")
+        sys.exit(1)
+    if args.device == "cuda" and not torch.cuda.is_available():
+        logger.error(
+            "CUDA is not available. Please check your PyTorch installation and GPU configuration."
+        )
+        sys.exit(1)
+
+    return args
 
 
 if __name__ == "__main__":
