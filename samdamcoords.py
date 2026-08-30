@@ -14,7 +14,7 @@ from PIL import Image
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 from skimage import measure
 from skimage.morphology import dilation, disk, erosion, remove_small_objects
-from utiliity.utility import logger
+from utility.utility import logger
 
 
 def convert(o):
