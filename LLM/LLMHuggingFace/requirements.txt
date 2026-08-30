@@ -1,6 +1,6 @@
 torch
-transformers
-bitsandbytes
+bitsandbytes==0.47.0
+transformers<5
 sentencepiece
 protobuf
 accelerate

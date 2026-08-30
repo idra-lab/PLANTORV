@@ -6,18 +6,16 @@ build-backend = "setuptools.build_meta"
 name = "plantorv"
 version = "0.1.0"
 description = "Object segmentation, VLM tagging, and depth estimation pipeline."
-requires-python = ">=3.10"
+
+requires-python = ">=3.10,<3.13"
+
 
 [project.optional-dependencies]
 dev = [
     "ruff",
     "pyright",
     "pre-commit",
-    # pandas ships no py.typed marker, so Pyright infers from its source. Several
-    # reductions (`Series.std()` among them) have no return annotation there and infer
-    # as `Series | float`, which `float()` then rejects. These stubs annotate them.
     "pandas-stubs",
-    # Documentation. See docs/conf.py and `make docs`.
     "sphinx",
     "furo",
     "myst-parser",

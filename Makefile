@@ -16,6 +16,7 @@ DOC_PACKAGES ?= segmentation scene_understanding mapping LLM utility aruco evalu
 
 # Runtime dependencies only - this is what the PBS cluster jobs need.
 install:
+	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
 
 # Runtime + dev tooling (ruff, pyright, pre-commit), plus the git hook.
