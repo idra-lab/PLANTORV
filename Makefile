@@ -71,6 +71,7 @@ clean_pyright:
 	if [ -d .pyrightcache ]; then rm -rf .pyrightcache; fi
 clean_output: 
 	rm -rf output
+	rm -rf results
 	rm -f ./*.log
 clean_docs:
 	if [ -d docs/_build ]; then rm -rf docs/_build; fi

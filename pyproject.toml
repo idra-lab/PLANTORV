@@ -12,6 +12,7 @@ requires-python = ">=3.10,<3.13"
 
 [project.optional-dependencies]
 dev = [
+    "pytest",
     "ruff",
     "pyright",
     "pre-commit",
@@ -20,6 +21,10 @@ dev = [
     "furo",
     "myst-parser",
     "sphinx-autobuild",
+]
+
+depth-anything = [
+    "transformers>=4.45,<5",
 ]
 
 [tool.setuptools]

@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import open3d as o3d
 
+from mapping.camera_model import Intrinsics
 from mapping.rgbd_mapper import RGBDMapper
 
 
@@ -51,17 +52,6 @@ class RGBDPointCloudGenerator:
             depth_size=depth_size,
         )
 
-        intr = self._mapper.calibration.rgb_intrinsic
-        self._calibrated_color_size = (intr.width, intr.height)
-        self._intrinsic = o3d.camera.PinholeCameraIntrinsic(
-            intr.width,
-            intr.height,
-            intr.fx,
-            intr.fy,
-            intr.cx,
-            intr.cy,
-        )
-
     @classmethod
     def from_frames(
         cls,
@@ -102,35 +92,11 @@ class RGBDPointCloudGenerator:
             depth_unit_scale=self._depth_unit_scale,
         )
 
-        color_rgb = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
-        if self._color_size != self._calibrated_color_size:
-            color_rgb = cv2.resize(
-                color_rgb,
-                self._calibrated_color_size,
-                interpolation=cv2.INTER_AREA,
-            )
-
-        color_o3d = o3d.geometry.Image(np.ascontiguousarray(color_rgb, dtype=np.uint8))
-        depth_o3d = o3d.geometry.Image(np.ascontiguousarray(aligned_depth_mm, dtype=np.float32))
-        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-            color_o3d,
-            depth_o3d,
-            depth_scale=1000.0,
-            depth_trunc=self._depth_trunc_m,
-            convert_rgb_to_intensity=False,
-        )
-
-        point_cloud = o3d.geometry.PointCloud.create_from_rgbd_image(
-            rgbd,
-            self._intrinsic,
-        )
-        point_cloud.transform(
-            [
-                [1, 0, 0, 0],
-                [0, -1, 0, 0],
-                [0, 0, -1, 0],
-                [0, 0, 0, 1],
-            ]
+        point_cloud = create_point_cloud_from_aligned_depth(
+            color_bgr,
+            aligned_depth_mm,
+            self._mapper.calibration.rgb_intrinsic,
+            depth_trunc_m=self._depth_trunc_m,
         )
 
         return RGBDPointCloud(
@@ -168,6 +134,57 @@ def create_aligned_point_cloud(
     )
     result = generator.generate(color_bgr, depth_raw)
     return result.point_cloud, result.aligned_depth_mm
+
+
+def create_point_cloud_from_aligned_depth(
+    color_bgr: np.ndarray,
+    aligned_depth_mm: np.ndarray,
+    rgb_intrinsic: Intrinsics,
+    *,
+    depth_trunc_m: float = 3.0,
+) -> Any:
+    """Create a coloured point cloud from depth already registered to RGB.
+
+    This is the common downstream path for both sensor-aligned and model-inferred
+    depth. Intrinsics are scaled when the aligned map uses a different resolution.
+    """
+    _validate_images(color_bgr, aligned_depth_mm)
+    if depth_trunc_m <= 0.0:
+        raise ValueError("depth_trunc_m must be positive")
+
+    depth_height, depth_width = aligned_depth_mm.shape
+    color_rgb = cv2.cvtColor(color_bgr, cv2.COLOR_BGR2RGB)
+    if color_rgb.shape[:2] != aligned_depth_mm.shape:
+        color_rgb = cv2.resize(
+            color_rgb,
+            (depth_width, depth_height),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    scale_x = depth_width / rgb_intrinsic.width
+    scale_y = depth_height / rgb_intrinsic.height
+    intrinsic = o3d.camera.PinholeCameraIntrinsic(
+        depth_width,
+        depth_height,
+        rgb_intrinsic.fx * scale_x,
+        rgb_intrinsic.fy * scale_y,
+        rgb_intrinsic.cx * scale_x,
+        rgb_intrinsic.cy * scale_y,
+    )
+    depth_clean = np.asarray(aligned_depth_mm, dtype=np.float32).copy()
+    depth_clean[~np.isfinite(depth_clean) | (depth_clean <= 0.0)] = 0.0
+    color_o3d = o3d.geometry.Image(np.ascontiguousarray(color_rgb, dtype=np.uint8))
+    depth_o3d = o3d.geometry.Image(np.ascontiguousarray(depth_clean))
+    rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+        color_o3d,
+        depth_o3d,
+        depth_scale=1000.0,
+        depth_trunc=depth_trunc_m,
+        convert_rgb_to_intensity=False,
+    )
+    point_cloud = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic)
+    point_cloud.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+    return point_cloud
 
 
 def _validate_images(color_bgr: np.ndarray, depth_raw: np.ndarray) -> None:
