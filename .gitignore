@@ -87,6 +87,7 @@ models/*
 confidence.npy 
 labels.npy
 semantic.ply
+results/
 
 # Sphinx build output
 docs/_build/

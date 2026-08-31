@@ -14,7 +14,8 @@ from PIL import Image
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 from skimage import measure
 from skimage.morphology import dilation, disk, erosion, remove_small_objects
-from utiliity.utility import logger
+
+from utility.utility import logger
 
 
 def convert(o):
@@ -828,8 +829,8 @@ def main(images, depth_path, query):
 
     load_dotenv()
 
-    azure_endpoint = os.getenv("AZURE_ENDPOINT")
-    azure_key = os.getenv("AZURE_API_KEY")
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    azure_key = os.getenv("AZURE_OPENAI_API_KEY")
 
     sam = SAMModel("sam_vit_h_4b8939.pth")
 

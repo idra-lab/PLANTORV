@@ -57,6 +57,7 @@ Stages 1 and 2 both talk to an LLM through a shared, backend-agnostic layer, des
 - [Depth estimation](#depth-estimation)
 - [Useful Commands](#useful-commands)
   - [PCD Utils](#pcd-utils)
+    - [Monocular Depth Anything 3](#monocular-depth-anything-3)
     - [Point-cloud semantic segmentation](#point-cloud-semantic-segmentation)
 - [Development](#development)
   - [Tool configuration](#tool-configuration)
@@ -475,6 +476,55 @@ Run the main segmentation, labeling, and RGB-D coordinate pipeline:
 ```bash
 python3 samgpt.py
 ```
+
+Use the indoor metric Depth Anything V2 backend instead of camera depth:
+
+```bash
+pip install -e ".[depth-anything]"
+python3 samgpt.py --depth-source depth-anything-v2
+```
+
+The default checkpoint is
+`depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf`. Use `--depth-model`
+to select another metric Transformers checkpoint and `--depth-device cpu|cuda`
+to override automatic device selection. Model predictions are produced directly
+in the RGB image plane, so they bypass Femto depth-to-colour registration.
+
+#### Monocular Depth Anything 3
+
+Depth Anything 3 is not installed by the main requirements file. From the
+PLANTORV repository root, clone it into the local `models/` folder and install
+that checkout as an editable package (`models/` is git-ignored):
+
+```bash
+mkdir -p models
+git clone https://github.com/ByteDance-Seed/Depth-Anything-3 \
+  models/depth-anything-3
+python3 -m pip install -e models/depth-anything-3
+```
+
+Then run the Depth Anything 3 monocular metric path:
+
+```bash
+python3 samgpt.py --depth-source monocular
+```
+
+For a quick model smoke test on a single image, run:
+
+```bash
+python3 monocular_depth.py [path/to/image.png]
+```
+
+The test prints depth statistics and saves a colorized preview to
+`output/monocular_depth_preview.png`.
+
+This uses `depth-anything/da3metric-large`, loads the model once, converts its
+focal-normalized output to millimetres, and resizes it into the RGB image plane.
+The default focal length (1138.1085 px) is the mean of the calibrated 1920x1080
+Femto RGB values in `aruco/camera.yaml`. For another camera or resolution, pass
+the matching value with `--depth-focal-length-px`; use `--depth-process-res` to
+trade inference detail for speed and memory. The `depth-anything-3` Python package
+must be installed as described by its upstream project.
 
 Create a coloured point cloud from a Femto Mega RGB/depth pair. The command aligns
 the raw depth frame to the RGB camera before passing both images and the calibrated

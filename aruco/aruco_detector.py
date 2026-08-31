@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Optional, Sequence, Union
 
@@ -8,7 +9,11 @@ import cv2
 import numpy as np
 import yaml
 
-from utility.utility import logger
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from utility.utility import logger  # noqa: E402
 
 
 def load_camera_calibration(path: Union[str, Path]) -> tuple[np.ndarray, np.ndarray]:
@@ -296,7 +301,7 @@ def annotate_pair(
         T_tag_object = invert_transform(T_object_tag)
         T_world_object = T_world_tag @ T_tag_object
         T_m = T_camera_world @ T_world_object
-        logger.info(f"{marker_id} T_m Z =", T_m[2, 3] * 1000)
+        logger.info(f"{marker_id} T_m Z = {float(T_m[2, 3] * 1000):.3f} mm")
         corners_px = np.array(detections[marker_id]["corners_px"], dtype=np.float32)
         x_min, y_min = corners_px.min(axis=0)
         x_max, y_max = corners_px.max(axis=0)
