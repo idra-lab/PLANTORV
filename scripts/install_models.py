@@ -9,10 +9,11 @@ Covers:
 - SAM 2.1 (Ultralytics, used through SAMModel);
 - FastSAM (Ultralytics' YOLOv8-seg, used through FastSAMModel);
 - SAM 3 (gated, requires a Hugging Face token);
+- DAM-3B (Describe Anything, used through ``scene_understanding/dam_annotator.py``);
 - RandLA-Net trained on S3DIS (Open3D-ML, used through ``segment_pcd.py``).
 
 Ultralytics also downloads its own checkpoints on first use, so this script is
-mainly useful for three cases:
+mainly useful for four cases:
 
 - ``sam_h``, which Ultralytics does not publish at all. Meta's original weights
   work fine, they just have to be saved under the name Ultralytics expects.
@@ -20,6 +21,9 @@ mainly useful for three cases:
   on Hugging Face, so Ultralytics cannot fetch them on first use. Once access
   is granted, a machine that ran ``hf auth login`` needs nothing further;
   otherwise put a token in ``HF_TOKEN``, in the environment or in ``.env``.
+- ``dam_3b``, which is a whole Hugging Face repository rather than one file.
+  Nothing else in the pipeline downloads it, so without this it has to be
+  fetched by hand.
 - Pre-seeding ``models/`` before running somewhere without outbound network
   access, such as the cluster jobs in ``scripts/PBS/``.
 
@@ -29,7 +33,8 @@ Every checkpoint is saved under the name Ultralytics needs, because
 as ``.pth``; the extension is only a naming convention, so saving them as
 ``.pt`` changes nothing about the contents. The Open3D-ML checkpoints are the
 exception: ``segment_pcd.py`` is given their path explicitly, so they keep the
-upstream file name.
+upstream file name, and ``dam_3b``, which keeps the layout its own loader
+expects and so is saved as a directory rather than as a single file.
 
 Open3D-ML models also need a configuration file, which Open3D ships inside the
 installed package rather than publishing as a download. Those are copied out of
@@ -101,9 +106,18 @@ class Model:
         what gets passed to ``SAMModel``.
     filename : str
         Name the checkpoint is saved as. This is the name Ultralytics needs to
-        recognise the architecture, not necessarily the upstream one.
-    url : str
-        Direct download URL.
+        recognise the architecture, not necessarily the upstream one. For a
+        ``repo_id`` model it names the directory the repository is saved into
+        instead, since those are many files rather than one.
+    url : str or None
+        Direct download URL, for a checkpoint that is a single file. Mutually
+        exclusive with ``repo_id``.
+    repo_id : str or None
+        Hugging Face repository holding the checkpoint, for the models that are
+        a tree of files rather than one (``nvidia/DAM-3B``, for instance, is 19
+        files across four subdirectories). Every file in the repository is
+        downloaded, keeping its path inside ``models/<subdir>/<filename>/``.
+        Mutually exclusive with ``url``.
     subdir : str
         Directory under the models root where the file is stored.
     description : str
@@ -119,12 +133,34 @@ class Model:
     """
 
     key: str
-    filename: str
-    url: str
     subdir: str
     description: str
+    filename: Optional[str] = None
+    url: Optional[str] = None
+    repo_id: Optional[str] = None
     requires_hf_token: bool = False
     config: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Reject a model that is neither a single file nor a repository.
+
+        Raises
+        ------
+        ValueError
+            If neither or both of ``url`` and ``repo_id`` are set, or if
+            ``filename`` is missing.
+        """
+        if (self.url is None) == (self.repo_id is None):
+            raise ValueError(
+                f"{self.key}: set exactly one of url (single file) or repo_id (repository)"
+            )
+        if self.filename is None:
+            raise ValueError(f"{self.key}: filename is required")
+
+    @property
+    def repo_url(self) -> str:
+        """Human-facing address of the Hugging Face repository the weights come from."""
+        return f"{HF_BASE_URL}/{self.repo_id}" if self.repo_id else HF_SAM3_REPO_URL
 
 
 # Checkpoints Ultralytics publishes itself, on the release its own downloader
@@ -137,7 +173,8 @@ META_BASE_URL = "https://dl.fbaipublicfiles.com/segment_anything"
 # SAM 3, which Meta distributes only through its gated Hugging Face repository.
 # The repository holds `sam3.pt` next to the Transformers weights, and that file
 # is the one Ultralytics loads, so it needs no renaming.
-HF_SAM3_REPO_URL = "https://huggingface.co/facebook/sam3"
+HF_BASE_URL = "https://huggingface.co"
+HF_SAM3_REPO_URL = f"{HF_BASE_URL}/facebook/sam3"
 HF_SAM3_URL = f"{HF_SAM3_REPO_URL}/resolve/main/sam3.pt"
 # Environment variables searched for a Hugging Face token, in order. The first is
 # what `.env` is expected to carry; the second is the older name their own
@@ -236,6 +273,20 @@ for _size, _weight in (("s", "~23 MB"), ("x", "~138 MB")):
         subdir="fastsam",
         description=f"FastSAM {_size} ({_weight}, used via FastSAMModel) [from Ultralytics]",
     )
+
+# Describe Anything, used through `scene_understanding/dam_annotator.py` as the local
+# alternative to the remote LLM in `gpt_annotator.py`. Unlike every other entry here
+# this is a whole repository rather than one file: DAM's loader expects `llm/`,
+# `vision_tower/`, `context_provider/` and `mm_projector/` beside a top-level
+# `config.json`, so the tree is mirrored as published. The weights are open, but the
+# `dam` package that reads them is not on PyPI; see requirements.txt.
+MODELS["dam_3b"] = Model(
+    key="dam_3b",
+    filename="DAM-3B",
+    repo_id="nvidia/DAM-3B",
+    subdir="dam",
+    description="DAM-3B (region captioning, ~7.1 GB in 19 files, used via DAMAnnotator) [from NVIDIA]",
+)
 
 # Open3D-ML point-cloud semantic segmentation, used through `segment_pcd.py` rather
 # than through any of the SAM wrappers. The name encodes the training run, and
@@ -455,7 +506,10 @@ def list_models() -> None:
     logger.info(bold("Available models:"))
     for model in MODELS.values():
         logger.info(f"  {model.key:<{KEY_WIDTH}} {model.description}")
-        logger.info(f"  {'':<{KEY_WIDTH}} -> models/{model.subdir}/{model.filename}")
+        # A repository lands as a directory, so it is shown with a trailing slash:
+        # the file names inside it are only known once the Hub has been asked.
+        suffix = "/ (whole repository)" if model.repo_id else ""
+        logger.info(f"  {'':<{KEY_WIDTH}} -> models/{model.subdir}/{model.filename}{suffix}")
         if model.config is not None:
             logger.info(
                 f"  {'':<{KEY_WIDTH}} -> models/{model.subdir}/{model.config} "
@@ -560,58 +614,84 @@ def _report_progress(downloaded: int, total: Optional[int], last_reported: int) 
     return last_reported
 
 
-def download(model: Model, models_dir: Path, force: bool = False) -> bool:
-    """Download a single checkpoint, resuming a previous partial download.
+def _resolve_token(model: Model) -> tuple[bool, Optional[str]]:
+    """Find the Hugging Face token a model needs, if it needs one.
+
+    Resolved once per model rather than once per file, so a repository download
+    fails before its first request instead of part way through the tree.
 
     Parameters
     ----------
     model : Model
-        Model to download.
-    models_dir : Path
-        Root directory the model subdirectories are created in.
+        Model about to be downloaded.
+
+    Returns
+    -------
+    tuple[bool, str or None]
+        ``(True, None)`` when no token is needed, ``(True, token)`` when one was
+        found, and ``(False, None)`` when one is needed but could not be found.
+    """
+    if not model.requires_hf_token:
+        return True, None
+
+    token = hf_token()
+    if token is None:
+        logger.error(
+            f"{model.key}: the weights are gated and no token was found in "
+            f"{' or '.join(HF_TOKEN_VARS)} or in a stored Hugging Face login."
+        )
+        logger.error(
+            f"  Request access at {model.repo_url}, then either run `hf auth login` or "
+            "put the token of the account the access was granted to in .env."
+        )
+        return False, None
+
+    return True, token
+
+
+def _download_file(
+    url: str,
+    target: Path,
+    label: str,
+    token: Optional[str] = None,
+    force: bool = False,
+) -> bool:
+    """Download one file, resuming a previous partial download.
+
+    Parameters
+    ----------
+    url : str
+        Direct download URL.
+    target : Path
+        Where the finished file is written. Parent directories are created.
+    label : str
+        Name used in the log lines, e.g. a model key or ``"dam_3b: llm/config.json"``.
+    token : str or None
+        Bearer token sent with the request, for gated repositories.
     force : bool, optional
-        Re-download even if the target file already exists.
+        Discard a previous partial download instead of resuming it.
 
     Returns
     -------
     bool
-        True if the checkpoint is present and complete after the call.
+        True if the file is present and complete after the call.
     """
-    target = models_dir / model.subdir / model.filename
     partial = target.with_suffix(target.suffix + ".part")
-
-    if target.exists() and not force:
-        size = human_size(target.stat().st_size)
-        logger.info(f"{model.key}: already present at {target} ({size})")
-        logger.info("  Use --force to download it again.")
-        return True
-
     target.parent.mkdir(parents=True, exist_ok=True)
 
     if force and partial.exists():
         partial.unlink()
 
-    request = urllib.request.Request(model.url)
-    if model.requires_hf_token:
-        token = hf_token()
-        if token is None:
-            logger.error(
-                f"{model.key}: the weights are gated and no token was found in "
-                f"{' or '.join(HF_TOKEN_VARS)} or in a stored Hugging Face login."
-            )
-            logger.error(
-                f"  Request access at {HF_SAM3_REPO_URL}, then either run `hf auth login` or "
-                "put the token of the account the access was granted to in .env."
-            )
-            return False
+    request = urllib.request.Request(url)
+    if token is not None:
         request.add_header("Authorization", f"Bearer {token}")
 
     offset = partial.stat().st_size if partial.exists() else 0
     if offset:
-        logger.info(f"{model.key}: resuming from {human_size(offset)}")
+        logger.info(f"{label}: resuming from {human_size(offset)}")
         request.add_header("Range", f"bytes={offset}-")
 
-    logger.info(f"{model.key}: downloading {model.url}")
+    logger.info(f"{label}: downloading {url}")
     downloaded = offset
     total: Optional[int] = None
     # A plain urlopen would forward the token to whatever host the download is
@@ -644,20 +724,20 @@ def download(model: Model, models_dir: Path, force: bool = False) -> bool:
                     downloaded += len(chunk)
                     reported = _report_progress(downloaded, total, reported)
     except urllib.error.HTTPError as error:
-        logger.error(f"{model.key}: HTTP error {error.code} ({error.reason}) for {model.url}")
-        if model.requires_hf_token and error.code in (401, 403):
+        logger.error(f"{label}: HTTP error {error.code} ({error.reason}) for {url}")
+        if token is not None and error.code in (401, 403):
             # The token was sent, so this is about the account behind it rather
             # than about the token being missing.
             logger.error(
-                f"  The token was rejected. Check that the access request at {HF_SAM3_REPO_URL} "
-                "was approved for this account and that the token can read gated repositories."
+                "  The token was rejected. Check that the access request was approved for "
+                "this account and that the token can read gated repositories."
             )
         return False
     except urllib.error.URLError as error:
-        logger.error(f"{model.key}: could not reach {model.url} ({error.reason})")
+        logger.error(f"{label}: could not reach {url} ({error.reason})")
         return False
     except OSError as error:
-        logger.error(f"{model.key}: failed to write {partial} ({error})")
+        logger.error(f"{label}: failed to write {partial} ({error})")
         return False
     finally:
         if sys.stderr.isatty():
@@ -666,14 +746,135 @@ def download(model: Model, models_dir: Path, force: bool = False) -> bool:
     if total is not None and downloaded != total:
         # Keep the .part file so the next run can resume instead of restarting.
         logger.error(
-            f"{model.key}: incomplete download, got {human_size(downloaded)} of {human_size(total)}. "
+            f"{label}: incomplete download, got {human_size(downloaded)} of {human_size(total)}. "
             "Re-run the script to resume."
         )
         return False
 
     partial.replace(target)
-    logger.info(f"{model.key}: saved to {target} ({human_size(target.stat().st_size)})")
+    logger.info(f"{label}: saved to {target} ({human_size(target.stat().st_size)})")
     return True
+
+
+def _download_repo(
+    model: Model,
+    models_dir: Path,
+    token: Optional[str] = None,
+    force: bool = False,
+) -> bool:
+    """Download every file of a Hugging Face repository, keeping its layout.
+
+    Used for the checkpoints that are a tree rather than a single file, such as
+    DAM-3B, whose loader expects to find ``llm/``, ``vision_tower/``,
+    ``context_provider/`` and ``mm_projector/`` next to a top-level
+    ``config.json``. The tree is mirrored under
+    ``models/<subdir>/<filename>/``.
+
+    The file list is read from the Hub rather than hardcoded, so re-sharded
+    weights are picked up without editing this script. Files already on disk are
+    skipped, which makes an interrupted run resumable at file granularity on top
+    of the byte-level resume in :func:`_download_file`.
+
+    Parameters
+    ----------
+    model : Model
+        Model to download. Its ``repo_id`` must be set.
+    models_dir : Path
+        Root directory the model subdirectories are created in.
+    token : str or None
+        Bearer token, for gated repositories.
+    force : bool, optional
+        Re-download files that already exist.
+
+    Returns
+    -------
+    bool
+        True if every file of the repository is present after the call.
+    """
+    root = models_dir / model.subdir / str(model.filename)
+
+    try:
+        from huggingface_hub import list_repo_files
+    except ImportError:
+        logger.error(
+            f"{model.key}: listing {model.repo_id} needs the huggingface_hub package. "
+            "Install it with `pip install huggingface-hub`."
+        )
+        return False
+
+    try:
+        files = sorted(list_repo_files(str(model.repo_id), token=token))
+    except Exception as error:
+        # The Hub client raises its own exception types, and which ones depend on
+        # its version, so this stays broad on purpose: any failure here means the
+        # listing is unusable and the download cannot start.
+        logger.error(f"{model.key}: could not list {model.repo_url} ({error})")
+        return False
+
+    if not files:
+        logger.error(f"{model.key}: {model.repo_url} lists no files")
+        return False
+
+    missing = [name for name in files if not (root / name).exists()]
+    if not missing and not force:
+        size = human_size(sum((root / name).stat().st_size for name in files))
+        logger.info(f"{model.key}: already present at {root} ({len(files)} files, {size})")
+        logger.info("  Use --force to download it again.")
+        return True
+
+    wanted = files if force else missing
+    logger.info(f"{model.key}: {len(wanted)} of {len(files)} file(s) to download into {root}")
+
+    failed: list[str] = []
+    for position, name in enumerate(wanted, start=1):
+        url = f"{model.repo_url}/resolve/main/{name}"
+        label = f"{model.key} [{position}/{len(wanted)}] {name}"
+        if not _download_file(url, root / name, label, token, force):
+            failed.append(name)
+
+    if failed:
+        logger.error(f"{model.key}: {len(failed)} file(s) failed: {', '.join(failed)}")
+        return False
+
+    logger.info(f"{model.key}: saved to {root}")
+    return True
+
+
+def download(model: Model, models_dir: Path, force: bool = False) -> bool:
+    """Download a checkpoint, resuming a previous partial download.
+
+    Dispatches on how the checkpoint is published: a single file goes straight to
+    :func:`_download_file`, a repository to :func:`_download_repo`.
+
+    Parameters
+    ----------
+    model : Model
+        Model to download.
+    models_dir : Path
+        Root directory the model subdirectories are created in.
+    force : bool, optional
+        Re-download even if the target already exists.
+
+    Returns
+    -------
+    bool
+        True if the checkpoint is present and complete after the call.
+    """
+    available, token = _resolve_token(model)
+    if not available:
+        return False
+
+    if model.repo_id is not None:
+        return _download_repo(model, models_dir, token, force)
+
+    target = models_dir / model.subdir / str(model.filename)
+    if target.exists() and not force:
+        size = human_size(target.stat().st_size)
+        logger.info(f"{model.key}: already present at {target} ({size})")
+        logger.info("  Use --force to download it again.")
+        return True
+
+    return _download_file(str(model.url), target, model.key, token, force)
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:

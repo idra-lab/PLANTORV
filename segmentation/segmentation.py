@@ -15,7 +15,19 @@ class SegmentationModel(ABC):
         ----------
         save_dir : str or Path or None
             Directory where the output images will be saved if not None.
+
+        Attributes
+        ----------
+        last_masks : list[numpy.ndarray]
+            Per-object binary masks kept by the most recent
+            :meth:`individual_mask` call, in the same order as the crops it
+            returned. That method returns crops and boxes, which is all a
+            crop-based annotator needs, but an annotator that describes a
+            masked region (see ``scene_understanding/dam_annotator.py``) needs
+            the masks themselves. Empty until ``individual_mask`` has run.
         """
+        self.last_masks: list[np.ndarray] = []
+
         if save_dir is not None:
             self.save_dir = Path(save_dir)
             self.save_dir.mkdir(parents=True, exist_ok=True)

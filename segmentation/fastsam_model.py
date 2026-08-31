@@ -625,4 +625,7 @@ class FastSAMModel(SegmentationModel):
 
         logger.debug(f"Individual masks obtained in {time.time() - start}s")
 
+        # Kept for the annotators that describe a masked region rather than a crop.
+        self.last_masks = [segment for _, segment in masks_filtered]
+
         return rgb_masks, bboxes_filtered

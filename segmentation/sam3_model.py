@@ -1326,6 +1326,9 @@ class SAM3Model(SegmentationModel):
 
         logger.debug(f"{len(rgb_masks)} individual masks obtained in {time.time() - start}s")
 
+        # Kept for the annotators that describe a masked region rather than a crop.
+        self.last_masks = list(masks)
+
         return rgb_masks, bboxes
 
     @staticmethod
@@ -1363,8 +1366,11 @@ class SAM3Model(SegmentationModel):
         left, right = int(xs.min()), int(xs.max()) + 1
 
         # Zero everything outside the instance, so the crop shows the object
-        # rather than the object plus whatever shares its bounding box.
-        cut = rgb[top:bottom, left:right] * mask[top:bottom, left:right, None]
+        # rather than the object plus whatever shares its bounding box. The mask
+        # is cast rather than left boolean because `cv2.convertScaleAbs` below
+        # takes no boolean source: numpy already widens the product to uint8,
+        # this only makes that explicit.
+        cut = rgb[top:bottom, left:right] * mask[top:bottom, left:right, None].astype(np.uint8)
 
         crop = cv2.convertScaleAbs(cut, alpha=alpha, beta=beta)
         crop = cv2.resize(crop, None, fx=2, fy=2, interpolation=cv2.INTER_LANCZOS4)

@@ -546,12 +546,6 @@ class SAMModel(SegmentationModel):
                 numbered_masks.append((i, segment))
                 bboxes.append(bboxes_sam[i])
             elif self.debug_masks:
-                # Name the failing condition, so a missing object can be traced to
-                # the threshold that rejected it rather than guessed at.
-                # NOTE: `area_mask` is the area of the mask *after* intersecting it
-                # with the background keep-mask, so it can be far below the raw
-                # area logged by _dump_masks. A large drop between the two means
-                # the mask lies mostly outside the region obtain_bg kept.
                 reason = (
                     f"area∩bg {area_mask:.2f}% outside (0.35, 6.5) and <= 10"
                     if not (0.35 < area_mask < 6.5 or area_mask > 10)
@@ -586,5 +580,8 @@ class SAMModel(SegmentationModel):
 
         end = time.time()
         logger.debug(f"Individual masks obtained in {end - start}s")
+
+        # Kept for the annotators that describe a masked region rather than a crop.
+        self.last_masks = [segment for _, segment in masks_filtered]
 
         return rgb_masks, bboxes_filtered

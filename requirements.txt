@@ -9,6 +9,16 @@ ultralytics>=8.4.114
 segment-anything
 opencv-python==4.10.0.84
 
+# Describe Anything (DAM), the local annotator in scene_understanding/dam_annotator.py.
+# NVIDIA does not publish it on PyPI, so it is installed straight from the repository.
+# The package it installs is called `dam`.
+dam @ git+https://github.com/NVlabs/describe-anything
+
+# Reads the file list of the multi-file checkpoints in scripts/install_models.py
+# (DAM-3B is a repository, not a single file). Also comes in transitively through
+# timm and transformers; pinned here because the installer imports it directly.
+huggingface-hub
+
 # ------------------------------------------------------------------
 # PyTorch stack
 #
