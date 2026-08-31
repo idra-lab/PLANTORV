@@ -1,7 +1,9 @@
-from typing import Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Optional, Sequence, Tuple, Union
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from mapping.camera_model import (
     _HARDCODED_CALIBRATIONS,
@@ -436,15 +438,19 @@ def _find_depth_at_rgb(
     return None if valid.size == 0 else float(np.min(valid))
 
 
-def main_coords(rgb_path: str, depth_path: str, dict_objects: dict) -> dict:
+def main_coords(
+    image_path: Union[str, Path, Image.Image, np.ndarray],
+    depth_path: Union[str, Path, Image.Image, np.ndarray],
+    dict_objects: dict,
+) -> dict:
     """
     Given the paths to an RGB image and a depth image, along with a dictionary of objects containing their bounding boxes, this function aligns the depth image to the RGB image and retrieves the depth information for each object's center pixel.
 
     Parameters
     ----------
-    rgb_path : str
-        The file path to the RGB image.
-    depth_path : str
+    image_path : Union[str, Path, Image.Image, np.ndarray]
+        The file path to the RGB image, or the image itself as a PIL Image or NumPy array.
+    depth_path : Union[str, Path, Image.Image, np.ndarray]
         The file path to the depth image.
     dict_objects : dict
         A dictionary where each key is an object identifier and each value is another dictionary containing at least a "bbox" key with the bounding box coordinates [x_min, y_min, width, height].
@@ -454,13 +460,35 @@ def main_coords(rgb_path: str, depth_path: str, dict_objects: dict) -> dict:
     dict
         The input dictionary of objects, updated with an additional key "coord_center&depth" for each object, containing a list [center_x, center_y, depth_mm] representing the center pixel coordinates and the corresponding depth in millimeters.
     """
-    rgb = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
-    depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)  # si es PNG de depth visual
+    if isinstance(image_path, str) or isinstance(image_path, Path):
+        if isinstance(image_path, str):
+            image_path = Path(image_path)
+        rgb = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    elif isinstance(image_path, Image.Image):
+        rgb = cv2.cvtColor(np.array(image_path), cv2.COLOR_RGB2BGR)
+    elif isinstance(image_path, np.ndarray):
+        if image_path.ndim == 3 and image_path.shape[2] == 3:
+            rgb = cv2.cvtColor(image_path, cv2.COLOR_RGB2BGR)
+        else:
+            raise ValueError("NumPy array must be a 3-channel RGB image")
+    else:
+        raise TypeError("image_path must be a str, Path, PIL.Image.Image, or np.ndarray")
+
+    if isinstance(depth_path, str) or isinstance(depth_path, Path):
+        if isinstance(depth_path, str):
+            depth_path = Path(depth_path)
+        depth = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)  # si es PNG de depth visual
+    elif isinstance(depth_path, Image.Image):
+        depth = np.array(depth_path)
+    elif isinstance(depth_path, np.ndarray):
+        depth = depth_path
+    else:
+        raise TypeError("depth_path must be a str, Path, PIL.Image.Image, or np.ndarray")
 
     if rgb is None:
-        raise FileNotFoundError(f"RGB image not found at path: {rgb_path}")
+        raise ValueError(f"Failed to read RGB image from {image_path}")
     if depth is None:
-        raise FileNotFoundError(f"Depth image not found at path: {depth_path}")
+        raise ValueError(f"Failed to read depth image from {depth_path}")
 
     # Local import avoids a module cycle: providers reuse RGBDMapper itself.
     from mapping.depth_provider import SensorDepthProvider

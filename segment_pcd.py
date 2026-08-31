@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 import colorsys
+import importlib
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -149,7 +152,22 @@ def create_semantic_pipeline(
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Model checkpoint does not exist: {checkpoint_path}")
 
+    # The framework-specific import registers Torch models and pipelines in
+    # Open3D-ML's shared registry. Keep it lazy so importing this script's
+    # geometry helpers does not itself require PyTorch.
+    importlib.import_module("open3d.ml.torch")
+
     cfg = _ml3d.utils.Config.load_from_file(str(config_path))
+
+    if cfg.model.name == "PointTransformer":
+        if device == "cpu":
+            raise ValueError(
+                "Open3D 0.19 PointTransformer requires GPU inference because its "
+                "KNN and furthest-point sampling operations are CUDA-only. Use "
+                "--device gpu or select a CPU-compatible model such as RandLA-Net."
+            )
+        _enable_pointtransformer_device_batching()
+        _enable_pointtransformer_small_cloud_knn()
 
     Model = _ml3d.utils.get_module(
         "model",
@@ -165,15 +183,112 @@ def create_semantic_pipeline(
 
     model = Model(**cfg.model)
 
+    pipeline_config = dict(cfg.pipeline)
+    # run_inference() wraps exactly one point cloud. PointTransformer mutates
+    # its preprocessed sample in transform(), so batching repeated references
+    # to that sample (for example the training batch_size of 3 in its S3DIS
+    # config) turns its NumPy arrays into tensors before collation completes.
+    pipeline_config["batch_size"] = 1
+
     pipeline = Pipeline(
         model=model,
         device=device,
-        **cfg.pipeline,
+        **pipeline_config,
     )
 
     pipeline.load_ckpt(ckpt_path=str(checkpoint_path))
 
     return pipeline, model, cfg
+
+
+def _enable_pointtransformer_device_batching() -> None:
+    """Make Open3D 0.19 move PointTransformer batches to the model device.
+
+    ``ConcatBatcher`` moves KPConv batches but omits the equivalent call for
+    PointTransformer, leaving its input tensors on CPU while the model is on
+    CUDA. Patch that omission once, without modifying the installed package.
+    """
+    module = importlib.import_module("open3d._ml3d.torch.dataloaders.concat_batcher")
+    batcher_class = module.ConcatBatcher
+
+    if getattr(batcher_class, "_plantorv_moves_pointtransformer_batches", False):
+        return
+
+    original_collate = batcher_class.collate_fn
+
+    def collate_fn(batcher: Any, batches: list[Any]) -> Any:
+        result = original_collate(batcher, batches)
+        if batcher.model == "PointTransformer":
+            result["data"].to(batcher.device)
+        return result
+
+    batcher_class.collate_fn = collate_fn
+    batcher_class._plantorv_moves_pointtransformer_batches = True
+
+
+def _enable_pointtransformer_small_cloud_knn() -> None:
+    """Allow PointTransformer KNN layers to contain fewer than ``k`` points.
+
+    Open3D's KNN operation returns only the available neighbors, while its
+    PointTransformer wrapper always reshapes the result to the requested
+    width. At deep encoder levels a valid cloud can contain fewer than the 16
+    requested neighbors. Repeating the furthest returned neighbor preserves
+    the expected tensor shape without inventing an invalid point index.
+    """
+    module = importlib.import_module("open3d._ml3d.torch.models.point_transformer")
+
+    if getattr(module, "_plantorv_pads_small_knn_results", False):
+        return
+
+    def knn_batch(
+        points: Any,
+        queries: Any,
+        k: int,
+        points_row_splits: Any,
+        queries_row_splits: Any,
+        return_distances: bool = True,
+    ) -> Any:
+        if points_row_splits.shape[0] != queries_row_splits.shape[0]:
+            raise ValueError("KNN points and queries must have the same batch size")
+
+        point_counts = points_row_splits[1:] - points_row_splits[:-1]
+        available_neighbors = int(point_counts.min().item())
+        if available_neighbors < 1:
+            raise ValueError("PointTransformer KNN received an empty point-cloud batch")
+
+        effective_k = min(k, available_neighbors)
+        output_device = points.device
+        result = module.knn_search(
+            points.cpu(),
+            queries.cpu(),
+            k=effective_k,
+            points_row_splits=points_row_splits,
+            queries_row_splits=queries_row_splits,
+            return_distances=True,
+        )
+
+        indices = result.neighbors_index.reshape(-1, effective_k).long()
+        distances = result.neighbors_distance.reshape(-1, effective_k)
+
+        if effective_k < k:
+            padding_width = k - effective_k
+            indices = module.torch.cat(
+                [indices, indices[:, -1:].expand(-1, padding_width)],
+                dim=1,
+            )
+            distances = module.torch.cat(
+                [distances, distances[:, -1:].expand(-1, padding_width)],
+                dim=1,
+            )
+
+        indices = indices.to(output_device)
+        if not return_distances:
+            return indices
+
+        return indices, distances.to(output_device)
+
+    module.knn_batch = knn_batch
+    module._plantorv_pads_small_knn_results = True
 
 
 def prepare_semantic_input(
@@ -185,7 +300,7 @@ def prepare_semantic_input(
     """
     Convert an Open3D point cloud to Open3D-ML inference input.
 
-    RandLA-Net expects:
+    Open3D-ML semantic models such as RandLA-Net and PointTransformer expect:
         point: N x 3 XYZ
         feat:  N x F optional features
         label: N dummy labels for the inference pipeline
@@ -223,8 +338,9 @@ def prepare_semantic_input(
 
         # Open3D geometry stores colours in [0, 1].
         #
-        # S3DIS/Semantic3D RandLA-Net configurations expect RGB features
-        # in approximately [0, 255] and perform their own normalization.
+        # The S3DIS RandLA-Net and PointTransformer configurations expect RGB
+        # in [0, 255]. Their model preprocessors apply architecture-specific
+        # normalization as needed.
         features = colors * 255.0
 
     else:
@@ -242,6 +358,86 @@ def prepare_semantic_input(
     }
 
 
+@dataclass(frozen=True)
+class SemanticSegmentationResult:
+    """Per-point output returned by any supported Open3D-ML model."""
+
+    labels: np.ndarray
+    confidence: np.ndarray
+
+
+class Open3DSemanticSegmenter:
+    """Architecture-neutral interface for Open3D-ML semantic models.
+
+    The YAML configuration selects the model and pipeline implementations, so
+    the caller uses the same API for RandLA-Net and PointTransformer.
+    """
+
+    def __init__(self, pipeline: Any, model: Any, cfg: Any) -> None:
+        self.pipeline = pipeline
+        self.model = model
+        self.cfg = cfg
+
+    @classmethod
+    def from_files(
+        cls,
+        config_path: Path,
+        checkpoint_path: Path,
+        device: str,
+    ) -> "Open3DSemanticSegmenter":
+        pipeline, model, cfg = create_semantic_pipeline(
+            config_path,
+            checkpoint_path,
+            device,
+        )
+        return cls(pipeline, model, cfg)
+
+    @property
+    def model_name(self) -> str:
+        return str(self.cfg.model.name)
+
+    def segment(
+        self,
+        point_cloud: o3d.geometry.PointCloud,
+        *,
+        use_z_up: bool = True,
+    ) -> SemanticSegmentationResult:
+        data = prepare_semantic_input(
+            point_cloud,
+            model=self.model,
+            use_z_up=use_z_up,
+        )
+        raw_result = self.pipeline.run_inference(data)
+        labels, confidence = _normalize_semantic_result(raw_result, len(point_cloud.points))
+        return SemanticSegmentationResult(labels=labels, confidence=confidence)
+
+
+def _normalize_semantic_result(
+    result: dict[str, Any],
+    point_count: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Validate and normalize the common Open3D-ML inference result."""
+    try:
+        labels = np.asarray(result["predict_labels"], dtype=np.int32).reshape(-1)
+        scores = np.asarray(result["predict_scores"], dtype=np.float32)
+    except KeyError as exc:
+        raise RuntimeError(f"Semantic inference result is missing {exc.args[0]!r}") from exc
+
+    if len(labels) != point_count:
+        raise RuntimeError(
+            "Semantic inference returned a different number of labels "
+            f"({len(labels)}) than input points ({point_count})."
+        )
+
+    if scores.ndim != 2 or scores.shape[0] != point_count or scores.shape[1] == 0:
+        raise RuntimeError(
+            "Semantic inference returned invalid prediction scores: "
+            f"expected ({point_count}, num_classes), got {scores.shape}."
+        )
+
+    return labels, np.max(scores, axis=1)
+
+
 def run_semantic_segmentation(
     pipeline,
     point_cloud: o3d.geometry.PointCloud,
@@ -249,34 +445,10 @@ def run_semantic_segmentation(
     model,
     use_z_up: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
-    data = prepare_semantic_input(
-        point_cloud,
-        model=model,
-        use_z_up=use_z_up,
-    )
-
-    result = pipeline.run_inference(data)
-
-    labels = np.asarray(
-        result["predict_labels"],
-        dtype=np.int32,
-    ).reshape(-1)
-
-    scores = np.asarray(
-        result["predict_scores"],
-        dtype=np.float32,
-    )
-
-    if len(labels) != len(point_cloud.points):
-        raise RuntimeError(
-            "Semantic inference returned a different number of labels "
-            f"({len(labels)}) than input points "
-            f"({len(point_cloud.points)})."
-        )
-
-    confidence = np.max(scores, axis=-1)
-
-    return labels, confidence
+    """Compatibility wrapper around :class:`Open3DSemanticSegmenter`."""
+    segmenter = Open3DSemanticSegmenter(pipeline, model, cfg=None)
+    result = segmenter.segment(point_cloud, use_z_up=use_z_up)
+    return result.labels, result.confidence
 
 
 def get_label_names(cfg) -> dict[int, str]:
@@ -466,20 +638,21 @@ def main() -> None:
     # Semantic segmentation
     # ------------------------------------------------------------------
 
-    pipeline, model, cfg = create_semantic_pipeline(
+    segmenter = Open3DSemanticSegmenter.from_files(
         args.config,
         args.checkpoint,
         args.device,
     )
+    print(f"Loaded {segmenter.model_name} from {args.checkpoint}")
 
-    labels, confidence = run_semantic_segmentation(
-        pipeline,
+    semantic_result = segmenter.segment(
         point_cloud,
-        model=model,
         use_z_up=not args.no_z_up,
     )
+    labels = semantic_result.labels
+    confidence = semantic_result.confidence
 
-    label_names = get_label_names(cfg)
+    label_names = get_label_names(segmenter.cfg)
 
     print_semantic_statistics(
         labels,

@@ -1,0 +1,2 @@
+# vLLM ships no macOS/Windows wheels
+vllm; sys_platform == "linux"

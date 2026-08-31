@@ -14,6 +14,7 @@ from PIL import Image
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 from skimage import measure
 from skimage.morphology import dilation, disk, erosion, remove_small_objects
+
 from utility.utility import logger
 
 
@@ -35,7 +36,7 @@ class SAMModel:
         self.sam.to(device=device)
         self.mask_generator = SamAutomaticMaskGenerator(self.sam, points_per_side=points_per_side)
 
-    def sam_mask_to_pil(self, mask_bool) -> Image.Image:
+    def mask_to_pil(self, mask_bool) -> Image.Image:
         mask_uint8 = (mask_bool.astype(np.uint8)) * 255
         return Image.fromarray(mask_uint8)
 
@@ -128,7 +129,7 @@ class SAMModel:
             all_bboxes.append(m["bbox"])
 
         for i, mask in enumerate(all_masks):
-            masked = self.sam_mask_to_pil(mask)
+            masked = self.mask_to_pil(mask)
             masked = masked.resize((W, H))
             masked_np = np.array(masked)
             num_pixels = np.sum(masked_np > 0)
@@ -215,7 +216,7 @@ class SAMModel:
             all_bboxes.append(m["bbox"])
 
         for i, masked in enumerate(all_masks):
-            masked = self.sam_mask_to_pil(masked)
+            masked = self.mask_to_pil(masked)
             masked = masked.resize((W, H))
 
             intersection = np.logical_and(masked, mask_bin)
@@ -796,13 +797,13 @@ class DAMModel:
             prompt_mode=self.prompt_modes.get(self.prompt_mode, self.prompt_mode),
         ).to(self.device)
 
-    def sam_mask_to_pil(self, mask_bool):
+    def mask_to_pil(self, mask_bool):
         mask_uint8 = (mask_bool.astype(np.uint8)) * 255
         return Image.fromarray(mask_uint8)
 
     def main_dam(self, img, mask, temperature=0.6, top_p=0.5, num_beams=1, max_new_tokens=512):
         for i, m in enumerate(mask):
-            mask_pil = sam_mask_to_pil(m)
+            mask_pil = mask_to_pil(m)
 
             output_mask = self.dam.get_description(
                 img,

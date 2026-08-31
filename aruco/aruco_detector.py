@@ -104,28 +104,29 @@ def load_marker_config(path: Union[str, Path]) -> dict:
     """
     Load marker configuration from a YAML file.
 
-    Example config:
-    world_marker_id: 0
-    marker_size_m: 0.04
-    objects:
-      10:
+    Example config::
+
+        world_marker_id: 0
+        marker_size_m: 0.04
+        objects:
+          10:
         name: mug
         T_object_tag:
           [[1,0,0,0],
            [0,1,0,0],
            [0,0,1,0],
            [0,0,0,1]]
-      11:
+          11:
         name: box
         T_object_tag:
           [[1,0,0,0],
            [0,1,0,0],
            [0,0,1,0],
            [0,0,0,1]]
-    robot:
-      marker_id: 100
-      frame_name: end_effector
-      T_robot_tag:
+        robot:
+          marker_id: 100
+          frame_name: end_effector
+          T_robot_tag:
         [[1,0,0,0],
          [0,1,0,0],
          [0,0,1,0],
@@ -364,7 +365,7 @@ def annotate_pair(
             rvec = np.array(det["rvec"], dtype=np.float64)
             tvec = np.array(det["tvec"], dtype=np.float64)
             cv2.drawFrameAxes(debug, K, dist, rvec, tvec, marker_size_m * 0.75)
-    output_pathdebug = Path(output_path) / f"image{idx + 1}_representation"
+    output_pathdebug = Path(output_path) / f"image_{idx + 1}_representation"
     debug_path = output_pathdebug.with_suffix(".debug.png")
     cv2.imwrite(str(debug_path), debug)
 
