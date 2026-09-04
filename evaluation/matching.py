@@ -1,11 +1,20 @@
 import numpy as np
 
 ALIASES = {
-    "partial robotic arm": "Unknown Object",
-    "robotic arm": ["robot base", "end effector"],
+    # The robot is annotated through its base marker, so every phrasing the annotator
+    # produces for the arm is matched against that single ground truth object.
+    "robotic arm": "robot base",
+    "full robotic arm": "robot base",
+    "partial robotic arm": "robot base",
 }
 
 IGNORE_LABELS = {"Unknown Object", "Unknown object", "unknown object"}
+
+# Objects excluded from the localization statistics. ``bbox_from_tag_px`` is the box around
+# the printed tag, which approximates the object centre only when the tag sits on the object.
+# The robot base tag does not, so the distance to a segmented arm centre is not comparable to
+# the block errors. These objects are still matched and still count towards detection recall.
+LOCALIZATION_EXCLUDED = {"robot base"}
 
 
 def bbox_center(bbox: tuple[float, float, float, float]) -> tuple[float, float]:

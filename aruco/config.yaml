@@ -3,9 +3,10 @@ marker_size_m: 0.095
 
 robot:
   base_marker_id: 2
-  frame_name: robot base
+  base_name: robot base
+  # NOTE: marker 3 is never detected in the dataset and is not read by aruco_detector.py.
+  # The end effector is annotated through the regular objects entry for marker 30.
   end_effector_marker_id: 3
-  frame_name: end_effector
   T_robot_tag:
     [[1,0,0,0],
      [0,1,0,0],

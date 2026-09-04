@@ -13,11 +13,12 @@ than the crops. Those masks are the ones a segmentation model leaves in
 """
 
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 from PIL import Image
 
+from scene_understanding.annotator import Annotator
 from segmentation.segmentation import binary_mask_to_pil
 from utility.utility import logger
 
@@ -40,7 +41,33 @@ DEFAULT_PROMPT_MODE = "full+focal_crop"
 DEFAULT_CONV_MODE = "v1"
 
 
-class DAMAnnotator:
+def looks_like_repo_id(value: Union[str, Path]) -> bool:
+    """Tell a Hugging Face repository id apart from a filesystem path.
+
+    DAM's loader accepts either, so the two have to be told apart before a
+    missing checkpoint can be reported: a repository id names something that is
+    not expected to exist on disk yet, a path names something that is.
+
+    A repository id is ``owner/name`` and nothing else, so it carries exactly one
+    separator and none of the decoration a path would ("./x", "/x", "~/x"). An
+    argument that already exists on disk is a path whatever it looks like.
+
+    Parameters
+    ----------
+    value : Union[str, Path]
+        The ``model_path`` argument to classify.
+
+    Returns
+    -------
+    bool
+        True when the argument should be handed to the Hub rather than checked
+        against the filesystem.
+    """
+    text = str(value)
+    return text.count("/") == 1 and not text.startswith((".", "/", "~")) and not Path(text).exists()
+
+
+class DAMAnnotator(Annotator):
     """Tag and describe segmented objects with a local Describe Anything model."""
 
     def __init__(
@@ -79,7 +106,7 @@ class DAMAnnotator:
         prompt_mode : str
             How DAM crops the image around the mask, as ``"<full>+<focal>"``.
         temperature, top_p, num_beams, max_new_tokens
-            Generation parameters, applied to every call of :meth:`main_dam`.
+            Generation parameters, applied to every call of :meth:`annotate`.
         model : Any or None
             An already-built model, used instead of loading one. Intended for
             tests; when given, ``model_path`` is ignored.
@@ -117,13 +144,12 @@ class DAMAnnotator:
                     "Describe Anything section in README.md"
                 ) from exc
 
-            # A repository id has no separator and is never an existing path, so
-            # only a path-looking argument is checked. This keeps the failure at
-            # construction time rather than inside DAM's loader.
-            candidate = Path(self.model_path)
-            if candidate.parent != Path(".") and not candidate.exists():
+            # A repository id is resolved by DAM against the Hub, so only a path
+            # is checked here. This keeps the failure at construction time rather
+            # than somewhere inside DAM's loader.
+            if not looks_like_repo_id(self.model_path) and not Path(self.model_path).exists():
                 raise FileNotFoundError(
-                    f"DAM checkpoint not found at {candidate}. Download it with "
+                    f"DAM checkpoint not found at {self.model_path}. Download it with "
                     "`python3 scripts/install_models.py dam_3b`."
                 )
 
@@ -137,72 +163,37 @@ class DAMAnnotator:
         if hasattr(self._model, "to"):
             self._model = self._model.to(self.device)
 
-    @staticmethod
-    def to_image(image: Union[str, Path, Image.Image, np.ndarray]) -> Image.Image:
-        """
-        Convert any supported image input into a PIL image.
-
-        Parameters
-        ----------
-        image : Union[str, Path, Image.Image, np.ndarray]
-            The path of an image, the image itself, or an array holding it.
-            Floating point arrays are assumed to be in the [0, 1] range.
-
-        Returns
-        -------
-        Image.Image
-            The image as a PIL object.
-
-        Raises
-        ------
-        FileNotFoundError
-            If a path is given but no file exists there.
-        TypeError
-            If the input is of an unsupported type.
-        """
-        if isinstance(image, (str, Path)):
-            image_path = Path(image)
-            if not image_path.exists():
-                raise FileNotFoundError(f"Image file not found: {image_path}")
-            return Image.open(image_path)
-
-        if isinstance(image, Image.Image):
-            return image
-
-        if isinstance(image, np.ndarray):
-            array = image
-            if np.issubdtype(array.dtype, np.floating):
-                array = (array * 255).clip(0, 255)
-            return Image.fromarray(array.astype(np.uint8))
-
-        raise TypeError("image must be a str, Path, PIL.Image.Image, or np.ndarray")
-
-    def main_dam(
+    def annotate(
         self,
         image: Union[str, Path, Image.Image, np.ndarray],
-        masks: list[np.ndarray],
+        segments: list[np.ndarray],
         bboxes: list[list[int]],
+        masks: Optional[list[np.ndarray]] = None,
     ) -> dict:
         """
         Query DAM for the tag and description of every masked object.
 
-        Unlike :meth:`scene_understanding.gpt_annotator.GPTAnnotator.main_gpt`,
-        which is given the cropped objects, this takes the binary masks: DAM
-        describes a region of the full image. The masks are the ones the
-        segmentation model left in ``last_masks``, so a caller does::
+        Unlike :class:`~scene_understanding.gpt_annotator.GPTAnnotator`, which
+        works from the cropped objects, this reads ``masks``: DAM describes a
+        region of the full image. Those are the masks the segmentation model
+        left in ``last_masks``, so a caller does::
 
             rgb_masks, bboxes = sam.individual_mask(image, mask_bin, masked_rgb, idx)
-            image_dict = dam.main_dam(image, sam.last_masks, bboxes)
+            image_dict = dam.annotate(image, rgb_masks, bboxes, masks=sam.last_masks)
 
         Parameters
         ----------
         image : Union[str, Path, Image.Image, np.ndarray]
             The original RGB image, or a path to it.
-        masks : list[np.ndarray]
-            One binary mask per object, shape ``(H, W)`` or ``(H, W, 1)``, with
-            values ``0``/``1`` or ``0``/``255``.
+        segments : list[np.ndarray]
+            Unused. Accepted so that this annotator and the crop-based ones share
+            one call; see :meth:`scene_understanding.annotator.Annotator.annotate`.
         bboxes : list[list[int]]
             One bounding box per object, as ``[x_min, y_min, width, height]``.
+        masks : list[np.ndarray] or None
+            One binary mask per object, shape ``(H, W)`` or ``(H, W, 1)``, with
+            values ``0``/``1`` or ``0``/``255``. Required: DAM has nothing to
+            describe without them.
 
         Returns
         -------
@@ -214,8 +205,14 @@ class DAMAnnotator:
         Raises
         ------
         ValueError
-            If ``masks`` and ``bboxes`` have different lengths.
+            If ``masks`` is None, or if it and ``bboxes`` have different lengths.
         """
+        if masks is None:
+            raise ValueError(
+                "DAMAnnotator describes a masked region and so needs `masks`. Pass the "
+                "segmentation model's `last_masks`, filled by `individual_mask`."
+            )
+
         if len(masks) != len(bboxes):
             raise ValueError(
                 f"Got {len(masks)} masks but {len(bboxes)} bounding boxes; "

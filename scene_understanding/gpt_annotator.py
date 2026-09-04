@@ -1,12 +1,13 @@
 import json
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 from PIL import Image
 
 from LLM.llm_base import BaseLLM
 from LLM.llm_factory import create_llm
+from scene_understanding.annotator import Annotator
 from utility.utility import logger
 
 """GPT Model for tagging and description"""
@@ -49,7 +50,7 @@ Do not write ```json.
 """
 
 
-class GPTAnnotator:
+class GPTAnnotator(Annotator):
     def __init__(self, llm: BaseLLM, prompt: str = ANNOTATION_PROMPT) -> None:
         """
         Initialize the GPTAnnotator with an LLM backend.
@@ -112,51 +113,12 @@ class GPTAnnotator:
         """
         return cls(create_llm(llm_config_file, **overrides), prompt=prompt)
 
-    @staticmethod
-    def to_image(image: Union[str, Path, Image.Image, np.ndarray]) -> Image.Image:
-        """
-        Convert any supported image input into a PIL image.
-
-        Parameters
-        ----------
-        image : Union[str, Path, Image.Image, np.ndarray]
-            The path of an image, the image itself, or an array holding it. Floating point
-            arrays are assumed to be in the [0, 1] range.
-
-        Returns
-        -------
-        Image.Image
-            The image as a PIL object.
-
-        Raises
-        ------
-        FileNotFoundError
-            If a path is given but no file exists there.
-        TypeError
-            If the input is of an unsupported type.
-        """
-        if isinstance(image, (str, Path)):
-            image_path = Path(image)
-            if not image_path.exists():
-                raise FileNotFoundError(f"Image file not found: {image_path}")
-            return Image.open(image_path)
-
-        if isinstance(image, Image.Image):
-            return image
-
-        if isinstance(image, np.ndarray):
-            array = image
-            if np.issubdtype(array.dtype, np.floating):
-                array = (array * 255).clip(0, 255)
-            return Image.fromarray(array.astype(np.uint8))
-
-        raise TypeError("image must be a str, Path, PIL.Image.Image, or np.ndarray")
-
-    def main_gpt(
+    def annotate(
         self,
-        image_path: Union[str, Path, Image.Image, np.ndarray],
+        image: Union[str, Path, Image.Image, np.ndarray],
         segments: list[np.ndarray],
         bboxes: list[list[int]],
+        masks: Optional[list[np.ndarray]] = None,
     ) -> dict:
         """
         Query the model for the tag and description of the objects passed as inputs.
@@ -165,12 +127,15 @@ class GPTAnnotator:
 
         Parameters
         ----------
-        image_path : Union[str, Path, Image.Image, np.ndarray]
+        image : Union[str, Path, Image.Image, np.ndarray]
             The path of the original RGB image or the image itself.
         segments : list[np.ndarray]
             The cropped images of the objects obtained with SAM.
         bboxes : list[list[int]]
             The bounding boxes of the objects obtained by SAM. Each bounding box is represented as a list of 4 integers [x_min, y_min, width, height].
+        masks : list[np.ndarray] or None
+            Unused. Accepted so that this annotator and the mask-based ones share
+            one call; see :meth:`scene_understanding.annotator.Annotator.annotate`.
 
         Returns
         -------
@@ -183,9 +148,9 @@ class GPTAnnotator:
         Raises
         ------
         TypeError
-            If the image_path is not a string, Path, PIL.Image.Image, or np.ndarray.
+            If the image is not a string, Path, PIL.Image.Image, or np.ndarray.
         """
-        full_image = self.to_image(image_path)
+        full_image = self.to_image(image)
         dict_outputs = {}
 
         for index, segment in enumerate(segments):

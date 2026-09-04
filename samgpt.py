@@ -97,8 +97,8 @@ def main(args: argparse.Namespace) -> None:
     sam = SAMModel(
         # "models/sam/sam_b.pt",
         # "models/sam/sam_h.pt",
-        "models/sam/sam_l.pt",
-        # "models/sam/sam2.1_l.pt",
+        # "models/sam/sam_l.pt",
+        "models/sam/sam2.1_l.pt",
         # "models/sam/mobile_sam.pt",
         save_dir=Path(output_dir) / "segmentation_outputs",
         device=args.device,
@@ -175,7 +175,9 @@ def main(args: argparse.Namespace) -> None:
         # Annotate elements
         logger.debug("Starting GPT annotation...")
         start_gpt = time.time()
-        image_dict = gpt.main_gpt(image, rgb_masks, bboxes)
+        # `masks` goes along even though this annotator reads the crops: it is what
+        # a mask-based one (DAMAnnotator) would use, so the call is the same for both.
+        image_dict = gpt.annotate(image, rgb_masks, bboxes, masks=sam.last_masks)
         logger.debug(f"GPT tagging and description done in {time.time() - start_gpt}s")
 
         # Map coordinates and depth
@@ -194,8 +196,6 @@ def main(args: argparse.Namespace) -> None:
 
         with open(f"{output_dir}/output_img{image_id + 1}.json", "w") as k:
             json.dump(image_dict, k, indent=4, default=convert)
-
-        break
 
 
 def parse_arguments() -> argparse.Namespace:

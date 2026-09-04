@@ -29,4 +29,4 @@ else
     exit 1
 fi
 
-python3 evaluation/run_evaluation.py
+python3 -m evaluation.run_evaluation

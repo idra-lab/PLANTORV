@@ -5,7 +5,9 @@ references, aggregates localization and depth errors, and writes CSV tables, a J
 summary, and the figures used in the report to ``results/``.
 """
 
+import argparse
 import json
+from collections.abc import Iterable
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -13,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from .depth_correlation import compute_depth_correlation
-from .matching import match_objects
+from .matching import LOCALIZATION_EXCLUDED, match_objects, normalize_name
 from .metrics import (
     compute_detection_metrics,
     compute_global_metrics,
@@ -23,17 +25,53 @@ from .metrics import (
 )
 from .visualization import create_overlay
 
+# Defaults of the command line. They are only defaults: every path below is threaded
+# through the functions as an argument, so another entry point (evaluation/only_vlm.py)
+# can evaluate a different run without touching the module state.
 RGB_DIR = Path("dataset/rgb")
-SEG_DIR = Path("outputs_json_labeled")
+SEG_DIR = Path("output")
 ARUCO_DIR = Path("output_aruco")
 
 OUTPUT_DIR = Path("results")
-OVERLAY_DIR = OUTPUT_DIR / "overlays"
 
 # Image indices to evaluate. Images whose segmentation or ArUco file is missing are skipped.
 IMAGE_IDS = range(1, 105)
 
 FIGURE_DPI = 300
+
+
+def parse_image_ids(spec: str) -> list[int]:
+    """Turn an image specification into the indices it names.
+
+    Parameters
+    ----------
+    spec : str
+        Comma-separated indices and inclusive ranges, for example ``"1-151"`` or
+        ``"1,4,7-9"``.
+
+    Returns
+    -------
+    list[int]
+        The image indices, in the order they are written.
+
+    Raises
+    ------
+    ValueError
+        If a part is neither an integer nor a well-formed range.
+    """
+    ids: list[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, _, end = part.partition("-")
+            ids.extend(range(int(start), int(end) + 1))
+        else:
+            ids.append(int(part))
+    if not ids:
+        raise ValueError(f"No image index in {spec!r}")
+    return ids
 
 
 def configure_plot_style() -> None:
@@ -72,7 +110,13 @@ def save_figure(path: Path) -> None:
     plt.close()
 
 
-def process_image(image_id: int) -> tuple[dict, list[dict], pd.DataFrame] | None:
+def process_image(
+    image_id: int,
+    seg_dir: Path,
+    aruco_dir: Path,
+    rgb_dir: Path = RGB_DIR,
+    overlay_dir: Path = OUTPUT_DIR / "overlays",
+) -> tuple[dict, list[dict], pd.DataFrame] | None:
     """Evaluate a single image against its ArUco ground truth.
 
     Writes the overlay figure for the image as a side effect when the RGB file exists.
@@ -81,6 +125,14 @@ def process_image(image_id: int) -> tuple[dict, list[dict], pd.DataFrame] | None
     ----------
     image_id : int
         Index of the image in the dataset.
+    seg_dir : Path
+        Directory containing the segmentation output JSON files.
+    aruco_dir : Path
+        Directory containing the per-image ArUco annotation directories.
+    rgb_dir : Path
+        Directory containing the RGB images the overlays are drawn on.
+    overlay_dir : Path
+        Directory the overlay figure is written to.
 
     Returns
     -------
@@ -88,9 +140,9 @@ def process_image(image_id: int) -> tuple[dict, list[dict], pd.DataFrame] | None
         Detection metrics, per-object matches, and depth correlation rows for the image,
         or ``None`` when the segmentation or ArUco file is missing.
     """
-    rgb_file = RGB_DIR / f"rgb_dataset_{image_id}.png"
-    seg_file = SEG_DIR / f"output_img{image_id}.json"
-    aruco_file = ARUCO_DIR / f"rgb_dataset_aruco_{image_id}" / f"aruco_pos_img{image_id}.json"
+    rgb_file = rgb_dir / f"rgb_dataset_{image_id}.png"
+    seg_file = seg_dir / f"output_img{image_id}.json"
+    aruco_file = aruco_dir / f"rgb_dataset_aruco_{image_id}" / f"aruco_pos_img{image_id}.json"
 
     if not seg_file.exists():
         print(f"[MISSING] {seg_file}")
@@ -116,7 +168,7 @@ def process_image(image_id: int) -> tuple[dict, list[dict], pd.DataFrame] | None
         create_overlay(
             image_path=str(rgb_file),
             matches=matches,
-            output_path=str(OVERLAY_DIR / f"overlay_{image_id}.png"),
+            output_path=str(overlay_dir / f"overlay_{image_id}.png"),
         )
 
     depth_df, ignored = compute_depth_correlation(seg_data, aruco_data)
@@ -128,13 +180,27 @@ def process_image(image_id: int) -> tuple[dict, list[dict], pd.DataFrame] | None
     return detection_metrics, matches, depth_df
 
 
-def collect_results(image_ids: range) -> tuple[list[dict], list[dict], list[pd.DataFrame]]:
+def collect_results(
+    image_ids: Iterable[int],
+    seg_dir: Path,
+    aruco_dir: Path,
+    rgb_dir: Path = RGB_DIR,
+    overlay_dir: Path = OUTPUT_DIR / "overlays",
+) -> tuple[list[dict], list[dict], list[pd.DataFrame]]:
     """Evaluate every image and gather the per-image results.
 
     Parameters
     ----------
-    image_ids : range
+    image_ids : Iterable[int]
         Image indices to evaluate.
+    seg_dir : Path
+        Directory containing the segmentation output JSON files.
+    aruco_dir : Path
+        Directory containing the per-image ArUco annotation directories.
+    rgb_dir : Path
+        Directory containing the RGB images the overlays are drawn on.
+    overlay_dir : Path
+        Directory the overlay figures are written to.
 
     Returns
     -------
@@ -147,7 +213,7 @@ def collect_results(image_ids: range) -> tuple[list[dict], list[dict], list[pd.D
     all_depth_results: list[pd.DataFrame] = []
 
     for image_id in image_ids:
-        result = process_image(image_id)
+        result = process_image(image_id, seg_dir, aruco_dir, rgb_dir, overlay_dir)
         if result is None:
             continue
 
@@ -467,24 +533,41 @@ def evaluate_localization(
     -------
     tuple[pd.DataFrame, pd.DataFrame]
         Per-object and per-image statistics.
+
+    Notes
+    -----
+    Objects in ``LOCALIZATION_EXCLUDED`` are dropped from every statistic and figure below.
+    They stay in ``evaluation.csv``, flagged by the ``counted_in_localization`` column, and
+    they still count towards the detection metrics.
     """
+    df = df.copy()
+    df["counted_in_localization"] = ~df["aruco_name"].map(normalize_name).isin(
+        LOCALIZATION_EXCLUDED
+    )
     df.to_csv(output_dir / "evaluation.csv", index=False)
     detection_df.to_csv(output_dir / "detection_statistics.csv", index=False)
 
-    obj_stats = object_statistics(df)
+    excluded = int((~df["counted_in_localization"]).sum())
+    if excluded:
+        names = sorted(df.loc[~df["counted_in_localization"], "aruco_name"].unique())
+        print(f"Excluded {excluded} match(es) from localization statistics: {', '.join(names)}")
+
+    loc_df = df[df["counted_in_localization"]]
+
+    obj_stats = object_statistics(loc_df)
     obj_stats.to_csv(output_dir / "object_statistics.csv", index=False)
 
-    img_stats = image_statistics(df)
+    img_stats = image_statistics(loc_df)
     img_stats.to_csv(output_dir / "image_statistics.csv", index=False)
 
-    summary = build_summary(df, detection_df)
+    summary = build_summary(loc_df, detection_df)
     save_summary(summary, str(output_dir / "summary.json"))
     print(summary)
 
-    plot_error_distribution(df, output_dir)
+    plot_error_distribution(loc_df, output_dir)
     plot_mean_error_per_object(obj_stats, output_dir)
     plot_mean_error_per_image(img_stats, output_dir)
-    plot_error_boxplot_per_object(df, output_dir)
+    plot_error_boxplot_per_object(loc_df, output_dir)
     plot_object_error_ranking(obj_stats, output_dir)
     plot_detection_recall_per_image(detection_df, output_dir)
     plot_missed_extra_objects(detection_df, output_dir)
@@ -513,20 +596,122 @@ def evaluate_depth(all_depth_results: list[pd.DataFrame], output_dir: Path) -> N
     plot_mean_depth_error_per_image(depth_img_stats, output_dir)
 
 
-def main() -> None:
-    """Run the full evaluation and write every table and figure to ``results/``."""
+def run(
+    seg_dir: Path,
+    aruco_dir: Path,
+    output_dir: Path = OUTPUT_DIR,
+    rgb_dir: Path = RGB_DIR,
+    image_ids: Iterable[int] = IMAGE_IDS,
+) -> None:
+    """Evaluate a run and write every table and figure to ``output_dir``.
+
+    Parameters
+    ----------
+    seg_dir : Path
+        Directory containing the per-image annotation JSON files.
+    aruco_dir : Path
+        Directory containing the per-image ArUco annotation directories.
+    output_dir : Path
+        Directory the tables, the figures and the overlays are written to.
+    rgb_dir : Path
+        Directory containing the RGB images the overlays are drawn on.
+    image_ids : Iterable[int]
+        Image indices to evaluate.
+
+    Raises
+    ------
+    SystemExit
+        If no image could be evaluated, which usually means one of the directories is
+        empty or points somewhere else than the run being evaluated.
+    """
     configure_plot_style()
 
-    OUTPUT_DIR.mkdir(exist_ok=True)
-    OVERLAY_DIR.mkdir(exist_ok=True)
+    overlay_dir = output_dir / "overlays"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    overlay_dir.mkdir(parents=True, exist_ok=True)
 
-    all_results, detection_results, all_depth_results = collect_results(IMAGE_IDS)
+    all_results, detection_results, all_depth_results = collect_results(
+        image_ids, seg_dir, aruco_dir, rgb_dir, overlay_dir
+    )
+
+    if not all_results:
+        raise SystemExit(
+            f"No image could be evaluated: no matched objects were found.\n"
+            f"  annotation dir: {seg_dir} "
+            f"({'exists' if seg_dir.is_dir() else 'MISSING'})\n"
+            f"  aruco dir:      {aruco_dir} "
+            f"({'exists' if aruco_dir.is_dir() else 'MISSING'})\n"
+            f"Run the segmentation pipeline (samgpt.py --output-dir {seg_dir}) and the "
+            f"ArUco detector (aruco/aruco_detector.py --out_dir {aruco_dir}) before "
+            f"evaluating."
+        )
 
     df = pd.DataFrame(all_results)
     detection_df = pd.DataFrame(detection_results)
 
-    evaluate_localization(df, detection_df, OUTPUT_DIR)
-    evaluate_depth(all_depth_results, OUTPUT_DIR)
+    evaluate_localization(df, detection_df, output_dir)
+    evaluate_depth(all_depth_results, output_dir)
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the evaluation run."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--seg-dir",
+        type=Path,
+        default=SEG_DIR,
+        help=(
+            "Directory containing the segmentation output JSON files written by "
+            f"samgpt.py (default: {SEG_DIR})."
+        ),
+    )
+    parser.add_argument(
+        "--aruco-dir",
+        type=Path,
+        default=ARUCO_DIR,
+        help=(
+            "Directory containing the ArUco annotations written by "
+            f"aruco/aruco_detector.py (default: {ARUCO_DIR})."
+        ),
+    )
+    parser.add_argument(
+        "--rgb-dir",
+        type=Path,
+        default=RGB_DIR,
+        help=f"Directory containing the RGB images (default: {RGB_DIR}).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=OUTPUT_DIR,
+        help=(
+            "Directory the tables, the figures and the overlays are written to "
+            f"(default: {OUTPUT_DIR})."
+        ),
+    )
+    parser.add_argument(
+        "--images",
+        type=parse_image_ids,
+        default=list(IMAGE_IDS),
+        help=(
+            "Image indices to evaluate, as a comma-separated list of indices and inclusive "
+            f"ranges, e.g. 1-151 or 1,4,7-9 (default: {IMAGE_IDS.start}-{IMAGE_IDS.stop - 1})."
+        ),
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    """Run the full evaluation and write every table and figure to ``--output-dir``."""
+    args = parse_args()
+
+    run(
+        seg_dir=args.seg_dir,
+        aruco_dir=args.aruco_dir,
+        output_dir=args.output_dir,
+        rgb_dir=args.rgb_dir,
+        image_ids=args.images,
+    )
 
 
 if __name__ == "__main__":

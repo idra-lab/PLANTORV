@@ -202,7 +202,7 @@ MODELS: dict[str, Model] = {
         filename="sam_h.pt",
         url=f"{META_BASE_URL}/sam_vit_h_4b8939.pth",
         subdir="sam",
-        description="SAM 1 ViT-H (pipeline default, best quality, ~2.4 GB) [from Meta]",
+        description="SAM 1 ViT-H (largest SAM 1 variant, ~2.4 GB) [from Meta]",
     ),
     "sam_l": Model(
         key="sam_l",

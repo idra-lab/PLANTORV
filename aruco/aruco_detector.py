@@ -153,6 +153,7 @@ def detect_aruco_poses(
     dist: np.ndarray,
     marker_size_m: float,
     dictionary_name: str = "DICT_6X6_250",
+    display_images: bool = False,
 ) -> tuple[dict, Sequence[np.ndarray], Optional[np.ndarray]]:
     """
     Detect ArUco markers in the given image and estimate their poses.
@@ -169,6 +170,9 @@ def detect_aruco_poses(
         Size of the ArUco marker in meters.
     dictionary_name : str, optional
         Name of the predefined ArUco dictionary to use (default is "DICT_6X6_250").
+    display_images : bool, optional
+        When ``True``, show the annotated detections and block until a key is pressed.
+        Off by default so batch and headless runs are not interrupted.
 
     Returns
     -------
@@ -232,9 +236,72 @@ def detect_aruco_poses(
             cv2.circle(image, tuple(projected_point.reshape(2).astype(int)), 5, (0, 0, 255), -1)
             cv2.circle(image, tuple(image_point.astype(int)), 5, (255, 0, 0), -1)
 
-    cv2.imshow("detections", image)
-    cv2.waitKey()
+    if display_images:
+        cv2.imshow("detections", image)
+        cv2.waitKey()
+        cv2.destroyAllWindows()
+
     return detections, corners, ids
+
+
+def build_object_entry(
+    name: str,
+    marker_id: int,
+    detection: dict,
+    T_world_camera: np.ndarray,
+    T_camera_world: np.ndarray,
+    T_object_tag: np.ndarray,
+) -> dict:
+    """
+    Build the annotation entry for a single detected marker.
+
+    Used for both the configured ``objects`` and the robot markers so that every entry in
+    the ``objects`` list carries the same schema.
+
+    Parameters
+    ----------
+    name : str
+        Name the object is annotated with.
+    marker_id : int
+        Identifier of the ArUco marker attached to the object.
+    detection : dict
+        Detection record for the marker, holding ``T_camera_tag`` and ``corners_px``.
+    T_world_camera : np.ndarray
+        Transform from the camera frame to the world frame.
+    T_camera_world : np.ndarray
+        Transform from the world frame to the camera frame.
+    T_object_tag : np.ndarray
+        Transform from the object frame to the tag frame.
+
+    Returns
+    -------
+    dict
+        The annotation entry for the object.
+    """
+    T_camera_tag = detection["T_camera_tag"]
+    logger.debug(f"T_camera_tag:\n{T_camera_tag}")
+    T_world_tag = T_world_camera @ T_camera_tag
+    T_tag_object = invert_transform(T_object_tag)
+    T_world_object = T_world_tag @ T_tag_object
+    T_m = T_camera_world @ T_world_object
+    logger.info(f"{marker_id} T_m Z = {float(T_m[2, 3] * 1000):.3f} mm")
+    corners_px = np.array(detection["corners_px"], dtype=np.float32)
+    x_min, y_min = corners_px.min(axis=0)
+    x_max, y_max = corners_px.max(axis=0)
+    return {
+        "name": name,
+        "marker_id": marker_id,
+        "bbox_from_tag_px": [
+            float(x_min),
+            float(y_min),
+            float(x_max - x_min),
+            float(y_max - y_min),
+        ],
+        "depth": float(T_m[2, 3] * 1000),
+        "T_world_object": matrix_to_list(T_world_object),
+        "T_world_tag": matrix_to_list(T_world_tag),
+        "tag_corners_px": corners_px.tolist(),
+    }
 
 
 def annotate_pair(
@@ -245,6 +312,7 @@ def annotate_pair(
     dist: np.ndarray,
     config: dict,
     idx: int,
+    display_images: bool = False,
 ) -> dict:
     """
     Annotate a pair of clean and tag images with detected ArUco markers and their poses.
@@ -265,6 +333,8 @@ def annotate_pair(
         Configuration dictionary containing marker information.
     idx : int
         Index of the image pair being processed.
+    display_images : bool, optional
+        When ``True``, show the detections for the pair and block until a key is pressed.
 
     Returns
     -------
@@ -279,7 +349,9 @@ def annotate_pair(
         raise RuntimeError(f"Could not read tag image: {tag_image_path}")
     marker_size_m = float(config["marker_size_m"])
     world_marker_id = int(config["world_marker_id"])
-    detections, corners, ids = detect_aruco_poses(tag_image, K, dist, marker_size_m)
+    detections, corners, ids = detect_aruco_poses(
+        tag_image, K, dist, marker_size_m, display_images=display_images
+    )
 
     if world_marker_id not in detections:
         raise RuntimeError(f"World marker {world_marker_id} not detected in {tag_image_path}")
@@ -290,58 +362,47 @@ def annotate_pair(
     for marker_id_str, obj_cfg in config.get("objects", {}).items():
         marker_id = int(marker_id_str)
         if marker_id not in detections:
-            logger.warning(
+            logger.debug(
                 f"Object marker {marker_id} not detected, skipping object '{obj_cfg['name']}'"
             )
             continue
-        T_camera_tag = detections[marker_id]["T_camera_tag"]
-        logger.debug(f"T_camera_tag:\n{T_camera_tag}")
-        T_world_tag = T_world_camera @ T_camera_tag
-        T_object_tag = np.array(obj_cfg.get("T_object_tag", np.eye(4)), dtype=np.float64)
-        T_tag_object = invert_transform(T_object_tag)
-        T_world_object = T_world_tag @ T_tag_object
-        T_m = T_camera_world @ T_world_object
-        logger.info(f"{marker_id} T_m Z = {float(T_m[2, 3] * 1000):.3f} mm")
-        corners_px = np.array(detections[marker_id]["corners_px"], dtype=np.float32)
-        x_min, y_min = corners_px.min(axis=0)
-        x_max, y_max = corners_px.max(axis=0)
         objects_out.append(
-            {
-                "name": obj_cfg["name"],
-                "marker_id": marker_id,
-                "bbox_from_tag_px": [
-                    float(x_min),
-                    float(y_min),
-                    float(x_max - x_min),
-                    float(y_max - y_min),
-                ],
-                "depth": float(T_m[2, 3] * 1000),
-                "T_world_object": matrix_to_list(T_world_object),
-                "T_world_tag": matrix_to_list(T_world_tag),
-                "tag_corners_px": corners_px.tolist(),
-            }
+            build_object_entry(
+                name=obj_cfg["name"],
+                marker_id=marker_id,
+                detection=detections[marker_id],
+                T_world_camera=T_world_camera,
+                T_camera_world=T_camera_world,
+                T_object_tag=np.array(obj_cfg.get("T_object_tag", np.eye(4)), dtype=np.float64),
+            )
         )
 
     logger.info(f"Detected {len(objects_out)} objects in {tag_image_path.name}")
     robot_out = None
     if "robot" in config:
         robot_marker_id = int(config["robot"]["base_marker_id"])
+        robot_name = config["robot"].get("base_name", "robot base")
         if robot_marker_id in detections:
-            T_camera_tag = detections[robot_marker_id]["T_camera_tag"]
-            T_world_tag = T_world_camera @ T_camera_tag
             T_robot_tag = np.array(config["robot"].get("T_robot_tag", np.eye(4)), dtype=np.float64)
-            T_tag_robot = invert_transform(T_robot_tag)
-            T_world_robot = T_world_tag @ T_tag_robot
+            # The robot base is also emitted as an object so the evaluation, which only reads
+            # the ``objects`` list, can match segmented robot detections against it.
+            robot_entry = build_object_entry(
+                name=robot_name,
+                marker_id=robot_marker_id,
+                detection=detections[robot_marker_id],
+                T_world_camera=T_world_camera,
+                T_camera_world=T_camera_world,
+                T_object_tag=T_robot_tag,
+            )
+            objects_out.append(robot_entry)
             robot_out = {
                 "marker_id": robot_marker_id,
-                "frame_name": config["robot"].get("frame_name", "robot"),
-                "T_world_robot": matrix_to_list(T_world_robot),
-                "T_world_tag": matrix_to_list(T_world_tag),
+                "frame_name": robot_name,
+                "T_world_robot": robot_entry["T_world_object"],
+                "T_world_tag": robot_entry["T_world_tag"],
             }
         else:
-            logger.warning(
-                f"Robot marker {robot_marker_id} not detected, skipping robot annotation"
-            )
+            logger.debug(f"Robot marker {robot_marker_id} not detected, skipping robot annotation")
     logger.info(str(clean_image_path.name))
     logger.info(str(tag_image_path.name))
 
@@ -382,6 +443,12 @@ def main() -> None:
     parser.add_argument("--config_yaml", required=True)
     parser.add_argument("--clean_suffix", default=".png")
     parser.add_argument("--tag_suffix", default=".png")
+    parser.add_argument(
+        "--display-images",
+        action="store_true",
+        help="Show the detections for each image and wait for a key press before continuing. "
+        "Off by default so batch and headless runs are not interrupted.",
+    )
     args = parser.parse_args()
     clean_dir = Path(args.clean_dir)
     tag_dir = Path(args.tag_dir)
@@ -402,7 +469,7 @@ def main() -> None:
             logger.warning(f"Missing tag image for {clean_path.name}")
             continue
         try:
-            annotate_pair(clean_path, tag_path, out_path, K, dist, config, i)
+            annotate_pair(clean_path, tag_path, out_path, K, dist, config, i, args.display_images)
             logger.info(f"{clean_path.name} -> {out_path.name}")
         except Exception as e:
             logger.error(f"{clean_path.name}: {e}")

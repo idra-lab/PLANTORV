@@ -2,13 +2,13 @@
 <a href="https://www.python.org/" target="_blank">
     <img src="https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54" target="_blank" />
 </a>
-</a href="https://pytorch.org/" target="_blank">
+<a href="https://pytorch.org/" target="_blank">
     <img src="https://img.shields.io/badge/pytorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white" target="_blank" />
 </a>
-</a href="https://huggingface.co/" target="_blank">
+<a href="https://huggingface.co/" target="_blank">
     <img src="https://img.shields.io/badge/huggingface-FB8C00?style=for-the-badge&logo=huggingface&logoColor=white" target="_blank" />
 </a>
-</a href="https://www.ultralytics.com/" target="_blank">
+<a href="https://www.ultralytics.com/" target="_blank">
     <img src="https://img.shields.io/badge/ultralytics-FF6C37?style=for-the-badge&logo=ultralytics&logoColor=white" target="_blank" />
 </a>
 </p>
@@ -18,20 +18,21 @@
 </p>
 
 Pipeline for segmenting tabletop RGB-D scenes (Femto Mega camera), labeling detected
-objects with a vision LLM, projecting depth coordinates, and evaluating results against
-ArUco marker annotations.
+objects with either a remote vision LLM or local Describe Anything model, projecting depth
+coordinates, and evaluating results against ArUco marker annotations.
 
 The pipeline is four stages, each with its own section below:
 
 | stage | what it does | section |
 |-------|--------------|---------|
 | Segmentation | turns a frame into per-object masks and crops | [Segmentation](#segmentation) |
-| Scene Understanding | gives each crop a tag and a description | [Scene Understanding](#scene-understanding) |
+| Scene Understanding | gives each segmented object a tag and a description | [Scene Understanding](#scene-understanding) |
 | Depth estimation | attaches a 3D position to each object | [Depth estimation](#depth-estimation) |
 | Evaluation | scores the result against ArUco ground truth | [Useful Commands](#useful-commands) |
 
-Stages 1 and 2 both talk to an LLM through a shared, backend-agnostic layer, described in
-[LLM Backbone](#llm-backbone).
+The default segmentation models are geometric and do not use an LLM. SAM 3 optionally uses
+the backend-agnostic [LLM Backbone](#llm-backbone) to name concepts before segmentation;
+the remote scene annotator uses the same layer.
 
 ----
 
@@ -41,7 +42,7 @@ Stages 1 and 2 both talk to an LLM through a shared, backend-agnostic layer, des
 - [Requirements](#requirements)
 - [Setup](#setup)
   - [Install dependencies](#install-dependencies)
-  - [Install segmentation models](#install-segmentation-models)
+  - [Install model checkpoints](#install-model-checkpoints)
   - [Configure the `.env` file](#configure-the-env-file)
 - [Code Structure](#code-structure)
 - [LLM Backbone](#llm-backbone)
@@ -54,10 +55,14 @@ Stages 1 and 2 both talk to an LLM through a shared, backend-agnostic layer, des
   - [SAM 3](#sam-3)
     - [Getting the weights](#getting-the-weights)
 - [Scene Understanding](#scene-understanding)
+  - [Remote vision LLM](#remote-vision-llm)
+  - [Local Describe Anything](#local-describe-anything)
 - [Depth estimation](#depth-estimation)
 - [Useful Commands](#useful-commands)
-  - [PCD Utils](#pcd-utils)
+  - [Main pipelines](#main-pipelines)
+  - [Depth utilities](#depth-utilities)
     - [Monocular Depth Anything 3](#monocular-depth-anything-3)
+  - [Point-cloud utilities](#point-cloud-utilities)
     - [Point-cloud semantic segmentation](#point-cloud-semantic-segmentation)
 - [Development](#development)
   - [Tool configuration](#tool-configuration)
@@ -66,11 +71,12 @@ Stages 1 and 2 both talk to an LLM through a shared, backend-agnostic layer, des
 
 ## Requirements
 
-- Python 3.10+
-- An NVIDIA GPU with CUDA (`--device` defaults to `cuda`; pass `--device cpu` to run
-  without one, slowly)
-- An Azure OpenAI resource with a vision-capable chat deployment, or any other backend
-  from [LLM Backbone](#llm-backbone)
+- Python 3.10, 3.11, or 3.12
+- An NVIDIA GPU with CUDA is the default. The remote-LLM pipeline supports
+  `--device cpu`, but DAM generation and PointTransformer inference require CUDA.
+- For `samgpt.py`: an Azure OpenAI resource with a vision-capable chat deployment, or
+  another image-capable backend from [LLM Backbone](#llm-backbone)
+- For `samdamcoords.py`: the local DAM-3B checkpoint (no remote LLM credentials needed)
 - For SAM 3 only: a Hugging Face account with approved access to the gated weights (see
   [Getting the weights](#getting-the-weights))
 
@@ -91,29 +97,42 @@ and enables the git hook in one step:
 make install-dev
 ```
 
-Both targets are thin wrappers, so the raw equivalents work too:
+The targets run:
 
 | target | runs |
 | --- | --- |
-| `make install` | `pip install -e .` |
-| `make install-dev` | `pip install -e ".[dev]"` then `pre-commit install` |
+| `make install` | upgrade pip, then `pip install -r requirements.txt` |
+| `make install-dev` | `make install`, then `pip install -e ".[dev]"` and `pre-commit install` |
 
-### Install segmentation models
+The editable package metadata does not declare the runtime dependency stack, so
+`pip install -e .` by itself is not a replacement for `make install`.
 
-Checkpoints are downloaded by `scripts/install_models.py` into `models/`. `samgpt.py`
-currently builds a SAM 3 model, whose weights are gated and need a Hugging Face token:
+### Install model checkpoints
+
+Checkpoints are downloaded by `scripts/install_models.py` into `models/`. The current
+`samgpt.py` configuration uses SAM 1 ViT-L:
 
 ```bash
-python3 scripts/install_models.py sam3
+python3 scripts/install_models.py sam_l
 ```
 
-See [Segmentation → Install script](#install-script) for the other models and the full set
-of options, and [Getting the weights](#getting-the-weights) for the SAM 3 access steps.
+The local DAM pipeline uses MobileSAM plus DAM-3B:
+
+```bash
+python3 scripts/install_models.py mobile_sam dam_3b
+```
+
+See [Segmentation → Install script](#install-script) for the full model list, and
+[Getting the weights](#getting-the-weights) only if you opt into gated SAM 3.
 
 ### Configure the `.env` file
 
-Credentials are read from environment variables via `python-dotenv`. Create a `.env` file
-in the project root (it is git-ignored):
+Credentials are read from environment variables via `python-dotenv`. Copy the checked-in
+template to the project root (the resulting `.env` is git-ignored):
+
+```bash
+cp .env.example .env
+```
 
 ```dotenv
 # .env
@@ -126,42 +145,44 @@ HF_TOKEN=<your-hugging-face-token>
 |-------------------------|--------------------------------------------------------|---------------------------------------------------|
 | `AZURE_OPENAI_ENDPOINT` | [LLM/LLMAzureOpenAI/](LLM/LLMAzureOpenAI/LLMAzureOpenAI.py) | Base URL of your Azure OpenAI resource        |
 | `AZURE_OPENAI_API_KEY`  | [LLM/LLMAzureOpenAI/](LLM/LLMAzureOpenAI/LLMAzureOpenAI.py) | API key for that resource                     |
-| `HF_TOKEN`              | [scripts/install_models.py](scripts/install_models.py) | Hugging Face token, only needed to download SAM 3 |
+| `HF_TOKEN`              | Hugging Face tooling                                    | Required for gated SAM 3; optional for public model downloads |
 
 Those two Azure names are not hardcoded — the YAML config defines which variables to read, so
 a different backend means different variables. See [LLM Backbone](#llm-backbone).
 
-`HF_TOKEN` is optional: it is read only when downloading the gated `sam3.pt`, and only when
-no `hf auth login` token is already stored. See
-[Getting the weights](#getting-the-weights).
+`HF_TOKEN` is not needed for the default SAM or DAM checkpoints. It is required for gated
+`sam3.pt` unless `hf auth login` already stored a token. See [Getting the
+weights](#getting-the-weights).
 
-Both `samgpt.py` and [LLM/llm_base.py](LLM/llm_base.py) load the environment variables from
-the `.env` file that sits in the root. Two flags are made available from `samgpt.py`:
+Both pipeline scripts configure [LLM/llm_base.py](LLM/llm_base.py) to load environment
+variables from the root `.env`. They share these flags:
 
 | flag | effect |
 | ------ | -------- |
 | *(none)* | the project root's `.env` is used |
-| `--env-file other.env` | `other.env` is read instead by `samgpt.py` **and** by the LLM backends |
+| `--env-file other.env` | `other.env` is read instead by the pipeline and any LLM backend |
 | `--no-env-file` | no file is read at all; only the shell environment is used |
 
 ## Code Structure
 
-- `samgpt.py` - main pipeline: segmentation, LLM labeling, RGB-D coordinate mapping, and JSON outputs. The segmentation model and the LLM config are chosen here; the LLM one is overridable with `--llm-config`.
+- `samgpt.py` - remote-LLM pipeline: segmentation, LLM labeling, RGB-D coordinate mapping, and JSON outputs. The segmentation model is selected in the script; the LLM is overridable with `--llm-config`.
+- `samdamcoords.py` - local equivalent that replaces the remote LLM with DAM-3B. Its default MobileSAM checkpoint leaves enough VRAM for the 7.1 GB annotator.
 - `segmentation/` - `SegmentationModel` base class, `SAMModel` (SAM 1, MobileSAM, SAM 2 and SAM 2.1) and `FastSAMModel`, all run through Ultralytics to produce a background mask and per-object crops. `SAM3Model` sits alongside them and works differently: a VLM names the things in the scene and SAM 3 segments those concepts, so its masks arrive already labelled.
-- `scene_understanding/` - `GPTAnnotator`, sends each crop plus the full scene to a vision LLM for a tag + description. The backend is whichever one the YAML config selects, not Azure specifically.
+- `scene_understanding/` - the shared `Annotator` interface, remote `GPTAnnotator`, and local mask-based `DAMAnnotator`.
 - `LLM/` - backend-agnostic LLM layer (`BaseLLM`, one package per provider, YAML configs in `LLM/conf/`), plus `LLM/examples/SAM3/concept_prompts.yaml`, the phrasing examples used to steer SAM 3's concepts.
 - `mapping/` - RGB-D camera calibration (hardcoded Femto Mega intrinsics) and depth-to-color projection utilities.
 - `aruco/` - ArUco marker detection, pose estimation, camera/config YAML files, and marker generation.
 - `evaluation/` - matching, metrics, depth correlation, and result visualization.
 - `utility/` - shared logging helpers (compact console + rotating file output, via `loguru`).
-- `models/` - local model checkpoints, including the SAM checkpoint expected at `models/sam/sam_*.pt` and, for SAM 3, `models/sam/sam3.pt`.
+- `models/` - local model checkpoints, including SAM under `models/sam/`, DAM under `models/dam/`, and Open3D-ML models in their own subdirectories.
 - `scripts/install_models.py` - downloads the checkpoints into `models/` (see [Install script](#install-script)).
 - `scripts/PBS/` - cluster job scripts (`generation.sh`, `evaluation.sh`, `aruco_detector.sh`).
 - `.dev-config/` - Ruff and Pyright settings, referenced from `pyproject.toml` (see [Development](#development)).
 
 ## LLM Backbone
 
-Everything that talks to a language model goes through [LLM/](LLM/).
+The configurable remote backends used by `GPTAnnotator` and `SAM3Model` go through
+[LLM/](LLM/). The local `DAMAnnotator` loads DAM directly and does not use this layer.
 
 - [`LLM/llm_base.py`](LLM/llm_base.py) — `BaseLLM`, the interface every backend implements.
   The public surface is `from_config`, `query(message, images=...)` and `prepare`; a
@@ -174,8 +195,8 @@ Everything that talks to a language model goes through [LLM/](LLM/).
 - [`LLM/llm_factory.py`](LLM/llm_factory.py) — `create_llm(config_file)`, which picks the
   class. An explicit `PROVIDER` key wins; otherwise the provider is inferred from the
   config.
-- `LLM/<Provider>/` — one package per backend: `azure_openai`, `openai`, `anthropic`,
-  `gemini`, `glm`, `huggingface`, `vllm`.
+- `LLM/LLM<Provider>/` — one package per backend: Azure OpenAI, OpenAI, Anthropic,
+  Gemini, GLM, Hugging Face, and vLLM.
 - [`LLM/conf/`](LLM/conf/) — one YAML file per model, containing all the necessary configuration.
 
 **The YAML file carries everything the model needs**, including which environment variables
@@ -220,8 +241,9 @@ returns the concept each mask was found by — see [SAM 3](#sam-3).
 ### Install script
 
 Checkpoints are fetched by [scripts/install_models.py](scripts/install_models.py) into
-`models/`. It only uses the standard library, so it can be run before `make install`, and
-an interrupted download resumes where it stopped.
+`models/`. Run `make install` first: the installer uses the project's logging and dotenv
+packages, plus `huggingface-hub` for multi-file repositories such as DAM-3B. An interrupted
+download resumes where it stopped.
 
 ```bash
 python3 scripts/install_models.py sam3 sam_h   # download by name
@@ -229,6 +251,9 @@ python3 scripts/install_models.py --list       # show what is available
 python3 scripts/install_models.py --all        # download everything
 python3 scripts/install_models.py              # choose interactively
 ```
+
+`--all` includes the roughly 7.1 GB DAM-3B repository and every public checkpoint. It
+skips gated SAM 3 when no Hugging Face token is available.
 
 Ultralytics fetches its own checkpoints on first use if they are missing, so for those the
 script is optional — `SAMModel("sam2.1_l.pt")` works with no setup. Note that Ultralytics
@@ -261,8 +286,8 @@ Docs: [SAM](https://docs.ultralytics.com/models/sam/),
 
 | model             | key / file             | size     | downloaded from |
 |-------------------|------------------------|----------|-----------------|
-| ViT-H (default)   | `sam_h.pt`             | ~2.4 GB  | [Meta](https://github.com/facebookresearch/segment-anything) |
-| ViT-L             | `sam_l.pt`             | ~1.2 GB  | [Ultralytics](https://github.com/ultralytics/assets/releases/tag/v8.4.0) |
+| ViT-H             | `sam_h.pt`             | ~2.4 GB  | [Meta](https://github.com/facebookresearch/segment-anything) |
+| ViT-L (`samgpt.py` default) | `sam_l.pt`   | ~1.2 GB  | [Ultralytics](https://github.com/ultralytics/assets/releases/tag/v8.4.0) |
 | ViT-B             | `sam_b.pt`             | ~360 MB  | [Ultralytics](https://github.com/ultralytics/assets/releases/tag/v8.4.0) |
 | MobileSAM         | `mobile_sam.pt`        | ~39 MB   | [Ultralytics](https://github.com/ultralytics/assets/releases/tag/v8.4.0) |
 
@@ -362,8 +387,8 @@ cannot fetch it on first use the way it fetches the SAM 2 and FastSAM checkpoint
 one-off steps:
 
 1. **Request access.** Sign in to [huggingface.co](https://huggingface.co), open
-   [facebook/sam3](https://huggingface.co/facebook/sam3), and submit the access form (name,
-   affiliation, and accepting Meta's licence). Approval is manual, so it is not instant.
+   [facebook/sam3](https://huggingface.co/facebook/sam3), accept the conditions, and wait
+   until the account can access the repository.
 2. **Create a token.** Once approved, go to
    [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) and create a
    token with permission to read gated repositories.
@@ -386,7 +411,7 @@ python3 scripts/install_models.py sam3
 The installer looks for `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`) in the environment and in
 `.env` first, then falls back to a stored `hf auth login`, so a machine that is already
 logged in needs no further setup. It distinguishes the two failures: no token at all, and a
-token whose account was never granted access. Please notice that `--all` skips SAM3 unless a 
+token whose account was never granted access. As noted above, `--all` skips SAM 3 when no
 token is present.
 
 > **Concept phrasing decides the mask quality**, far more than any SAM 3 setting. A phrase
@@ -403,6 +428,13 @@ token is present.
 
 ## Scene Understanding
 
+Both annotators implement
+[`Annotator.annotate`](scene_understanding/annotator.py), return the same JSON-compatible
+dictionary, and accept both crops and masks. This lets the surrounding segmentation and
+depth stages keep the same interface.
+
+### Remote vision LLM
+
 [`GPTAnnotator`](scene_understanding/gpt_annotator.py) turns the crops from segmentation
 into text. For each object it sends **two images** — the full scene and the crop — so the
 model can describe the object using the rest of the workspace as context, and place it
@@ -412,7 +444,7 @@ relative to its neighbours:
 from scene_understanding.gpt_annotator import GPTAnnotator
 
 gpt = GPTAnnotator.from_config("LLM/conf/azure_gpt52.yaml")
-image_dict = gpt.main_gpt(image, rgb_masks, bboxes)
+image_dict = gpt.annotate(image, rgb_masks, bboxes, masks=sam.last_masks)
 ```
 
 The result is one entry per mask, keyed `mask_0`, `mask_1`, …:
@@ -437,6 +469,32 @@ Two prompts live at the top of the module and are chosen by the `prompt` argumen
 A malformed or missing reply is logged and becomes a placeholder entry rather than raising,
 so one bad answer costs one object rather than the whole run. The backend is whatever
 `--llm-config` selects, and it must support images.
+
+Run this path with:
+
+```bash
+python3 samgpt.py
+```
+
+### Local Describe Anything
+
+[`DAMAnnotator`](scene_understanding/dam_annotator.py) runs NVIDIA DAM-3B locally and
+describes each binary mask in the context of the full image. It does not require an Azure
+or other remote LLM account. Download the model and the memory-conscious MobileSAM default,
+then run the dedicated pipeline:
+
+```bash
+python3 scripts/install_models.py mobile_sam dam_3b
+python3 samdamcoords.py
+```
+
+DAM-3B occupies about 7.1 GB on disk and its generation path requires CUDA. The script
+defaults to MobileSAM so both models fit on a 12 GB GPU; a larger SAM checkpoint can be
+selected by editing the model block in `samdamcoords.py` when more VRAM is available.
+`--dam-model` accepts either a local directory or a Hugging Face repository ID, and the
+generation settings are exposed through `--dam-query`, `--dam-temperature`, `--dam-top-p`,
+and `--dam-max-new-tokens`. Note that NVIDIA distributes the DAM-3B weights under its
+noncommercial model license.
 
 ## Depth estimation
 
@@ -464,23 +522,71 @@ image_dict = main_coords(image, depth_path, image_dict)
 ```
 
 The centre is the middle of the object's bounding box, and the depth is read from the
-aligned depth image at that pixel, in millimetres. `samgpt.py` writes the enriched
+aligned depth image at that pixel, in millimetres. Both pipeline scripts write the enriched
 dictionary to `<output-dir>/output_img<N>.json`.
 
 ## Useful Commands
 
-### PCD Utils
+### Main pipelines
 
-Run the main segmentation, labeling, and RGB-D coordinate pipeline:
+Run segmentation, remote-LLM labeling, and RGB-D coordinate mapping:
 
 ```bash
 python3 samgpt.py
 ```
 
+Run the same stages with local DAM-3B labeling:
+
+```bash
+python3 samdamcoords.py
+```
+
+Both scripts read numbered PNGs from the input directories and write
+`<output-dir>/output_img<N>.json`. `samgpt.py` currently stops after the first sorted RGB
+frame; `samdamcoords.py` processes the full directory.
+
+Shared options:
+
+| Flag | Default | Purpose |
+|------|---------|---------|
+| `--images-dir` | `dataset/rgb` | RGB input frames |
+| `--depth-dir` | `dataset/depth` | Matching sensor-depth frames; unused with inferred depth |
+| `--output-dir` | `output` | JSON and segmentation output directory |
+| `--env-file` | `.env` | Environment file to load |
+| `--no-env-file` | off | Use only variables already exported in the shell |
+| `--device` | `cuda` | Segmentation device: `cuda` or `cpu` |
+| `--log-level` | `DEBUG` | Accepted by both scripts, but not currently applied to the logger |
+| `--debug-masks` | off | Save every mask before filtering and log filter decisions |
+| `--view-masks` | off | Use the SAM 3 HTML viewer when the script is configured with `SAM3Model` |
+| `--depth-source` | `sensor` | `sensor`, `depth-anything-v2`, or `monocular` |
+| `--depth-model` | source-dependent | Override the inferred-depth checkpoint ID |
+| `--depth-device` | auto | Inferred-depth device, independent of segmentation |
+| `--depth-focal-length-px` | `1138.1085` | Focal length used for Depth Anything 3 metric scaling |
+| `--depth-process-res` | `504` | Depth Anything 3 processing resolution |
+
+`samgpt.py` additionally accepts `--llm-config` (default:
+`LLM/conf/azure_gpt52.yaml`). `samdamcoords.py` instead accepts `--dam-model`,
+`--dam-device`, `--dam-query`, `--dam-temperature`, `--dam-top-p`, and
+`--dam-max-new-tokens`; run either script with `--help` for the exact defaults.
+
+Inspect what the segmentation model is producing before filtering:
+
+```bash
+python3 samgpt.py --debug-masks
+```
+
+This writes overlays and individual masks under
+`<output-dir>/segmentation_outputs/debug/` and logs why each mask was kept or dropped.
+`--view-masks` is different: it writes a self-contained view of the final masks, but only
+`SAM3Model` implements that viewer. With the SAM 1 models currently configured in the two
+pipeline scripts, the flag has no output.
+
+### Depth utilities
+
 Use the indoor metric Depth Anything V2 backend instead of camera depth:
 
 ```bash
-pip install -e ".[depth-anything]"
+python3 -m pip install -e ".[depth-anything]"
 python3 samgpt.py --depth-source depth-anything-v2
 ```
 
@@ -492,9 +598,11 @@ in the RGB image plane, so they bypass Femto depth-to-colour registration.
 
 #### Monocular Depth Anything 3
 
-Depth Anything 3 is not installed by the main requirements file. From the
-PLANTORV repository root, clone it into the local `models/` folder and install
-that checkout as an editable package (`models/` is git-ignored):
+Depth Anything 3 is not installed by the main requirements file. Install the prerequisites
+from its [upstream instructions](https://github.com/ByteDance-Seed/Depth-Anything-3#-installation),
+including an `xformers` build compatible with this project's pinned PyTorch version. Then,
+from the PLANTORV repository root, clone it into the local `models/` folder and install that
+checkout as an editable package (`models/` is git-ignored):
 
 ```bash
 mkdir -p models
@@ -526,6 +634,8 @@ the matching value with `--depth-focal-length-px`; use `--depth-process-res` to
 trade inference detail for speed and memory. The `depth-anything-3` Python package
 must be installed as described by its upstream project.
 
+### Point-cloud utilities
+
 Create a coloured point cloud from a Femto Mega RGB/depth pair. The command aligns
 the raw depth frame to the RGB camera before passing both images and the calibrated
 RGB intrinsics to Open3D:
@@ -550,12 +660,14 @@ numbered from `0`, unclustered/background pixels are `-1`, and planes start at `
 
 `segment_pcd.py` selects the Open3D-ML architecture from `model.name` in the
 configuration file. The same interface therefore works with either RandLA-Net
-or PointTransformer; no model-specific command-line flag is needed. Both
-checked-in configurations use models trained on the 13 S3DIS indoor classes.
+or PointTransformer; no model-specific command-line flag is needed. Model files are not
+checked in under `models/`.
 
-RandLA-Net supports CPU and GPU inference:
+Install the supported RandLA-Net S3DIS checkpoint and matching Open3D configuration, then
+run CPU or GPU inference:
 
 ```bash
+python3 scripts/install_models.py randlanet_s3dis
 python3 segment_pcd.py \
   dataset/rgb/rgb_dataset_1.png \
   dataset/depth/depth_dataset_1.png \
@@ -567,15 +679,17 @@ python3 segment_pcd.py \
   --confidence-output results/randla_confidence.npy
 ```
 
-Use `--device cpu` instead if CUDA is unavailable. PointTransformer requires a
-CUDA-capable GPU with the Open3D/PyTorch versions from this project:
+Use `--device cpu` instead if CUDA is unavailable. PointTransformer is supported by the
+runtime but is not downloaded by `scripts/install_models.py`; supply a compatible
+configuration and checkpoint yourself. For example, if they are placed under
+`models/pointtransformer/`:
 
 ```bash
 python3 segment_pcd.py \
   dataset/rgb/rgb_dataset_1.png \
   dataset/depth/depth_dataset_1.png \
-  --config models/pointtrasformer/pointtransformer_s3dis.yml \
-  --checkpoint models/pointtrasformer/pointtransformer_s3dis_202109241350utc.pth \
+  --config models/pointtransformer/pointtransformer_s3dis.yml \
+  --checkpoint models/pointtransformer/pointtransformer_s3dis_202109241350utc.pth \
   --device gpu \
   --semantic-output results/pointtransformer_semantic.ply \
   --labels-output results/pointtransformer_labels.npy \
@@ -602,42 +716,6 @@ rotated into a gravity-aligned Z-up frame before inference; pass `--no-z-up` to
 disable that rotation. `--depth-unit-scale` and `--depth-trunc` have the same
 meaning as in the geometric point-cloud command above.
 
-Full set of flags, all optional:
-
-| Flag | Default | Purpose |
-|------|---------|---------|
-| `--images-dir` | `dataset/rgb` | RGB input frames |
-| `--depth-dir` | `dataset/depth` | Matching depth frames |
-| `--output-dir` | `output` | Where JSON and segmentation outputs are written |
-| `--llm-config` | `LLM/conf/azure_gpt52.yaml` | LLM YAML config; selects model, backend and credentials |
-| `--env-file` | `.env` | Environment file to load |
-| `--no-env-file` | off | Skip loading it, e.g. when the variables are already exported |
-| `--device` | `cuda` | `cuda` or `cpu` |
-| `--log-level` | `DEBUG` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `--view-masks` | off | Write and open an HTML page of the masks that were kept |
-| `--debug-masks` | off | Dump every mask of every pass for inspection |
-
-Inspect what the segmentation model is actually producing. This saves every mask SAM
-returns *before* any filtering to `<output-dir>/segmentation_outputs/debug/` — a numbered
-colour-coded overlay per pass plus one PNG per mask — and logs the area, bounding box, and
-the reason each mask was kept or dropped. Use it to tell "SAM never found this object"
-apart from "the area/IoU thresholds discarded it":
-
-```bash
-python3 samgpt.py --debug-masks
-```
-
-See which masks the run actually kept. This writes a single self-contained HTML page to
-`<output-dir>/segmentation_outputs/` and opens it — the outlined overlay, then one card per
-mask with its concept, area and bounding box, and a note of any concept that matched
-nothing. Unlike `--debug-masks` it shows the finished result rather than every intermediate
-pass, and because the images are embedded the page can be copied off a cluster node and
-opened anywhere:
-
-```bash
-python3 samgpt.py --view-masks
-```
-
 Generate ArUco annotations from the configured RGB/marker image folders:
 
 ```bash
@@ -649,7 +727,7 @@ python3 aruco/aruco_detector.py \
   --config_yaml aruco/config.yaml
 ```
 
-Run the evaluation after `outputs_json_labeled/` and `output_aruco/` exist:
+Run the evaluation after `output/` and `output_aruco/` exist:
 
 ```bash
 python3 -m evaluation.run_evaluation
@@ -666,7 +744,7 @@ qsub scripts/PBS/evaluation.sh
 Clean generated outputs if you want a fresh run:
 
 ```bash
-rm -rf output
+make clean_output
 ```
 
 ## Development
