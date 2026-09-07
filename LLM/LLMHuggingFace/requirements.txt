@@ -1,6 +1,9 @@
 torch
 bitsandbytes==0.47.0
-transformers<5
+# Version 5 is what recognises the image-text-to-text architectures of the local models
+# this backend loads (Qwen 3.5/3.6, Gemma 4); on 4.x their configuration cannot even be
+# parsed. It needs torch >= 2.5, which the project's requirements.txt pins accordingly.
+transformers>=5.16
 sentencepiece
 protobuf
 accelerate

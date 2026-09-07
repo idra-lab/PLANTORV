@@ -25,6 +25,10 @@ Run the whole baseline over the 151 frames of the dataset::
 Re-build the tables and figures from annotations already on disk, without querying::
 
     python3 -m evaluation.only_vlm --skip-annotation
+
+Re-read the answers of an earlier run into fresh annotations, also without querying::
+
+    python3 -m evaluation.only_vlm --rebuild-from-raw
 """
 
 import argparse
@@ -62,12 +66,15 @@ IMAGE_IDS = range(1, 152)
 # verbatim -- leading spaces included -- because the ArUco ground truth is matched by
 # name and the SAM baselines answered with exactly these strings.
 TAGS = (
-    '"Wide and large blue Lego block", "Small blue Lego block", "Yellow Lego block", '
-    '"Wide red Lego Block with 4 studs", "Green Lego block", "2x2 Blue and red Lego block", '
-    '"Tall red Lego block", " White and red box","Blue and white small box", '
-    '"Big Black Bottle","Big White bottle", "Metallic Wrench", "Orange Lego block", '
-    '"Orange small box", " White and green box", "Full robotic arm", '
-    '"Partial robotic arm", "Unknown object".'
+    '"Wide and large blue Lego block", "Small blue Lego block", "Yellow Lego block", ',
+    '"Wide red Lego Block with 4 studs", "Green Lego block", "2x2 Blue and red Lego block", ',
+    '"Tall red Lego block", "White and red box", "Blue and white small box", "Big Black Bottle", ',
+    '"Big White bottle", "Metallic Wrench", "Orange Lego block", "Orange small box", ',
+    '"White and green box", "Blue meter", "Black wallet", "Voltimeter", "Calculator", ',
+    '"Blackberry purple and white box", "Ice tea peach white and orange box", ',
+    '"Passion fruit white purple yellow box", "Raspberry pink white box", "Green cup", ',
+    '"White ping-pong", "Orange ping-pong", "End-effector with grappler", ',
+    '"Full robotic arm", "Partial robotic arm", "Unknown object".',
 )
 
 TAG_INSTRUCTIONS = f"""- "tag": ONLY one of the following: {TAGS}
@@ -80,6 +87,14 @@ TAG_INSTRUCTIONS = f"""- "tag": ONLY one of the following: {TAGS}
 FREEFORM_TAG_INSTRUCTIONS = """- "tag": an ultra-specific name for the object. For example,
   instead of "lego block", say "furthest blue lego block with 4 studs". Add the colour in
   the tag."""
+
+# The vision backends rescale an image so that its shortest side is this many pixels
+# before the model ever sees it, and the boxes come back in *that* space no matter what
+# size the prompt claims the frame is. Sending a frame that is already at that size makes
+# the space the prompt describes and the space the model sees the same one; `prepare_image`
+# and `rescale_bbox` are the two halves of that, and a frame already this small is sent
+# untouched with a scale of 1.
+VISION_SHORT_SIDE = 768
 
 PROMPT_TEMPLATE = """You will receive one image of a robotic workspace, {width} pixels wide
 and {height} pixels tall.
@@ -110,6 +125,85 @@ Do not write ```json.
 ]
 }}
 """
+
+
+def sent_size(width: int, height: int) -> tuple[int, int]:
+    """Return the size a frame of ``width`` x ``height`` is sent at.
+
+    Parameters
+    ----------
+    width : int
+        Width of the frame in pixels.
+    height : int
+        Height of the frame in pixels.
+
+    Returns
+    -------
+    tuple[int, int]
+        The size the frame is downscaled to, or its own size when it is already
+        small enough that the backend would not touch it.
+    """
+    shortest = min(width, height)
+    if shortest <= VISION_SHORT_SIDE:
+        return width, height
+    ratio = VISION_SHORT_SIDE / shortest
+    return max(1, round(width * ratio)), max(1, round(height * ratio))
+
+
+def prepare_image(image: Image.Image) -> tuple[Image.Image, tuple[float, float]]:
+    """Downscale a frame to the size the backend would rescale it to anyway.
+
+    Parameters
+    ----------
+    image : Image.Image
+        The frame to send.
+
+    Returns
+    -------
+    tuple[Image.Image, tuple[float, float]]
+        The image to send, and the per-axis factors that map a box of the answer
+        back to the pixels of ``image``. Both factors are ``1.0`` when the frame is
+        sent untouched.
+    """
+    width, height = image.size
+    target = sent_size(width, height)
+    if target == (width, height):
+        return image, (1.0, 1.0)
+    return image.resize(target, Image.Resampling.LANCZOS), (width / target[0], height / target[1])
+
+
+def rescale_bbox(
+    bbox: list[int], scale: tuple[float, float], frame_size: tuple[int, int]
+) -> list[int]:
+    """Map a box from the size the model answered in back to the frame's own pixels.
+
+    Parameters
+    ----------
+    bbox : list[int]
+        Box as ``[x_min, y_min, width, height]`` in the coordinates of the sent image.
+    scale : tuple[float, float]
+        Per-axis factors from :func:`prepare_image`.
+    frame_size : tuple[int, int]
+        Size of the original frame, which the scaled box is clamped to.
+
+    Returns
+    -------
+    list[int]
+        The box in the pixels of the original frame.
+    """
+    scale_x, scale_y = scale
+    if scale_x == 1.0 and scale_y == 1.0:
+        return bbox
+
+    x_min, y_min, box_width, box_height = bbox
+    frame_width, frame_height = frame_size
+
+    x_max = min(round((x_min + box_width) * scale_x), frame_width)
+    y_max = min(round((y_min + box_height) * scale_y), frame_height)
+    x_min = min(round(x_min * scale_x), frame_width - 1)
+    y_min = min(round(y_min * scale_y), frame_height - 1)
+
+    return [x_min, y_min, max(0, x_max - x_min), max(0, y_max - y_min)]
 
 
 def build_prompt(image: Image.Image, freeform: bool = False) -> str:
@@ -281,7 +375,13 @@ def clean_depth(value: Any) -> Optional[float]:
     return depth if depth > 0.0 else None
 
 
-def build_image_dict(objects: list[dict], width: int, height: int) -> dict:
+def build_image_dict(
+    objects: list[dict],
+    width: int,
+    height: int,
+    scale: tuple[float, float] = (1.0, 1.0),
+    frame_size: Optional[tuple[int, int]] = None,
+) -> dict:
     """Turn the objects of an answer into the dictionary the evaluation reads.
 
     The centre is the centre of the box, computed exactly as
@@ -293,15 +393,22 @@ def build_image_dict(objects: list[dict], width: int, height: int) -> dict:
     objects : list[dict]
         The objects of the answer.
     width : int
-        Width of the frame in pixels.
+        Width, in pixels, of the image the model answered about.
     height : int
-        Height of the frame in pixels.
+        Height, in pixels, of the image the model answered about.
+    scale : tuple[float, float]
+        Per-axis factors mapping the boxes of the answer back to the original frame,
+        as returned by :func:`prepare_image`. ``(1.0, 1.0)`` leaves them alone.
+    frame_size : tuple[int, int] or None
+        Size of the original frame. Defaults to ``(width, height)``, which is right
+        whenever ``scale`` is ``(1.0, 1.0)``.
 
     Returns
     -------
     dict
         One entry per object, keyed ``"mask_0"``, ``"mask_1"``, ..., each holding
-        ``"tag"``, ``"description"``, ``"bbox"`` and ``"coord_center&depth"``.
+        ``"tag"``, ``"description"``, ``"bbox"`` and ``"coord_center&depth"``. The
+        boxes are in the pixels of the original frame.
     """
     image_dict: dict[str, dict] = {}
 
@@ -310,6 +417,8 @@ def build_image_dict(objects: list[dict], width: int, height: int) -> dict:
         if bbox is None:
             logger.warning(f"Dropping an object with an unusable bbox: {entry.get('bbox')!r}")
             continue
+
+        bbox = rescale_bbox(bbox, scale, frame_size or (width, height))
 
         x_min, y_min, box_width, box_height = bbox
         center_x = (x_min + x_min + box_width) // 2
@@ -350,7 +459,13 @@ def annotate_image(llm: BaseLLM, image_path: Path, freeform: bool = False) -> tu
     image = Image.open(image_path)
     width, height = image.size
 
-    success, raw = llm.query(build_prompt(image, freeform), images=[image])
+    # The prompt states the size of the image that is actually sent, so that the boxes
+    # come back in a space this script can map to the frame rather than in whatever
+    # space the backend happened to downscale to.
+    sent, scale = prepare_image(image)
+    sent_width, sent_height = sent.size
+
+    success, raw = llm.query(build_prompt(sent, freeform), images=[sent])
 
     if not success or not raw:
         logger.error(f"No response for {image_path.name}")
@@ -366,7 +481,7 @@ def annotate_image(llm: BaseLLM, image_path: Path, freeform: bool = False) -> tu
         logger.error(f"No object in the answer for {image_path.name}")
         return {}, raw
 
-    return build_image_dict(objects, width, height), raw
+    return build_image_dict(objects, sent_width, sent_height, scale, (width, height)), raw
 
 
 def annotate(
@@ -430,6 +545,64 @@ def annotate(
         queried += 1
 
     return queried
+
+
+def rebuild_from_raw(
+    image_ids: Iterable[int], rgb_dir: Path, annotation_dir: Path, raw_dir: Path
+) -> int:
+    """Rebuild the annotations from the answers already saved under ``raw_dir``.
+
+    The raw answers are the expensive part of a run, and they stay valid when only the
+    way an answer is turned into annotations changes. Parsing them again costs nothing
+    and rewrites every ``output_img<N>.json`` from the text the model already returned.
+
+    Parameters
+    ----------
+    image_ids : Iterable[int]
+        Indices of the frames to rebuild.
+    rgb_dir : Path
+        Directory containing the RGB frames, read for their size.
+    annotation_dir : Path
+        Directory the per-frame JSON files are rewritten to.
+    raw_dir : Path
+        Directory holding the raw answers of an earlier run.
+
+    Returns
+    -------
+    int
+        How many frames were rebuilt.
+    """
+    annotation_dir.mkdir(parents=True, exist_ok=True)
+
+    rebuilt = 0
+    for image_id in image_ids:
+        raw_path = raw_dir / f"img{image_id}.txt"
+        image_path = rgb_dir / f"rgb_dataset_{image_id}.png"
+        if not raw_path.exists():
+            logger.warning(f"[MISSING] {raw_path}")
+            continue
+        if not image_path.exists():
+            logger.warning(f"[MISSING] {image_path}")
+            continue
+
+        with Image.open(image_path) as image:
+            width, height = image.size
+        sent_width, sent_height = sent_size(width, height)
+        scale = (width / sent_width, height / sent_height)
+
+        payload = extract_json(raw_path.read_text())
+        objects = as_object_list(payload) if payload is not None else []
+        if not objects:
+            logger.error(f"No object in the saved answer for {raw_path.name}")
+
+        image_dict = build_image_dict(objects, sent_width, sent_height, scale, (width, height))
+        with open(annotation_dir / f"output_img{image_id}.json", "w") as output_file:
+            json.dump(image_dict, output_file, indent=4, default=convert)
+
+        logger.info(f"{raw_path.name}: {len(image_dict)} object(s)")
+        rebuilt += 1
+
+    return rebuilt
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -506,6 +679,15 @@ def parse_arguments() -> argparse.Namespace:
         help="Do not query the model; evaluate the annotations already on disk",
     )
     parser.add_argument(
+        "--rebuild-from-raw",
+        action="store_true",
+        help=(
+            f"Do not query the model; rebuild the annotations from the answers saved in "
+            f"{RAW_SUBDIR}/ by an earlier run, then evaluate them. Use it after a change "
+            "to the way an answer is read, to avoid paying for the frames again"
+        ),
+    )
+    parser.add_argument(
         "--skip-evaluation",
         action="store_true",
         help="Only query the model, without writing the tables and the figures",
@@ -513,11 +695,18 @@ def parse_arguments() -> argparse.Namespace:
 
     args = parser.parse_args()
 
-    if not args.skip_annotation:
+    if not args.skip_annotation and not args.rebuild_from_raw:
         if not args.images_dir.is_dir():
             parser.error(f"Images directory does not exist: {args.images_dir}")
         if not args.llm_config.is_file():
             parser.error(f"LLM configuration file does not exist: {args.llm_config}")
+
+    if args.rebuild_from_raw:
+        if not args.images_dir.is_dir():
+            parser.error(f"Images directory does not exist: {args.images_dir}")
+        raw_dir = args.output_dir / RAW_SUBDIR
+        if not raw_dir.is_dir():
+            parser.error(f"No saved answers to rebuild from: {raw_dir}")
 
     if not args.skip_evaluation and not args.aruco_dir.is_dir():
         parser.error(
@@ -541,7 +730,10 @@ def main(args: argparse.Namespace) -> None:
     evaluation_dir = args.output_dir / EVALUATION_SUBDIR
     raw_dir = args.output_dir / RAW_SUBDIR
 
-    if not args.skip_annotation:
+    if args.rebuild_from_raw:
+        rebuilt = rebuild_from_raw(args.images, args.images_dir, annotation_dir, raw_dir)
+        logger.info(f"Rebuilt {rebuilt} annotation file(s) from the saved answers")
+    elif not args.skip_annotation:
         # Also tells the LLM layer which file to read, so `--env-file` reaches the backend
         # instead of it falling back to the project root's `.env`.
         configure_env(args.env_file, load=not args.no_env_file)

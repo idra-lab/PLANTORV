@@ -24,7 +24,7 @@ dev = [
 ]
 
 depth-anything = [
-    "transformers>=4.45,<5",
+    "transformers>=5.16",
 ]
 
 [tool.setuptools]

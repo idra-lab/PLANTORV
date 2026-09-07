@@ -21,9 +21,9 @@ ANNOTATION_PROMPT = """You will receive:
 1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image.
 The second image shows the object and the first one gives the context of the image.
 Your task:
-- Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
-- The tags should be ONLY one of the following ones: "Wide and large blue Lego block", "Small blue Lego block", "Yellow Lego block", "Wide red Lego Block with 4 studs", "Green Lego block", "2x2 Blue and red Lego block", "Tall red Lego block", " White and red box","Blue and white small box", "Big Black Bottle","Big White bottle", "Metallic Wrench", "Orange Lego block", "Orange small box", " White and green box", "Full robotic arm", "Partial robotic arm", "Unknown object".
-- Do not change the tags neither use other tags that are not in the list. If you are not sure about the tag, use "Unknown object". For the detection, you can use the context of the whole image.
+- Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the right or next to another object.
+- The tags should be ONLY one of the following ones: "Wide and large blue Lego block", "Small blue Lego block", "Yellow Lego block", "Wide red Lego Block with 4 studs", "Green Lego block", "2x2 Blue and red Lego block", "Tall red Lego block", "White and red box", "Blue and white small box", "Big Black Bottle", "Big White bottle", "Metallic Wrench", "Orange Lego block", "Orange small box", "White and green box", "Blue meter", "Black wallet", "Voltimeter", "Calculator", "Blackberry purple and white box", "Ice tea peach white and orange box", "Passion fruit white purple yellow box", "Raspberry pink white box", "Green cup", "White ping-pong", "Orange ping-pong", "End-effector with grappler", "Full robotic arm", "Partial robotic arm", "Unknown object".
+- Do not change the tags neither use other tags that are not in the list. If you are not sure about the tag, use"Unknown object". For the detection, you can use the context of the whole image.
 Return ONLY raw JSON.
 Do not use markdown code fences.
 Do not write ```json.
@@ -38,7 +38,7 @@ FREEFORM_ANNOTATION_PROMPT = """You will receive:
 1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image.
 The second image shows the object and the first one gives the context of the image.
 Your task:
-- Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
+- Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the right or next to another object.
 - The tagging should be ultra-specific. For example, instead of saying "lego block", say "furthest blue lego block with 4 studs ". Add the colour in the tag.
 Return ONLY raw JSON.
 Do not use markdown code fences.

@@ -201,14 +201,20 @@ def run(
         if provider is None:
             if fid not in depth_images:
                 raise FileNotFoundError(f"No depth image for frame {fid} in {args.depth_dir}")
+            depth_path = depth_images[fid]
+            # The two directories are paired by the number their file names end with, not
+            # by the order they are listed in, so the pair is logged to make a frame that
+            # was measured against the wrong depth image visible.
+            logger.info(f"Frame {fid}: {image_path} + {depth_path}")
             objects = main_coords(
                 Image.open(image_path),
-                str(depth_images[fid]),
+                str(depth_path),
                 objects,
                 masks=frame.masks,
                 association=args.depth_association,
             )
         else:
+            logger.info(f"Frame {fid}: {image_path}, depth estimated from the frame")
             # The providers work on the BGR array OpenCV produces, not on the PIL image.
             color_bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
             if color_bgr is None:

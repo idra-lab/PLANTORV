@@ -42,10 +42,12 @@ the remote scene annotator uses the same layer.
 - [Requirements](#requirements)
 - [Setup](#setup)
   - [Install dependencies](#install-dependencies)
+    - [Why there are two environments](#why-there-are-two-environments)
   - [Install model checkpoints](#install-model-checkpoints)
   - [Configure the `.env` file](#configure-the-env-file)
 - [Code Structure](#code-structure)
 - [LLM Backbone](#llm-backbone)
+    - [Which backends accept images](#which-backends-accept-images)
 - [Segmentation](#segmentation)
   - [Segmentation configuration](#segmentation-configuration)
   - [Install script](#install-script)
@@ -118,23 +120,24 @@ environment, and the reason is a pin that cannot be reconciled:
 | | needs |
 | --- | --- |
 | SAM 3 (through Ultralytics, which imports `torch.nn.attention`) | torch >= 2.3 |
+| transformers 5, for the local image-capable models | torch >= 2.5 |
 | `open3d.ml.torch`, which ships precompiled PyTorch ops | torch 2.2.* exactly |
 
 Open3D 0.19 is the newest release and is built against torch 2.2.2; it raises
 `Version mismatch: Open3D needs PyTorch version 2.2.*` on anything else. No Open3D
 built against a newer torch exists, so one environment cannot satisfy both. `.venv`
-therefore holds torch 2.3.1 and everything else, and `.venv-o3dml` freezes torch 2.2.2
-for [segment_pcd.py](segment_pcd.py):
+therefore holds torch 2.5.1 and everything else, and `.venv-o3dml` freezes torch 2.2.2
+for the point-cloud work:
 
 ```bash
 make install-o3dml
 .venv-o3dml/bin/python segment_pcd.py --model randlanet ...
+.venv-o3dml/bin/python cluster_pcd.py ...
 ```
 
-Only the branch of `segment_pcd.py` that loads a RandLA-Net or PointTransformer
-checkpoint needs it. Plain Open3D is torch-independent, so `mapping/`,
-[cluster_pcd.py](cluster_pcd.py) and the geometry helpers all work in `.venv` as
-before.
+Open3D is not installed in `.venv` at all, so both point-cloud scripts live there. The
+`mapping` package resolves its Open3D-backed helpers lazily, so the pipeline stages, the
+depth estimators and the evaluation all import and run without it.
 
 ### Install model checkpoints
 
@@ -220,7 +223,8 @@ The configurable remote backends used by `GPTAnnotator` and `SAM3Model` go throu
   The public surface is `from_config`, `query(message, images=...)` and `prepare`; a
   backend fills in how to build its client, send messages and read the reply. Backends that
   accept images set `SUPPORTS_IMAGES = True`, which both the annotator and `SAM3Model`
-  require and check at construction. `configure_env(path, load=...)` in `llm_base` — chooses
+  require and check at construction — see [Which backends accept
+  images](#which-backends-accept-images). `configure_env(path, load=...)` in `llm_base` — chooses
   the environment file the whole layer reads. Every stage script calls it so `--env-file`
   and `--no-env-file` reach the backends;
   see [Configure the `.env` file](#configure-the-env-file).
@@ -230,6 +234,34 @@ The configurable remote backends used by `GPTAnnotator` and `SAM3Model` go throu
 - `LLM/LLM<Provider>/` — one package per backend: Azure OpenAI, OpenAI, Anthropic,
   Gemini, GLM, Hugging Face, and vLLM.
 - [`LLM/conf/`](LLM/conf/) — one YAML file per model, containing all the necessary configuration.
+
+#### Which backends accept images
+
+The annotator and SAM 3 both need an image-capable backend and check for one at
+construction, so this decides which configurations can be used for either.
+
+| backend | images | how the image travels |
+| --- | --- | --- |
+| Azure OpenAI, OpenAI, Anthropic, Gemini, GLM | yes | base64 in the request |
+| Hugging Face | **per model** | the model's `AutoProcessor` renders it into the prompt |
+| vLLM | no | the in-process engine is fed one flattened prompt string |
+
+The Hugging Face backend is the only one whose answer depends on the checkpoint, since
+the same class serves `LlamaForCausalLM` and `Qwen3_5MoeForConditionalGeneration` alike.
+It reads the model configuration in `_setup` — a small file, not the weights, because the
+annotators ask the question before anything is loaded — and treats a vision tower or an
+image-text-to-text architecture as the answer. Put `SUPPORTS_IMAGES` in the YAML to settle
+it by hand when the configuration cannot be reached, for instance offline.
+
+A model that takes images is loaded through `AutoModelForImageTextToText` with its
+`AutoProcessor`, and messages carrying an image go to `processor.apply_chat_template`
+rather than being flattened to a string. Text-only exchanges keep the old path, whatever
+the model.
+
+The vLLM backend flattens every exchange into a single prompt string for the in-process
+engine, so an image cannot survive the trip. To run a local multimodal model through vLLM,
+serve it with vLLM's OpenAI-compatible server and point the OpenAI backend at it with
+`BASE_URL`: that backend already carries images.
 
 **The YAML file carries everything the model needs**, including which environment variables
 hold the credentials, through its `ENDPOINT_ENV` and `API_KEY_NAME` keys — see
@@ -277,7 +309,7 @@ Which model runs, and everything that decides what it produces, comes from a YAM
 means pointing `--segmenter-config` at another file:
 
 ```bash
-python3 segmentation.py --segmenter-config segmentation/conf/fastsam_s.yaml
+python3 segmentation.py --segmenter-config segmentation/conf/fastsam-s.yaml
 ```
 
 | key | meaning |

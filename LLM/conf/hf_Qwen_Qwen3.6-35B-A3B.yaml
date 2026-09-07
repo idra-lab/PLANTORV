@@ -1,5 +1,11 @@
 
 
+# Image-text-to-text (Qwen3_5MoeForConditionalGeneration), so the annotator accepts it:
+# the backend reads that from the model configuration and sets SUPPORTS_IMAGES itself.
+#
+# It needs transformers >= 5, which knows the `qwen3_5_moe` model type; on 4.57 the
+# configuration cannot even be parsed. It is also a 35B mixture of experts: at 4-bit it
+# wants roughly 20 GB, so QUANTIZE below is what decides whether it fits the card.
 PROVIDER: "huggingface"
 MODEL_NAME: "Qwen/Qwen3.6-35B-A3B"
 DISABLE_SYSTEM: false

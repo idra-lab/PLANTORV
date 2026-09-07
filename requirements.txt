@@ -9,6 +9,13 @@ ultralytics>=8.4.114
 segment-anything
 opencv-python==4.10.0.84
 
+# SAM 3 tokenises its concept phrases with the OpenAI CLIP tokenizer, which ultralytics
+# does not declare: `models/sam/build_sam3.py` and `nn/text_model.py` import `clip` and,
+# on ImportError, pip-install this fork themselves. Declaring it here means the first
+# frame of a run no longer stops to clone and build a wheel from GitHub. `ftfy` and its
+# `wcwidth` arrive transitively as dependencies of `clip`.
+clip @ git+https://github.com/ultralytics/CLIP.git
+
 # Describe Anything (DAM), the local annotator in scene_understanding/dam_annotator.py.
 # NVIDIA does not publish it on PyPI, so it is installed straight from the repository.
 # The package it installs is called `dam`.
@@ -25,31 +32,40 @@ huggingface-hub
 # requirements.txt selects the exact CUDA-enabled builds.
 # Do not put CUDA index URLs or +cu121 pins here.
 # ------------------------------------------------------------------
-torch==2.3.1+cu121
-torchvision==0.18.1+cu121
-torchaudio==2.3.1+cu121
+# The floor is transformers 5, which needs torch >= 2.5: below that it disables PyTorch
+# outright and no model can be loaded. transformers 5 is in turn what recognises the
+# `qwen3_5_moe` and Gemma 4 architectures of the local image-capable models.
+torch==2.5.1+cu121
+torchvision==0.20.1+cu121
+torchaudio==2.5.1+cu121
 
 # Pinned because it is the tightest constraint in the stack: every xformers release
-# requires one exact torch version (0.0.27 -> torch 2.3.1). It arrives transitively
-# through Depth Anything 3, which asks only for an unpinned `xformers`, so without
-# this line pip is free to leave a build compiled against a different torch.
-xformers==0.0.27
+# requires one exact torch version (0.0.28.post3 -> torch 2.5.1). It arrives
+# transitively through Depth Anything 3, which asks only for an unpinned `xformers`, so
+# without this line pip is free to leave a build compiled against a different torch.
+xformers==0.0.28.post3
+
+# The local models of LLM/conf/hf_*.yaml. Version 5 is what knows the image-text-to-text
+# architectures of the Qwen 3.5/3.6 and Gemma 4 checkpoints; on 4.57 their configuration
+# cannot even be parsed. Depth Anything V2 is unaffected: AutoImageProcessor and
+# AutoModelForDepthEstimation behave the same across the major version.
+transformers==5.16.1
 
 # TensorBoard
 tensorboard==2.16.2
 
 # ------------------------------------------------------------------
-# Open3D
+# Open3D is deliberately absent.
 #
-# Geometry only in this environment. Open3D 0.19 ships precompiled PyTorch ops and
-# `open3d.ml.torch` refuses to load unless torch is 2.2.*, which the torch above is
-# not, so the learned point-cloud models of segment_pcd.py cannot run here. 0.19 is
-# the newest release and no build against a newer torch exists, so the two cannot be
-# reconciled in one environment; requirements-o3dml.txt is the environment for them.
-# Everything else -- mapping/, cluster_pcd.py, the geometry helpers of
-# segment_pcd.py -- uses plain Open3D and is unaffected.
+# Open3D 0.19 ships precompiled PyTorch ops, and `open3d.ml.torch` refuses to load
+# unless torch is 2.2.*, which the torch above is not. 0.19 is the newest release and
+# nothing is built against a newer torch, so the two cannot be reconciled here.
+# The point-cloud work therefore lives in its own environment: see
+# requirements-o3dml.txt and `make install-o3dml`.
+#
+# `mapping` imports its Open3D-backed helpers lazily, so the pipeline stages, the depth
+# estimators and the evaluation all work without it.
 # ------------------------------------------------------------------
-open3d==0.19.0
 
 # General scientific / plotting dependencies
 matplotlib

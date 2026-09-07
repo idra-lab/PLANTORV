@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from typing import Union
 
+import torch
 from PIL import Image
 
 from pipeline import artifacts, cli
@@ -98,6 +99,14 @@ def run(
             segmentation_dir, fid, image_path, crops, bboxes, model.last_masks
         )
         logger.info(f"Wrote {len(bboxes)} objects to {written}")
+
+        # The frame is finished, so nothing on the GPU is still needed. Returning
+        # the cached blocks keeps the allocator's reserve from ratcheting up to
+        # the high-water mark of the greediest frame and staying there: SAM 3
+        # asks for one block per concept in the scene, and a later frame that
+        # would otherwise fit can fail to find that block contiguous.
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 def parse_arguments() -> argparse.Namespace:
