@@ -96,6 +96,173 @@ def test_attach_object_depths_preserves_center_and_nearest_fallback() -> None:
     assert result["mask_0"]["coord_center&depth"] == [1, 1, 500.0]
 
 
+def test_attach_object_depths_defaults_to_bbox_center_when_masks_are_passed() -> None:
+    """Handing the masks over does not change what the default association returns."""
+    depth = np.asarray(
+        [[500.0, 0.0, 700.0], [0.0, 0.0, 900.0], [600.0, 800.0, 1000.0]],
+        dtype=np.float32,
+    )
+    mask = np.zeros((3, 3), dtype=bool)
+    mask[2, :] = True
+
+    result = attach_object_depths({"mask_0": {"bbox": [0, 0, 2, 2]}}, depth, masks=[mask])
+
+    assert result["mask_0"]["coord_center&depth"] == [1, 1, 500.0]
+    assert result["mask_0"]["object_depth_mm"] == 500.0
+    assert result["mask_0"]["depth_association"] == "bbox-center"
+
+
+def test_mask_median_takes_the_median_of_the_depths_under_the_mask() -> None:
+    depth = np.asarray(
+        [[100.0, 200.0, 900.0], [300.0, 400.0, 900.0], [900.0, 900.0, 900.0]],
+        dtype=np.float32,
+    )
+    mask = np.zeros((3, 3), dtype=bool)
+    mask[0:2, 0:2] = True
+    objects = {"mask_0": {"bbox": [0, 0, 2, 2]}}
+
+    result = attach_object_depths(objects, depth, masks=[mask], association="mask-median")
+
+    # The centre pixel holds 400.0; the median over the mask is (200 + 300) / 2.
+    assert result["mask_0"]["coord_center&depth"] == [1, 1, 250.0]
+    assert result["mask_0"]["object_depth_mm"] == 250.0
+    assert result["mask_0"]["depth_association"] == "mask-median"
+
+
+def test_mask_median_ignores_zero_negative_nan_and_inf_depths() -> None:
+    depth = np.asarray(
+        [[0.0, -50.0, np.nan], [np.inf, 600.0, 800.0], [1000.0, 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    mask = np.zeros((3, 3), dtype=bool)
+    mask[0:3, 0:3] = True
+    objects = {"mask_0": {"bbox": [0, 0, 2, 2]}}
+
+    result = attach_object_depths(objects, depth, masks=[mask], association="mask-median")
+
+    # Only 600, 800 and 1000 survive the validity test.
+    assert result["mask_0"]["object_depth_mm"] == 800.0
+
+
+def test_mask_median_ignores_depths_outside_the_mask() -> None:
+    depth = np.asarray(
+        [[100.0, 200.0, 300.0], [400.0, 500.0, 600.0], [700.0, 800.0, 900.0]],
+        dtype=np.float32,
+    )
+    inside = np.zeros((3, 3), dtype=bool)
+    inside[0, 0:3] = True
+    objects = {"mask_0": {"bbox": [0, 0, 2, 2]}}
+
+    result = attach_object_depths(objects, depth, masks=[inside], association="mask-median")
+
+    # The whole image would have median 500.0; the first row alone has 200.0.
+    assert result["mask_0"]["object_depth_mm"] == 200.0
+
+
+def test_mask_median_falls_back_to_bbox_center_without_valid_depth() -> None:
+    depth = np.asarray(
+        [[500.0, 0.0, 700.0], [0.0, 0.0, 900.0], [0.0, 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    empty = np.zeros((3, 3), dtype=bool)
+    empty[2, :] = True
+    objects = {"mask_0": {"bbox": [0, 0, 2, 2]}}
+
+    result = attach_object_depths(objects, depth, masks=[empty], association="mask-median")
+
+    # Identical to what bbox-center returns on the same frame.
+    assert result["mask_0"]["coord_center&depth"] == [1, 1, 500.0]
+    assert result["mask_0"]["object_depth_mm"] == 500.0
+    assert result["mask_0"]["depth_association"] == "bbox-center"
+
+
+def test_mask_median_rejects_a_mask_that_is_not_the_size_of_the_depth_image() -> None:
+    depth = np.full((3, 3), 500.0, dtype=np.float32)
+    objects = {"mask_0": {"bbox": [0, 0, 2, 2]}}
+
+    try:
+        attach_object_depths(
+            objects,
+            depth,
+            masks=[np.ones((4, 4), dtype=bool)],
+            association="mask-median",
+        )
+    except ValueError as exc:
+        assert "mask_0" in str(exc)
+        assert "(4, 4)" in str(exc)
+        assert "(3, 3)" in str(exc)
+    else:
+        raise AssertionError("attach_object_depths accepted a mask of the wrong shape")
+
+
+def test_mask_median_rejects_a_mask_count_that_does_not_match_the_objects() -> None:
+    depth = np.full((3, 3), 500.0, dtype=np.float32)
+    objects = {"mask_0": {"bbox": [0, 0, 2, 2]}, "mask_1": {"bbox": [1, 1, 2, 2]}}
+
+    try:
+        attach_object_depths(
+            objects,
+            depth,
+            masks=[np.ones((3, 3), dtype=bool)],
+            association="mask-median",
+        )
+    except ValueError as exc:
+        assert "1 masks for 2 objects" in str(exc)
+    else:
+        raise AssertionError("attach_object_depths accepted a truncated mask list")
+
+
+def test_mask_median_matches_each_mask_to_its_own_object() -> None:
+    depth = np.asarray(
+        [[100.0, 100.0, 900.0], [100.0, 100.0, 900.0], [700.0, 700.0, 700.0]],
+        dtype=np.float32,
+    )
+    first = np.zeros((3, 3), dtype=bool)
+    first[0:2, 0:2] = True
+    second = np.zeros((3, 3), dtype=bool)
+    second[2, :] = True
+    third = np.zeros((3, 3), dtype=bool)
+    third[0:2, 2] = True
+    objects = {
+        "mask_0": {"bbox": [0, 0, 2, 2]},
+        "mask_1": {"bbox": [0, 2, 3, 1]},
+        "mask_2": {"bbox": [2, 0, 1, 2]},
+    }
+
+    result = attach_object_depths(
+        objects,
+        depth,
+        masks=[first, second, third],
+        association="mask-median",
+    )
+
+    assert result["mask_0"]["object_depth_mm"] == 100.0
+    assert result["mask_1"]["object_depth_mm"] == 700.0
+    assert result["mask_2"]["object_depth_mm"] == 900.0
+
+
+def test_mask_median_requires_masks() -> None:
+    depth = np.full((3, 3), 500.0, dtype=np.float32)
+
+    try:
+        attach_object_depths({"mask_0": {"bbox": [0, 0, 2, 2]}}, depth, association="mask-median")
+    except ValueError as exc:
+        assert "requires the per-object masks" in str(exc)
+    else:
+        raise AssertionError("attach_object_depths accepted mask-median without masks")
+
+
+def test_attach_object_depths_rejects_an_unknown_association() -> None:
+    depth = np.full((3, 3), 500.0, dtype=np.float32)
+
+    try:
+        attach_object_depths({"mask_0": {"bbox": [0, 0, 2, 2]}}, depth, association="centroid")
+    except ValueError as exc:
+        assert "unknown depth association" in str(exc)
+    else:
+        raise AssertionError("attach_object_depths accepted an unknown association")
+
+
 def test_sensor_provider_matches_legacy_alignment_and_resize() -> None:
     color = np.zeros((4, 4, 3), dtype=np.uint8)
     raw_depth = np.ones((2, 2), dtype=np.uint16)

@@ -6,9 +6,6 @@ the depth sensor. This script asks a single vision LLM, once per frame, to do al
 that at the same time: to list the objects it sees, to place a bounding box around each
 of them, and to estimate how far each object is from the camera.
 
-Nothing else is used -- no segmentation model, no depth image, no depth estimator -- so
-the numbers this produces are the floor the rest of the pipeline has to beat.
-
 The artefacts are the same as the normal evaluation, so the two runs are comparable
 file by file::
 

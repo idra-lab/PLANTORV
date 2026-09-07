@@ -25,9 +25,15 @@ huggingface-hub
 # requirements.txt selects the exact CUDA-enabled builds.
 # Do not put CUDA index URLs or +cu121 pins here.
 # ------------------------------------------------------------------
-torch==2.2.2+cu121
-torchvision==0.17.2+cu121
-torchaudio==2.2.2+cu121
+torch==2.3.1+cu121
+torchvision==0.18.1+cu121
+torchaudio==2.3.1+cu121
+
+# Pinned because it is the tightest constraint in the stack: every xformers release
+# requires one exact torch version (0.0.27 -> torch 2.3.1). It arrives transitively
+# through Depth Anything 3, which asks only for an unpinned `xformers`, so without
+# this line pip is free to leave a build compiled against a different torch.
+xformers==0.0.27
 
 # TensorBoard
 tensorboard==2.16.2
@@ -35,9 +41,13 @@ tensorboard==2.16.2
 # ------------------------------------------------------------------
 # Open3D
 #
-# requirements.txt pins open3d==0.19.0.
-# Open3D 0.19 is the release intended for the PyTorch 2.2 /
-# CUDA 12.x stack.
+# Geometry only in this environment. Open3D 0.19 ships precompiled PyTorch ops and
+# `open3d.ml.torch` refuses to load unless torch is 2.2.*, which the torch above is
+# not, so the learned point-cloud models of segment_pcd.py cannot run here. 0.19 is
+# the newest release and no build against a newer torch exists, so the two cannot be
+# reconciled in one environment; requirements-o3dml.txt is the environment for them.
+# Everything else -- mapping/, cluster_pcd.py, the geometry helpers of
+# segment_pcd.py -- uses plain Open3D and is unaffected.
 # ------------------------------------------------------------------
 open3d==0.19.0
 

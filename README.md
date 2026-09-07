@@ -47,6 +47,7 @@ the remote scene annotator uses the same layer.
 - [Code Structure](#code-structure)
 - [LLM Backbone](#llm-backbone)
 - [Segmentation](#segmentation)
+  - [Segmentation configuration](#segmentation-configuration)
   - [Install script](#install-script)
   - [SAMModel](#sammodel)
     - [SAM 1](#sam-1)
@@ -74,9 +75,10 @@ the remote scene annotator uses the same layer.
 - Python 3.10, 3.11, or 3.12
 - An NVIDIA GPU with CUDA is the default. The remote-LLM pipeline supports
   `--device cpu`, but DAM generation and PointTransformer inference require CUDA.
-- For `samgpt.py`: an Azure OpenAI resource with a vision-capable chat deployment, or
-  another image-capable backend from [LLM Backbone](#llm-backbone)
-- For `samdamcoords.py`: the local DAM-3B checkpoint (no remote LLM credentials needed)
+- For `annotation.py --annotator gpt`: an Azure OpenAI resource with a vision-capable chat
+  deployment, or another image-capable backend from [LLM Backbone](#llm-backbone)
+- For `annotation.py --annotator dam`: the local DAM-3B checkpoint (no remote LLM
+  credentials needed)
 - For SAM 3 only: a Hugging Face account with approved access to the gated weights (see
   [Getting the weights](#getting-the-weights))
 
@@ -103,14 +105,41 @@ The targets run:
 | --- | --- |
 | `make install` | upgrade pip, then `pip install -r requirements.txt` |
 | `make install-dev` | `make install`, then `pip install -e ".[dev]"` and `pre-commit install` |
+| `make install-o3dml` | create `.venv-o3dml` and install `requirements-o3dml.txt` into it |
 
 The editable package metadata does not declare the runtime dependency stack, so
 `pip install -e .` by itself is not a replacement for `make install`.
 
+#### Why there are two environments
+
+Everything runs in `.venv` except the learned point-cloud models. Those need a second
+environment, and the reason is a pin that cannot be reconciled:
+
+| | needs |
+| --- | --- |
+| SAM 3 (through Ultralytics, which imports `torch.nn.attention`) | torch >= 2.3 |
+| `open3d.ml.torch`, which ships precompiled PyTorch ops | torch 2.2.* exactly |
+
+Open3D 0.19 is the newest release and is built against torch 2.2.2; it raises
+`Version mismatch: Open3D needs PyTorch version 2.2.*` on anything else. No Open3D
+built against a newer torch exists, so one environment cannot satisfy both. `.venv`
+therefore holds torch 2.3.1 and everything else, and `.venv-o3dml` freezes torch 2.2.2
+for [segment_pcd.py](segment_pcd.py):
+
+```bash
+make install-o3dml
+.venv-o3dml/bin/python segment_pcd.py --model randlanet ...
+```
+
+Only the branch of `segment_pcd.py` that loads a RandLA-Net or PointTransformer
+checkpoint needs it. Plain Open3D is torch-independent, so `mapping/`,
+[cluster_pcd.py](cluster_pcd.py) and the geometry helpers all work in `.venv` as
+before.
+
 ### Install model checkpoints
 
-Checkpoints are downloaded by `scripts/install_models.py` into `models/`. The current
-`samgpt.py` configuration uses SAM 1 ViT-L:
+Checkpoints are downloaded by `scripts/install_models.py` into `models/`. The default
+segmentation configuration uses SAM 2.1 large; SAM 1 ViT-L is the other common choice:
 
 ```bash
 python3 scripts/install_models.py sam_l
@@ -154,7 +183,7 @@ a different backend means different variables. See [LLM Backbone](#llm-backbone)
 `sam3.pt` unless `hf auth login` already stored a token. See [Getting the
 weights](#getting-the-weights).
 
-Both pipeline scripts configure [LLM/llm_base.py](LLM/llm_base.py) to load environment
+Every stage script configures [LLM/llm_base.py](LLM/llm_base.py) to load environment
 variables from the root `.env`. They share these flags:
 
 | flag | effect |
@@ -165,8 +194,11 @@ variables from the root `.env`. They share these flags:
 
 ## Code Structure
 
-- `samgpt.py` - remote-LLM pipeline: segmentation, LLM labeling, RGB-D coordinate mapping, and JSON outputs. The segmentation model is selected in the script; the LLM is overridable with `--llm-config`.
-- `samdamcoords.py` - local equivalent that replaces the remote LLM with DAM-3B. Its default MobileSAM checkpoint leaves enough VRAM for the 7.1 GB annotator.
+- `segmentation.py` - first stage: segments every frame of `--input-dir` and writes the crops, boxes and masks of each object under `<output-dir>/output_segmentation`. The model, its checkpoint and its thresholds come from the YAML file of `--segmenter-config` (see [Segmentation configuration](#segmentation-configuration)).
+- `annotation.py` - second stage: reads that directory and gives every object a tag and a description, with `--annotator gpt` (remote, chosen by `--llm-config`) or `--annotator dam` (local DAM-3B).
+- `depth_estimation.py` - third stage: reads the same directory and gives every object a position and a distance, from the depth images of `--depth-dir` or from a monocular estimator.
+- `samgpt.py` - runs the three in a row into one `--output-dir`, for when nothing is being swapped.
+- `pipeline/` - what the stages share: `artifacts.py` defines the files they exchange, `cli.py` the options they have in common.
 - `segmentation/` - `SegmentationModel` base class, `SAMModel` (SAM 1, MobileSAM, SAM 2 and SAM 2.1) and `FastSAMModel`, all run through Ultralytics to produce a background mask and per-object crops. `SAM3Model` sits alongside them and works differently: a VLM names the things in the scene and SAM 3 segments those concepts, so its masks arrive already labelled.
 - `scene_understanding/` - the shared `Annotator` interface, remote `GPTAnnotator`, and local mask-based `DAMAnnotator`.
 - `LLM/` - backend-agnostic LLM layer (`BaseLLM`, one package per provider, YAML configs in `LLM/conf/`), plus `LLM/examples/SAM3/concept_prompts.yaml`, the phrasing examples used to steer SAM 3's concepts.
@@ -189,8 +221,8 @@ The configurable remote backends used by `GPTAnnotator` and `SAM3Model` go throu
   backend fills in how to build its client, send messages and read the reply. Backends that
   accept images set `SUPPORTS_IMAGES = True`, which both the annotator and `SAM3Model`
   require and check at construction. `configure_env(path, load=...)` in `llm_base` — chooses
-  the environment file the whole layer reads. `samgpt.py` calls it so `--env-file` and
-  `--no-env-file` reach the backends;
+  the environment file the whole layer reads. Every stage script calls it so `--env-file`
+  and `--no-env-file` reach the backends;
   see [Configure the `.env` file](#configure-the-env-file).
 - [`LLM/llm_factory.py`](LLM/llm_factory.py) — `create_llm(config_file)`, which picks the
   class. An explicit `PROVIDER` key wins; otherwise the provider is inferred from the
@@ -224,7 +256,7 @@ live in configuration, and switching model or provider is a matter of pointing
 `--llm-config` somewhere else:
 
 ```bash
-python3 samgpt.py --llm-config LLM/conf/gemini_2-0_flash.yaml
+python3 annotation.py --llm-config LLM/conf/gemini_2-0_flash.yaml
 ```
 
 ## Segmentation
@@ -232,11 +264,63 @@ python3 samgpt.py --llm-config LLM/conf/gemini_2-0_flash.yaml
 Every segmentation model implements `SegmentationModel`
 ([segmentation/segmentation.py](segmentation/segmentation.py)), which is two calls:
 `obtain_bg` returns the background-masked frame plus its binary mask, and `individual_mask`
-returns one cropped RGB image and bounding box per object. `samgpt.py` calls them in that
-order, so the models are interchangeable from the pipeline's point of view.
+returns one cropped RGB image and bounding box per object. `segmentation.py` calls them in
+that order, so the models are interchangeable from the pipeline's point of view.
 
 `SAM3Model` also implements them, but its real interface is `segment`, which additionally
 returns the concept each mask was found by — see [SAM 3](#sam-3).
+
+### Segmentation configuration
+
+Which model runs, and everything that decides what it produces, comes from a YAML file in
+[segmentation/conf/](segmentation/conf/), the way `LLM/conf/` selects an LLM. Swapping model
+means pointing `--segmenter-config` at another file:
+
+```bash
+python3 segmentation.py --segmenter-config segmentation/conf/fastsam_s.yaml
+```
+
+| key | meaning |
+|-----|---------|
+| `MODEL` | `sam`, `fastsam` or `sam3`. Inferred from `CHECKPOINT` when absent |
+| `CHECKPOINT` | Path of the weights |
+| `SEGMENTATION_CONFIG` | Forwarded to the backend as-is: `points_stride` for SAM, `conf`/`iou`/`imgsz` for FastSAM and SAM 3 |
+| `FILTERS` | The thresholds deciding which masks are kept |
+
+SAM 3 reads three more, since a VLM names the concepts it segments: `LLM_CONFIG_FILE`,
+`EXAMPLES_FILE` and `MERGE_GAP` (plus optional `TASK` and `CONCEPTS`).
+
+`FILTERS` is the block that matters most. The area windows and IoU cuts that decide which of
+the masks a model produced survive used to be literals inside
+[segmentation/sam_model.py](segmentation/sam_model.py) and constants in
+[segmentation/fastsam_model.py](segmentation/fastsam_model.py); they are now per-backend
+defaults (`SAMModel.DEFAULT_FILTERS`, `FastSAMModel.DEFAULT_FILTERS`) that a configuration
+overrides. Every key is optional, and a key a backend does not declare is an error rather
+than a value silently ignored — a misspelt threshold would otherwise be recorded as
+configured while changing nothing.
+
+```yaml
+# segmentation/conf/sam21_l.yaml
+MODEL: "sam"
+CHECKPOINT: "models/sam/sam2.1_l.pt"
+
+SEGMENTATION_CONFIG:
+  points_stride: 12
+
+FILTERS:
+  background_min_area_pct: 15.0     # a mask this large is scenery, not an object
+  object_min_area_pct: 0.35         # an object covers either this band...
+  object_max_area_pct: 6.5
+  object_large_area_pct: 10.0       # ...or more than this: the arm spans the frame
+  object_min_bg_iou: 0.02           # how much of it lies in the kept region
+  overlap_iou_threshold: 0.01       # above this, the smaller of two masks is dropped
+```
+
+Every run writes `segmentation_config.yaml` into its `output_segmentation/` directory: the
+values actually used, read back from the built model, so the defaults neither the file nor
+the command line set are in it too. Nothing reads that file back — it is there so two runs
+can be told apart. `annotation.py` and `depth_estimation.py` write the same kind of record,
+as `annotation_config.yaml` and `depth_config.yaml`, next to the JSON they produce.
 
 ### Install script
 
@@ -287,7 +371,7 @@ Docs: [SAM](https://docs.ultralytics.com/models/sam/),
 | model             | key / file             | size     | downloaded from |
 |-------------------|------------------------|----------|-----------------|
 | ViT-H             | `sam_h.pt`             | ~2.4 GB  | [Meta](https://github.com/facebookresearch/segment-anything) |
-| ViT-L (`samgpt.py` default) | `sam_l.pt`   | ~1.2 GB  | [Ultralytics](https://github.com/ultralytics/assets/releases/tag/v8.4.0) |
+| ViT-L              | `sam_l.pt`            | ~1.2 GB  | [Ultralytics](https://github.com/ultralytics/assets/releases/tag/v8.4.0) |
 | ViT-B             | `sam_b.pt`             | ~360 MB  | [Ultralytics](https://github.com/ultralytics/assets/releases/tag/v8.4.0) |
 | MobileSAM         | `mobile_sam.pt`        | ~39 MB   | [Ultralytics](https://github.com/ultralytics/assets/releases/tag/v8.4.0) |
 
@@ -375,7 +459,7 @@ sam = SAM3Model(create_llm("LLM/conf/azure_gpt52.yaml"), "models/sam/sam3.pt",
 masks, bboxes, labels = sam.segment(image)   # labels[i] is the concept that found masks[i]
 ```
 
-`obtain_bg` and `individual_mask` still work, so `samgpt.py` runs unchanged, but they throw
+`obtain_bg` and `individual_mask` still work, so `segmentation.py` runs unchanged, but they throw
 the labels away — `segment` is the real interface. SAM 3 needs **`ultralytics >= 8.4.114`**;
 the feature landed in 8.3.237, but `SAM3SemanticPredictor` crashed on every call until
 8.4.114. `requirements.txt` pins the working floor.
@@ -473,7 +557,7 @@ so one bad answer costs one object rather than the whole run. The backend is wha
 Run this path with:
 
 ```bash
-python3 samgpt.py
+python3 annotation.py --input-dir output/output_segmentation --output-dir output
 ```
 
 ### Local Describe Anything
@@ -481,16 +565,18 @@ python3 samgpt.py
 [`DAMAnnotator`](scene_understanding/dam_annotator.py) runs NVIDIA DAM-3B locally and
 describes each binary mask in the context of the full image. It does not require an Azure
 or other remote LLM account. Download the model and the memory-conscious MobileSAM default,
-then run the dedicated pipeline:
+then annotate a segmentation run with it:
 
 ```bash
 python3 scripts/install_models.py mobile_sam dam_3b
-python3 samdamcoords.py
+python3 segmentation.py --segmenter-config segmentation/conf/mobile_sam.yaml --output-dir output
+python3 annotation.py --annotator dam --input-dir output/output_segmentation --output-dir output
 ```
 
-DAM-3B occupies about 7.1 GB on disk and its generation path requires CUDA. The script
-defaults to MobileSAM so both models fit on a 12 GB GPU; a larger SAM checkpoint can be
-selected by editing the model block in `samdamcoords.py` when more VRAM is available.
+DAM-3B occupies about 7.1 GB on disk and its generation path requires CUDA. Segmenting with
+MobileSAM keeps both models within a 12 GB GPU when the two stages run back to back; run
+them separately, or point `--segmenter-config` at a larger checkpoint, when there is more
+VRAM to spare.
 `--dam-model` accepts either a local directory or a Hugging Face repository ID, and the
 generation settings are exposed through `--dam-query`, `--dam-temperature`, `--dam-top-p`,
 and `--dam-max-new-tokens`. Note that NVIDIA distributes the DAM-3B weights under its
@@ -512,82 +598,155 @@ reprojected into the colour frame first.
   through the colour intrinsics, and keep the points that land inside the image.
 
 `main_coords` is the entry point the pipeline uses. It takes the RGB frame, the depth frame
-and the annotation dictionary, and adds one key per object:
+and the annotation dictionary, and adds three keys per object:
 
 ```python
 from mapping.rgbd_mapper import main_coords
 
 image_dict = main_coords(image, depth_path, image_dict)
 # image_dict["mask_0"]["coord_center&depth"] == [center_x, center_y, depth_mm]
+# image_dict["mask_0"]["object_depth_mm"]    == depth_mm
+# image_dict["mask_0"]["depth_association"]  == "bbox-center"
 ```
 
-The centre is the middle of the object's bounding box, and the depth is read from the
-aligned depth image at that pixel, in millimetres. Both pipeline scripts write the enriched
-dictionary to `<output-dir>/output_img<N>.json`.
+The centre is always the middle of the object's bounding box. How the single depth value is
+obtained is selected by `--depth-association`, which reaches `attach_object_depths` (the
+function `main_coords` builds on) as its `association` argument:
+
+- `bbox-center` (default) reads the aligned depth image at the centre pixel, and falls back
+  to the smallest valid depth in a one-pixel-radius square around it when that pixel carries
+  no measurement. This is the original behaviour, so runs that do not pass the flag stay
+  reproducible.
+- `mask-median` takes the median of the depths under the object's segmentation mask, keeping
+  only the pixels that satisfy `mask & np.isfinite(depth) & (depth > 0)`. Zero, negative, NaN
+  and infinite depths are excluded. A mask that covers no valid depth at all falls back to
+  `bbox-center` for that object, which is logged at debug level.
+
+Under `mask-median`, `(center_x, center_y)` is **only the object's image-space reference
+centre**: the depth is estimated over the whole mask rather than sampled at that pixel.
+
+`coord_center&depth` is kept unchanged for backwards compatibility — the first two elements
+are still the bounding-box centre and the third is still the object's depth in millimetres,
+which is what [`evaluation/depth_correlation.py`](evaluation/depth_correlation.py) reads.
+`object_depth_mm` holds the same number under a name that does not claim where it was
+measured, and `depth_association` records which strategy actually produced it (`bbox-center`
+for an object that fell back).
+
+The masks come from `SegmentationModel.last_masks`, which `individual_mask` fills in the same
+order as the crops and boxes it returns; `segmentation.py` stores them next to the crops, and
+`depth_estimation.py` reads them back and passes them along whichever `--depth-source` is in
+use. A mask whose shape differs from the aligned depth image is an error rather than
+something to resize. The enriched objects are written to `<output-dir>/output_img<N>.json`,
+alongside the tags and descriptions `annotation.py` puts there.
+
+```python
+from mapping.rgbd_mapper import attach_object_depths
+
+image_dict = attach_object_depths(
+    image_dict,
+    aligned_depth_mm,
+    masks=sam.last_masks,
+    association="mask-median",
+)
+```
 
 ## Useful Commands
 
 ### Main pipelines
 
-Run segmentation, remote-LLM labeling, and RGB-D coordinate mapping:
+The pipeline is three scripts, each reading what the previous one left on disk:
 
 ```bash
-python3 samgpt.py
+python3 segmentation.py     --input-dir dataset/rgb --output-dir output
+python3 annotation.py       --input-dir output/output_segmentation --output-dir output
+python3 depth_estimation.py --input-dir output/output_segmentation --output-dir output
 ```
 
-Run the same stages with local DAM-3B labeling:
+Segmenting is the expensive step and only the first script does it, so trying another
+annotator or another depth backend costs one run of that stage alone:
 
 ```bash
-python3 samdamcoords.py
+python3 annotation.py --input-dir output/output_segmentation --output-dir output \
+    --llm-config LLM/conf/azure_claude-opus46.yaml
 ```
 
-Both scripts read numbered PNGs from the input directories and write
-`<output-dir>/output_img<N>.json`. `samgpt.py` currently stops after the first sorted RGB
-frame; `samdamcoords.py` processes the full directory.
+Run all three in a row when nothing is being swapped:
+
+```bash
+python3 samgpt.py --input-dir dataset/rgb --output-dir output
+```
+
+Frames are read as numbered PNGs and identified by the number their name ends with, so
+`rgb_dataset_7.png` is frame 7 in every stage. Segmentation writes the crops, boxes and
+masks of each frame under `<output-dir>/output_segmentation/frame_<N>/`; annotation and
+depth estimation each fill their own fields of `<output-dir>/output_img<N>.json`, which is
+what `evaluation/run_evaluation.py` reads. Neither of the two owns that file, so they can
+run in either order and either can run again on its own.
 
 Shared options:
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--images-dir` | `dataset/rgb` | RGB input frames |
+| `--input-dir` | stage-dependent | RGB frames for segmentation, the segmentation directory for the other two |
 | `--depth-dir` | `dataset/depth` | Matching sensor-depth frames; unused with inferred depth |
 | `--output-dir` | `output` | JSON and segmentation output directory |
 | `--env-file` | `.env` | Environment file to load |
 | `--no-env-file` | off | Use only variables already exported in the shell |
 | `--device` | `cuda` | Segmentation device: `cuda` or `cpu` |
-| `--log-level` | `DEBUG` | Accepted by both scripts, but not currently applied to the logger |
+| `--log-level` | `DEBUG` | Accepted by every script, but not currently applied to the logger |
 | `--debug-masks` | off | Save every mask before filtering and log filter decisions |
-| `--view-masks` | off | Use the SAM 3 HTML viewer when the script is configured with `SAM3Model` |
+| `--view-masks` | off | Use the SAM 3 HTML viewer, with a SAM 3 `--segmenter-config` |
 | `--depth-source` | `sensor` | `sensor`, `depth-anything-v2`, or `monocular` |
+| `--depth-association` | `bbox-center` | `bbox-center` or `mask-median`: how one depth is taken per object |
 | `--depth-model` | source-dependent | Override the inferred-depth checkpoint ID |
 | `--depth-device` | auto | Inferred-depth device, independent of segmentation |
 | `--depth-focal-length-px` | `1138.1085` | Focal length used for Depth Anything 3 metric scaling |
 | `--depth-process-res` | `504` | Depth Anything 3 processing resolution |
 
-`samgpt.py` additionally accepts `--llm-config` (default:
-`LLM/conf/azure_gpt52.yaml`). `samdamcoords.py` instead accepts `--dam-model`,
-`--dam-device`, `--dam-query`, `--dam-temperature`, `--dam-top-p`, and
-`--dam-max-new-tokens`; run either script with `--help` for the exact defaults.
+Every flag belongs to the stage that uses it, and `samgpt.py` accepts all of them.
+`annotation.py` takes `--llm-config` (default: `LLM/conf/azure_gpt52.yaml`) for
+`--annotator gpt`, and `--dam-model`, `--dam-device`, `--dam-query`, `--dam-temperature`,
+`--dam-top-p` and `--dam-max-new-tokens` for `--annotator dam`. `segmentation.py` takes
+`--segmenter-config`; run any script with `--help` for the exact defaults.
+
+Every stage writes what it was configured with next to what it produced --
+`segmentation_config.yaml` inside `output_segmentation/`, `annotation_config.yaml` and
+`depth_config.yaml` in the run directory. Nothing reads them back; they are there so that
+two runs can be told apart. See [Segmentation configuration](#segmentation-configuration).
 
 Inspect what the segmentation model is producing before filtering:
 
 ```bash
-python3 samgpt.py --debug-masks
+python3 segmentation.py --debug-masks
 ```
 
 This writes overlays and individual masks under
 `<output-dir>/segmentation_outputs/debug/` and logs why each mask was kept or dropped.
 `--view-masks` is different: it writes a self-contained view of the final masks, but only
-`SAM3Model` implements that viewer. With the SAM 1 models currently configured in the two
-pipeline scripts, the flag has no output.
+`SAM3Model` implements that viewer. With any configuration other than a SAM 3 one, the flag
+has no output.
 
 ### Depth utilities
+
+Choose how each object gets its single depth value. The strategy is independent of
+`--depth-source`, so any combination of the two works:
+
+```bash
+python3 depth_estimation.py --depth-source sensor --depth-association bbox-center
+python3 depth_estimation.py --depth-source sensor --depth-association mask-median
+python3 depth_estimation.py --depth-source depth-anything-v2 --depth-association mask-median
+```
+
+`bbox-center` is the default and reproduces earlier results; `mask-median` takes the median
+of the valid depths under the object's segmentation mask, which is more robust when the
+centre of the bounding box does not fall on the object. See
+[Depth estimation](#depth-estimation) above for what the two write into the JSON.
 
 Use the indoor metric Depth Anything V2 backend instead of camera depth:
 
 ```bash
 python3 -m pip install -e ".[depth-anything]"
-python3 samgpt.py --depth-source depth-anything-v2
+python3 depth_estimation.py --depth-source depth-anything-v2
 ```
 
 The default checkpoint is
@@ -614,7 +773,7 @@ python3 -m pip install -e models/depth-anything-3
 Then run the Depth Anything 3 monocular metric path:
 
 ```bash
-python3 samgpt.py --depth-source monocular
+python3 depth_estimation.py --depth-source monocular
 ```
 
 For a quick model smoke test on a single image, run:

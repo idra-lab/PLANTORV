@@ -39,7 +39,7 @@ from collections import Counter
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 import cv2
 import numpy as np
@@ -257,6 +257,7 @@ class SAM3Model(SegmentationModel):
         prompt: str = SCENE_INVENTORY_PROMPT,
         refinement_prompt: str = REFINEMENT_PROMPT,
         examples_file: Optional[Union[str, Path]] = DEFAULT_EXAMPLES_FILE,
+        filters: Optional[Mapping[str, float]] = None,
         **predict_kwargs: Any,
     ) -> None:
         """Initialize the SAM 3 model and the VLM that feeds it.
@@ -304,6 +305,9 @@ class SAM3Model(SegmentationModel):
         refinement_prompt : str
             Instructions sent when narrowing an ambiguous phrase. Defaults to
             :data:`REFINEMENT_PROMPT`.
+        filters : Mapping[str, float] or None
+            Overrides of :attr:`DEFAULT_FILTERS`. SAM 3 declares none: it segments what
+            it was asked for, so there is nothing to filter by size or overlap.
         examples_file : str or Path or None
             YAML file of good/bad phrasing pairs rendered into the prompt. None
             leaves the examples section empty.
@@ -319,7 +323,7 @@ class SAM3Model(SegmentationModel):
             not support images, or if ``debug_masks`` is set without a
             ``save_dir``.
         """
-        super().__init__(save_dir=save_dir)
+        super().__init__(save_dir=save_dir, filters=filters)
 
         checkpoint = str(sam3_checkpoint)
         if not checkpoint.endswith(SAM3_CHECKPOINTS):
@@ -366,6 +370,7 @@ class SAM3Model(SegmentationModel):
         # Ultralytics otherwise writes annotated copies to runs/ on every call.
         predict_kwargs["save"] = False
 
+        self.predict_kwargs = dict(predict_kwargs)
         self.predictor = SAM3SemanticPredictor(overrides=predict_kwargs)
 
         # One-entry cache of the last segmentation, so that `obtain_bg` and
@@ -472,6 +477,16 @@ class SAM3Model(SegmentationModel):
             else NO_TASK_NOTE
         )
         return self.prompt.replace("%%EXAMPLES%%", self.examples).replace("%%TASK%%", task_note)
+
+    def effective_params(self) -> Dict[str, Any]:
+        """Return the arguments forwarded to the SAM 3 predictor.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The prediction arguments, including the defaults filled in here.
+        """
+        return dict(self.predict_kwargs)
 
     def set_concepts(self, concepts: Sequence[str]) -> None:
         """Fix the phrases SAM 3 is prompted with, bypassing the VLM.

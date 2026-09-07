@@ -7,7 +7,7 @@ in one forward pass.
 
 import time
 from pathlib import Path
-from typing import Any, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union, cast
 
 import cv2
 import numpy as np
@@ -54,12 +54,25 @@ MIN_REGION_SIZE = 3500
 class FastSAMModel(SegmentationModel):
     """Perform segmentation using FastSAM via Ultralytics."""
 
+    # The module constants above, as the thresholds a configuration file can carry
+    # under FILTERS. They decide which masks survive, so a run is only reproducible
+    # if they are recorded with it; see ``segmentation/conf``.
+    DEFAULT_FILTERS = {
+        "object_min_area_pct": OBJECT_MIN_AREA_PCT,
+        "object_max_area_pct": OBJECT_MAX_AREA_PCT,
+        "border_touch_limit": BORDER_TOUCH_LIMIT,
+        "min_inside_keep_fraction": MIN_INSIDE_KEEP_FRACTION,
+        "max_contained_fraction": MAX_CONTAINED_FRACTION,
+        "min_region_size": MIN_REGION_SIZE,
+    }
+
     def __init__(
         self,
         fastsam_checkpoint: Union[str, Path] = "FastSAM-s.pt",
         device: str = "cuda",
         save_dir: Optional[Union[str, Path]] = None,
         debug_masks: bool = False,
+        filters: Optional[Mapping[str, float]] = None,
         **predict_kwargs: Any,
     ) -> None:
         """Initialize the FastSAM model.
@@ -78,6 +91,9 @@ class FastSAMModel(SegmentationModel):
         debug_masks : bool
             If True, dump every mask FastSAM returns, before any filtering, under
             ``save_dir/debug/``. Requires ``save_dir``. Default is False.
+        filters : Mapping[str, float] or None
+            Overrides of :attr:`DEFAULT_FILTERS`, the thresholds deciding which masks
+            are kept.
         predict_kwargs : dict
             Additional keyword arguments for the FastSAM prediction call. FastSAM
             has no ``points_stride``; the equivalent knobs are ``conf``, ``iou``
@@ -89,7 +105,7 @@ class FastSAMModel(SegmentationModel):
             If ``fastsam_checkpoint`` is not a FastSAM checkpoint, or if
             ``debug_masks`` is set without a ``save_dir``.
         """
-        super().__init__(save_dir=save_dir)
+        super().__init__(save_dir=save_dir, filters=filters)
 
         checkpoint = str(fastsam_checkpoint)
         if not checkpoint.endswith(FASTSAM_CHECKPOINTS):
@@ -121,6 +137,16 @@ class FastSAMModel(SegmentationModel):
         self.predict_kwargs = predict_kwargs
 
         self.model = FastSAM(checkpoint)
+
+    def effective_params(self) -> Dict[str, Any]:
+        """Return the arguments forwarded to the FastSAM prediction call.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The prediction arguments, including the defaults filled in here.
+        """
+        return dict(self.predict_kwargs)
 
     def _generate(
         self, image: np.ndarray, tag: Optional[str] = None
@@ -255,7 +281,9 @@ class FastSAMModel(SegmentationModel):
 
         # Find groups of connected non-zero pixels and drop the small ones.
         label_image = cast(np.ndarray, measure.label(mask_blur))
-        label_image = remove_small_objects(label_image > 0, min_size=MIN_REGION_SIZE)
+        label_image = remove_small_objects(
+            label_image > 0, min_size=int(self.filters["min_region_size"])
+        )
 
         label_image = erosion(label_image, disk(9))
         label_image = dilation(label_image, disk(3))
@@ -391,7 +419,8 @@ class FastSAMModel(SegmentationModel):
             if area == 0:
                 continue
             contained = any(
-                np.logical_and(masks[i], masks[j]).sum() / area > MAX_CONTAINED_FRACTION
+                np.logical_and(masks[i], masks[j]).sum() / area
+                > self.filters["max_contained_fraction"]
                 for j in keep
             )
             if not contained:
@@ -467,10 +496,10 @@ class FastSAMModel(SegmentationModel):
         for mask in all_masks:
             covered |= mask
             area_pct = mask.sum() * 100 / (H * W)
-            if area_pct > OBJECT_MAX_AREA_PCT:
+            if area_pct > self.filters["object_max_area_pct"]:
                 region_union |= mask
                 n_regions += 1
-            elif area_pct >= OBJECT_MIN_AREA_PCT:
+            elif area_pct >= self.filters["object_min_area_pct"]:
                 object_union |= mask
                 n_objects += 1
 
@@ -572,6 +601,11 @@ class FastSAMModel(SegmentationModel):
             bg_masked_rgb, tag=f"image_{idx + 1}_objects"
         )
 
+        min_pct = self.filters["object_min_area_pct"]
+        max_pct = self.filters["object_max_area_pct"]
+        border_limit = self.filters["border_touch_limit"]
+        min_inside = self.filters["min_inside_keep_fraction"]
+
         keep_region = bg_mask_bin.astype(bool)
         candidate_ids: List[int] = []
         candidates: List[np.ndarray] = []
@@ -584,13 +618,13 @@ class FastSAMModel(SegmentationModel):
             inside = np.logical_and(segment, keep_region).sum() / area if area else 0.0
             borders = self._border_touches(segment)
 
-            if area_pct < OBJECT_MIN_AREA_PCT:
-                reason = f"area {area_pct:.2f}% < {OBJECT_MIN_AREA_PCT}%"
-            elif area_pct > OBJECT_MAX_AREA_PCT:
-                reason = f"area {area_pct:.2f}% > {OBJECT_MAX_AREA_PCT}%, a region not an object"
-            elif borders >= BORDER_TOUCH_LIMIT:
+            if area_pct < min_pct:
+                reason = f"area {area_pct:.2f}% < {min_pct}%"
+            elif area_pct > max_pct:
+                reason = f"area {area_pct:.2f}% > {max_pct}%, a region not an object"
+            elif borders >= border_limit:
                 reason = f"touches {borders} image borders, spans the frame"
-            elif inside < MIN_INSIDE_KEEP_FRACTION:
+            elif inside < min_inside:
                 reason = f"only {inside:.0%} of it lies inside the kept region"
             else:
                 candidate_ids.append(i)

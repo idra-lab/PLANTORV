@@ -1,0 +1,15 @@
+MODEL: "fastsam"
+CHECKPOINT: "models/fastsam/FastSAM-s.pt"
+
+# FastSAM has no points_stride; conf, iou and imgsz are the equivalent knobs.
+SEGMENTATION_CONFIG:
+  imgsz: 1024
+  conf: 0.25
+  iou: 0.7
+
+FILTERS:
+  object_min_area_pct: 0.2
+  object_max_area_pct: 35.0
+  border_touch_limit: 3
+  min_inside_keep_fraction: 0.5
+  max_contained_fraction: 0.7

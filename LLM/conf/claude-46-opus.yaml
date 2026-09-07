@@ -7,6 +7,7 @@
 LLM_VERSION : "claude-opus-4-6"
 API_KEY_NAME : "ANTHROPIC_API_KEY"
 BASE_URL : "None"
+# The anthropic SDK dropped the sampling parameters: temperature/top_p/top_k are no longer
+# arguments of messages.create() and raise a TypeError when forwarded.
 LLM_CONFIG:
   max_tokens: 8192
-  temperature: 0.0

@@ -1,13 +1,31 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 import numpy as np
 from PIL import Image
 
 
 class SegmentationModel(ABC):
-    def __init__(self, save_dir: Optional[Union[str, Path]]) -> None:
+    """Base class of the segmentation backends.
+
+    Attributes
+    ----------
+    DEFAULT_FILTERS : Dict[str, float]
+        The thresholds that decide which of the masks the model produced are kept,
+        with the values the backend uses when the configuration sets none. They are
+        a class attribute rather than constructor arguments so that a configuration
+        file can carry them as one block, and so that what a run actually used can
+        be written next to its output; see ``segmentation/conf``.
+    """
+
+    DEFAULT_FILTERS: Dict[str, float] = {}
+
+    def __init__(
+        self,
+        save_dir: Optional[Union[str, Path]],
+        filters: Optional[Mapping[str, float]] = None,
+    ) -> None:
         """
         Abstract base class for segmentation models.
 
@@ -15,6 +33,9 @@ class SegmentationModel(ABC):
         ----------
         save_dir : str or Path or None
             Directory where the output images will be saved if not None.
+        filters : Mapping[str, float] or None
+            Overrides of :attr:`DEFAULT_FILTERS`. Only the keys the backend declares
+            are accepted.
 
         Attributes
         ----------
@@ -25,14 +46,71 @@ class SegmentationModel(ABC):
             crop-based annotator needs, but an annotator that describes a
             masked region (see ``scene_understanding/dam_annotator.py``) needs
             the masks themselves. Empty until ``individual_mask`` has run.
+        filters : Dict[str, float]
+            :attr:`DEFAULT_FILTERS` updated with what was passed in.
+
+        Raises
+        ------
+        ValueError
+            If ``filters`` holds a key the backend does not know. A misspelt
+            threshold would otherwise be recorded as configured while changing
+            nothing.
         """
         self.last_masks: list[np.ndarray] = []
+        self.filters = self.merge_filters(filters)
 
         if save_dir is not None:
             self.save_dir = Path(save_dir)
             self.save_dir.mkdir(parents=True, exist_ok=True)
         else:
             self.save_dir = None
+
+    def effective_params(self) -> Dict[str, Any]:
+        """Return the parameters actually forwarded to the underlying model.
+
+        What a backend forwards is not what it was given: the constructors fill in
+        defaults and add plumbing of their own. This reports what was really used, so
+        that the configuration written next to a run is a record rather than a copy of
+        the request.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The effective parameters. Empty for a backend that forwards none.
+        """
+        return {}
+
+    @classmethod
+    def merge_filters(cls, filters: Optional[Mapping[str, float]] = None) -> Dict[str, float]:
+        """Merge configured thresholds over the backend defaults.
+
+        Parameters
+        ----------
+        filters : Mapping[str, float] or None
+            Overrides of :attr:`DEFAULT_FILTERS`.
+
+        Returns
+        -------
+        Dict[str, float]
+            The effective thresholds.
+
+        Raises
+        ------
+        ValueError
+            If a key is not one the backend declares.
+        """
+        merged = dict(cls.DEFAULT_FILTERS)
+
+        unknown = sorted(set(filters or {}) - set(merged))
+        if unknown:
+            known = ", ".join(sorted(merged)) or "none"
+            raise ValueError(
+                f"{cls.__name__} has no filter {', '.join(unknown)}. It accepts: {known}."
+            )
+
+        merged.update(filters or {})
+
+        return merged
 
     @abstractmethod
     def obtain_bg(

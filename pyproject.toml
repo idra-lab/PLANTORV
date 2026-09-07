@@ -28,7 +28,13 @@ depth-anything = [
 ]
 
 [tool.setuptools]
-packages = ["segmentation", "scene_understanding", "mapping", "aruco", "evaluation", "utility", "LLM"]
+packages = ["segmentation", "scene_understanding", "mapping", "aruco", "evaluation", "utility", "pipeline", "LLM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# segment_pcd.py is a top-level script, not part of an installed package, so the
+# repo root has to be importable for tests that exercise it.
+pythonpath = ["."]
 
 # Linter/type-checker settings live in .dev-config/ to keep this file focused on packaging. 
 [tool.ruff]

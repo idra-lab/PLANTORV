@@ -1,0 +1,15 @@
+# Concept segmentation: the VLM of LLM_CONFIG_FILE names what is in the scene and
+# SAM 3 segments those phrases, so this file carries an LLM configuration too.
+MODEL: "sam3"
+CHECKPOINT: "models/sam/sam3.pt"
+LLM_CONFIG_FILE: "LLM/conf/azure_gpt52.yaml"
+EXAMPLES_FILE: "LLM/examples/SAM3/concept_prompts.yaml"
+
+# Constructor arguments of SAM3Model. TASK and CONCEPTS are unset here: naming
+# concepts is the VLM's job unless CONCEPTS takes it away from it.
+MERGE_GAP: 5
+
+SEGMENTATION_CONFIG:
+  imgsz: 1036
+  conf: 0.2
+  iou: 0.1

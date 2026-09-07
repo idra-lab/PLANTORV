@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from typing import Any, List, Optional, Tuple, Union, cast
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union, cast
 
 import cv2
 import numpy as np
@@ -44,12 +44,33 @@ class SAMModel(SegmentationModel):
         SAMModel("sam2.1_l.pt")  # SAM 2, downloaded on first use
     """
 
+    # What separates a background region from an object, and one object from a
+    # duplicate of it. These decide which masks survive, so a run is only reproducible
+    # if they are recorded with it; `segmentation/conf` carries them under FILTERS.
+    DEFAULT_FILTERS = {
+        # A mask covering at least this much of the frame is coarse scenery.
+        "background_min_area_pct": 15.0,
+        # An object covers either the (min, max) band, or more than `large` -- the
+        # robot arm spans much of the frame and is the reason for the second window.
+        "object_min_area_pct": 0.35,
+        "object_max_area_pct": 6.5,
+        "object_large_area_pct": 10.0,
+        # How much of a mask has to fall in the region `obtain_bg` kept.
+        "object_min_bg_iou": 0.02,
+        # Thresholds of the overlap pass that drops a mask already covered by another.
+        "overlap_iou_threshold": 0.01,
+        "overlap_iou_two_objects": 0.4,
+        "overlap_iou_max": 0.6,
+        "overlap_iou_robot": 0.01,
+    }
+
     def __init__(
         self,
         sam_checkpoint: Union[str, Path] = "sam_h.pt",
         device: str = "cuda",
         save_dir: Optional[Union[str, Path]] = None,
         debug_masks: bool = False,
+        filters: Optional[Mapping[str, float]] = None,
         **sam_kwargs: Any,
     ) -> None:
         """Initialize the SAM mask generator.
@@ -73,6 +94,9 @@ class SAMModel(SegmentationModel):
             ``save_dir/debug/``. Useful to tell apart "SAM never produced this
             object" from "the filtering in :meth:`individual_mask` discarded it".
             Requires ``save_dir``. Default is False.
+        filters : Mapping[str, float] or None
+            Overrides of :attr:`DEFAULT_FILTERS`, the thresholds deciding which masks
+            are kept.
         sam_kwargs : dict
             Additional keyword arguments for the Ultralytics "segment everything"
             pass, forwarded to ``Predictor.generate``. For example,
@@ -86,7 +110,7 @@ class SAMModel(SegmentationModel):
             If ``sam_checkpoint`` does not end with a name Ultralytics can map to
             a SAM architecture.
         """
-        super().__init__(save_dir=save_dir)
+        super().__init__(save_dir=save_dir, filters=filters)
 
         checkpoint = str(sam_checkpoint)
         if not checkpoint.endswith(SAM_CHECKPOINTS):
@@ -99,6 +123,7 @@ class SAMModel(SegmentationModel):
         if "points_stride" not in sam_kwargs:
             sam_kwargs["points_stride"] = 32
         self.generate_kwargs = sam_kwargs
+        self.device = device
 
         if debug_masks and self.save_dir is None:
             raise ValueError("debug_masks=True requires save_dir to be set.")
@@ -337,6 +362,16 @@ class SAMModel(SegmentationModel):
 
         return mask_crop, rgb_crop
 
+    def effective_params(self) -> Dict[str, Any]:
+        """Return the arguments forwarded to the Ultralytics "segment everything" pass.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The generation arguments, including the defaults filled in here.
+        """
+        return dict(self.generate_kwargs)
+
     def obtain_bg(
         self, image: Union[Image.Image, str, Path], idx: int = 0, **kwargs: Any
     ) -> Tuple[np.ndarray, np.ndarray]:
@@ -389,16 +424,19 @@ class SAMModel(SegmentationModel):
         H, W = image_np.shape[:2]
         all_masks, _ = self._generate(image_np, tag=f"image_{idx + 1}_bg")
 
-        # Keep only the masks covering at least 15 percent of the image, i.e. the
-        # coarse background regions rather than the objects standing on them.
+        # Keep only the masks covering enough of the image to be the coarse
+        # background regions rather than the objects standing on them.
+        background_pct = self.filters["background_min_area_pct"]
         union_mask = np.zeros((H, W), dtype=np.uint8)
         kept = 0
         for mask in all_masks:
             area_mask = np.sum(mask) * 100 / (H * W)
-            if area_mask >= 15:
+            if area_mask >= background_pct:
                 union_mask |= mask.astype(np.uint8)
                 kept += 1
-        logger.debug(f"BG pass: {kept}/{len(all_masks)} masks over the 15% area threshold")
+        logger.debug(
+            f"BG pass: {kept}/{len(all_masks)} masks over the {background_pct}% area threshold"
+        )
 
         masked_rgb, mask_bin = self._preprocess_mask(union_mask, image_file, idx)
         end = time.time()
@@ -534,26 +572,39 @@ class SAMModel(SegmentationModel):
         bboxes = []
         robot_ids = []
 
+        min_pct = self.filters["object_min_area_pct"]
+        max_pct = self.filters["object_max_area_pct"]
+        large_pct = self.filters["object_large_area_pct"]
+        min_iou = self.filters["object_min_bg_iou"]
+
         for i, segment in enumerate(masks_sam):
             intersection = np.logical_and(segment, bg_mask_bin)
             union = np.logical_or(segment, bg_mask_bin)
             iou = np.sum(intersection) / np.sum(union) if np.sum(union) > 0 else 0
             num_pixels = np.sum(intersection > 0)
             area_mask = num_pixels * 100 / (H * W)
-            if (0.35 < area_mask < 6.5 or area_mask > 10) and iou > 0.02:
-                if area_mask > 10:
+            plausible = min_pct < area_mask < max_pct or area_mask > large_pct
+            if plausible and iou > min_iou:
+                if area_mask > large_pct:
                     robot_ids.append(i)
                 numbered_masks.append((i, segment))
                 bboxes.append(bboxes_sam[i])
             elif self.debug_masks:
                 reason = (
-                    f"area∩bg {area_mask:.2f}% outside (0.35, 6.5) and <= 10"
-                    if not (0.35 < area_mask < 6.5 or area_mask > 10)
-                    else f"iou {iou:.4f} <= 0.02"
+                    f"area∩bg {area_mask:.2f}% outside ({min_pct}, {max_pct}) and <= {large_pct}"
+                    if not plausible
+                    else f"iou {iou:.4f} <= {min_iou}"
                 )
                 logger.debug(f"[image_{idx + 1}_objects]   mask {i:03d} dropped: {reason}")
 
-        valid = self._filter_masks_by_iou(numbered_masks, robot_ids, iou_threshold=0.01)
+        valid = self._filter_masks_by_iou(
+            numbered_masks,
+            robot_ids,
+            iou_threshold=self.filters["overlap_iou_threshold"],
+            iou_2objectthreshold=self.filters["overlap_iou_two_objects"],
+            iou_maxthreshold=self.filters["overlap_iou_max"],
+            iou_robot_threshold=self.filters["overlap_iou_robot"],
+        )
 
         masks_filtered = [numbered_masks[i] for i in valid]
         bboxes_filtered = [bboxes[i] for i in valid]

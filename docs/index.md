@@ -10,6 +10,7 @@ The pipeline runs in stages, and the sections below follow that order.
 :caption: Pipeline
 
 samgpt
+api/pipeline
 api/segmentation
 api/scene_understanding
 api/mapping

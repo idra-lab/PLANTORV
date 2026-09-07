@@ -13,6 +13,14 @@ from mapping.camera_model import (
     _project_to_pixels,
     _undistort_pixels_to_normalized,
 )
+from utility.utility import logger
+
+# How `attach_object_depths` turns the aligned depth image into one depth per object.
+# `bbox-center` samples the centre of the bounding box and is the historical behaviour,
+# so it stays the default and keeps earlier runs reproducible; `mask-median` takes the
+# median of the depths under the object's segmentation mask.
+DEPTH_ASSOCIATIONS = ("bbox-center", "mask-median")
+DEFAULT_DEPTH_ASSOCIATION = "bbox-center"
 
 
 class RGBDMapper:
@@ -283,134 +291,206 @@ class RGBDMapper:
         return float(np.min(nonzero))
 
 
-def _find_depth_and_source(
-    aligned_depth_mm: np.ndarray,
-    src_u_map: np.ndarray,
-    src_v_map: np.ndarray,
-    rgb_u: int,
-    rgb_v: int,
-    neighborhood: int,
-) -> Tuple[Optional[float], Optional[Tuple[int, int]]]:
-    """
-    Find the depth in millimeters and the corresponding source depth pixel coordinates for a given RGB pixel.
-
-    Parameters
-    ----------
-    aligned_depth_mm : np.ndarray
-        Hc x Wc float32 depth image in millimeters, aligned to RGB.
-    src_u_map : np.ndarray
-        Hc x Wc int32 map of source depth-u for each RGB pixel (-1 if invalid).
-    src_v_map : np.ndarray
-        Hc x Wc int32 map of source depth-v for each RGB pixel (-1 if invalid).
-    rgb_u : int
-        The x-coordinate (column) in the RGB image.
-    rgb_v : int
-        The y-coordinate (row) in the RGB image.
-    neighborhood : int
-        The radius of the square neighborhood to search for a valid depth value if the exact pixel has no value. A value of 0 means no neighborhood search.
-
-    Returns
-    -------
-    Tuple[Optional[float], Optional[Tuple[int, int]]]
-        A tuple containing:
-        - The depth in millimeters at the specified RGB pixel, or None if no valid depth is found within the specified neighborhood.
-        - A tuple of (source_u, source_v) coordinates in the depth image corresponding to the found depth value, or None if no valid depth is found.
-    """
-    h, w = aligned_depth_mm.shape
-    if rgb_u < 0 or rgb_u >= w or rgb_v < 0 or rgb_v >= h:
-        return None, None
-
-    d = float(aligned_depth_mm[rgb_v, rgb_u])
-    su = int(src_u_map[rgb_v, rgb_u])
-    sv = int(src_v_map[rgb_v, rgb_u])
-    if d > 0.0 and su >= 0 and sv >= 0:
-        return d, (su, sv)
-
-    if neighborhood <= 0:
-        return None, None
-
-    u0 = max(0, rgb_u - neighborhood)
-    u1 = min(w - 1, rgb_u + neighborhood)
-    v0 = max(0, rgb_v - neighborhood)
-    v1 = min(h - 1, rgb_v + neighborhood)
-
-    best_d = None
-    best_uv = None
-    for vv in range(v0, v1 + 1):
-        for uu in range(u0, u1 + 1):
-            d_val = float(aligned_depth_mm[vv, uu])
-            if d_val <= 0.0:
-                continue
-            su = int(src_u_map[vv, uu])
-            sv = int(src_v_map[vv, uu])
-            if su < 0 or sv < 0:
-                continue
-            if best_d is None or d_val < best_d:
-                best_d = d_val
-                best_uv = (su, sv)
-
-    return best_d, best_uv
-
-
-def _depth_to_colormap(depth_image: np.ndarray) -> np.ndarray:
-    """
-    Convert a single-channel depth image to a color-mapped image for visualization.
-
-    Parameters
-    ----------
-    depth_image : np.ndarray
-        HxW single-channel depth image.
-
-    Returns
-    -------
-    np.ndarray
-        HxWx3 color-mapped image suitable for visualization.
-    """
-    if depth_image.ndim != 2:
-        raise ValueError("Depth image for visualization must be single-channel")
-
-    depth_f = depth_image.astype(np.float32)
-    valid = depth_f > 0
-    vis = np.zeros_like(depth_f, dtype=np.uint8)
-    if np.any(valid):
-        vals = depth_f[valid]
-        lo = float(np.percentile(vals, 2.0))
-        hi = float(np.percentile(vals, 98.0))
-        if hi <= lo:
-            hi = lo + 1.0
-        scaled = np.clip((depth_f - lo) * (255.0 / (hi - lo)), 0, 255)
-        vis = scaled.astype(np.uint8)
-    return cv2.applyColorMap(vis, cv2.COLORMAP_JET)
-
-
 def attach_object_depths(
     dict_objects: dict,
     aligned_depth_mm: np.ndarray,
     *,
+    masks: Optional[Sequence[np.ndarray]] = None,
+    association: str = DEFAULT_DEPTH_ASSOCIATION,
     neighborhood: int = 1,
 ) -> dict:
-    """Attach RGB centre coordinates and aligned depth to detected objects."""
+    """Attach RGB centre coordinates and aligned depth to detected objects.
+
+    Two ways of turning the aligned depth image into one number per object are
+    available, selected by ``association``:
+
+    ``"bbox-center"``
+        The depth is sampled at the centre of the bounding box, falling back to
+        the smallest valid depth in a ``neighborhood``-radius square when that
+        pixel carries no measurement. This is the original behaviour and the
+        default, so existing results stay reproducible.
+    ``"mask-median"``
+        The depth is the median of the valid depth pixels covered by the
+        object's segmentation mask. Zero, negative, NaN and infinite depths are
+        excluded. When a mask covers no valid depth at all the object falls back
+        to ``"bbox-center"``.
+
+    Every object gets three keys:
+
+    - ``"coord_center&depth"``, kept for backwards compatibility, as
+      ``[cx, cy, depth_mm]``;
+    - ``"object_depth_mm"``, the same depth under a name that does not claim the
+      value was read at ``(cx, cy)``;
+    - ``"depth_association"``, the strategy that actually produced the value,
+      which is ``"bbox-center"`` for an object that fell back.
+
+    Under ``"mask-median"`` ``(cx, cy)`` is only the object's image-space
+    reference centre: the depth is estimated over the whole mask rather than
+    sampled at that pixel.
+
+    Parameters
+    ----------
+    dict_objects : dict
+        One entry per object, keyed ``"mask_0"``, ``"mask_1"``, ..., each holding
+        at least a ``"bbox"`` of ``[x_min, y_min, width, height]``.
+    aligned_depth_mm : np.ndarray
+        HxW depth image in millimetres, already registered to the RGB frame.
+    masks : Sequence[np.ndarray] or None
+        One binary mask per object, in the same order as the objects, as left in
+        ``SegmentationModel.last_masks`` by ``individual_mask``. Required by
+        ``"mask-median"`` and ignored by ``"bbox-center"``.
+    association : str
+        ``"bbox-center"`` (default) or ``"mask-median"``.
+    neighborhood : int
+        Radius of the square searched around the centre pixel when it holds no
+        valid depth. ``0`` disables the search.
+
+    Returns
+    -------
+    dict
+        The same dictionary, with the three depth keys added to every object.
+
+    Raises
+    ------
+    ValueError
+        If ``association`` is unknown, if ``neighborhood`` is negative, if
+        ``aligned_depth_mm`` is not two-dimensional, or if ``"mask-median"`` is
+        asked for without masks matching the objects in number and shape.
+    """
     if aligned_depth_mm.ndim != 2:
         raise ValueError("aligned_depth_mm must be a two-dimensional array")
     if neighborhood < 0:
         raise ValueError("neighborhood cannot be negative")
+    if association not in DEPTH_ASSOCIATIONS:
+        raise ValueError(
+            f"unknown depth association {association!r}; expected one of "
+            f"{', '.join(DEPTH_ASSOCIATIONS)}"
+        )
 
-    height, width = aligned_depth_mm.shape
-    for mask_id in dict_objects.keys():
+    object_masks: Sequence[np.ndarray] = ()
+    if association == "mask-median":
+        if masks is None:
+            raise ValueError("association 'mask-median' requires the per-object masks")
+        if len(masks) != len(dict_objects):
+            raise ValueError(
+                f"got {len(masks)} masks for {len(dict_objects)} objects; the masks must be "
+                "the ones `individual_mask` left in `last_masks`, in the same order"
+            )
+        object_masks = masks
+
+    for position, mask_id in enumerate(dict_objects.keys()):
         coords = dict_objects[mask_id]["bbox"]
         ix, iy, delta_x, delta_y = coords
         cx = (ix + ix + delta_x) // 2
         cy = (iy + iy + delta_y) // 2
 
-        depth_mm = _find_depth_at_rgb(
-            aligned_depth_mm,
-            cx,
-            cy,
-            neighborhood,
-        )
+        depth_mm: Optional[float] = None
+        used = "bbox-center"
+        if object_masks:
+            mask = object_masks[_mask_index(mask_id, position, len(object_masks))]
+            depth_mm = _median_depth_over_mask(aligned_depth_mm, mask, mask_id)
+            if depth_mm is None:
+                logger.debug(
+                    f"{mask_id}: no valid depth under the mask, falling back to bbox-center"
+                )
+            else:
+                used = "mask-median"
+
+        if depth_mm is None:
+            depth_mm = _find_depth_at_rgb(
+                aligned_depth_mm,
+                cx,
+                cy,
+                neighborhood,
+            )
+
         dict_objects[mask_id]["coord_center&depth"] = [cx, cy, depth_mm]
+        dict_objects[mask_id]["object_depth_mm"] = depth_mm
+        dict_objects[mask_id]["depth_association"] = used
 
     return dict_objects
+
+
+def _mask_index(mask_id: object, position: int, mask_count: int) -> int:
+    """Return the index in the mask list of the object stored under ``mask_id``.
+
+    The annotators key their objects ``"mask_0"``, ``"mask_1"``, ... in the order
+    of the masks, so the number in the key is the index. Anything else falls back
+    to the position of the object in the dictionary.
+
+    Parameters
+    ----------
+    mask_id : object
+        The key the object is stored under.
+    position : int
+        The position of the object in the dictionary.
+    mask_count : int
+        How many masks were passed in.
+
+    Returns
+    -------
+    int
+        The index of the mask belonging to this object.
+
+    Raises
+    ------
+    ValueError
+        If the index falls outside the mask list.
+    """
+    index = position
+    if isinstance(mask_id, str) and mask_id.startswith("mask_"):
+        suffix = mask_id[len("mask_") :]
+        if suffix.isdigit():
+            index = int(suffix)
+
+    if index < 0 or index >= mask_count:
+        raise ValueError(f"no mask for object {mask_id!r}: only {mask_count} masks were given")
+    return index
+
+
+def _median_depth_over_mask(
+    aligned_depth_mm: np.ndarray,
+    mask: np.ndarray,
+    mask_id: object,
+) -> Optional[float]:
+    """Return the median of the valid depths covered by one object mask.
+
+    The depth image is registered to the RGB frame the mask was found in, so the
+    two are compared pixel by pixel and a mask of a different size is an error
+    rather than something to resize.
+
+    Parameters
+    ----------
+    aligned_depth_mm : np.ndarray
+        HxW depth image in millimetres, registered to the RGB frame.
+    mask : np.ndarray
+        HxW binary mask of the object.
+    mask_id : object
+        The key of the object, used in the error message.
+
+    Returns
+    -------
+    Optional[float]
+        The median of the depths that are inside the mask, finite and positive,
+        or None when the mask covers none.
+
+    Raises
+    ------
+    ValueError
+        If the mask is not two-dimensional or does not have the shape of the
+        depth image.
+    """
+    mask_array = np.asarray(mask)
+    if mask_array.ndim != 2 or mask_array.shape != aligned_depth_mm.shape:
+        raise ValueError(
+            f"mask of object {mask_id!r} has shape {mask_array.shape}, expected the shape of "
+            f"the aligned depth image {aligned_depth_mm.shape}; masks and depth must come from "
+            "the same RGB frame"
+        )
+
+    selected = aligned_depth_mm[mask_array.astype(bool)]
+    valid = selected[np.isfinite(selected) & (selected > 0.0)]
+    return None if valid.size == 0 else float(np.median(valid))
 
 
 def _find_depth_at_rgb(
@@ -442,9 +522,12 @@ def main_coords(
     image_path: Union[str, Path, Image.Image, np.ndarray],
     depth_path: Union[str, Path, Image.Image, np.ndarray],
     dict_objects: dict,
+    *,
+    masks: Optional[Sequence[np.ndarray]] = None,
+    association: str = DEFAULT_DEPTH_ASSOCIATION,
 ) -> dict:
     """
-    Given the paths to an RGB image and a depth image, along with a dictionary of objects containing their bounding boxes, this function aligns the depth image to the RGB image and retrieves the depth information for each object's center pixel.
+    Given the paths to an RGB image and a depth image, along with a dictionary of objects containing their bounding boxes, this function aligns the depth image to the RGB image and retrieves the depth information for each object.
 
     Parameters
     ----------
@@ -454,11 +537,20 @@ def main_coords(
         The file path to the depth image.
     dict_objects : dict
         A dictionary where each key is an object identifier and each value is another dictionary containing at least a "bbox" key with the bounding box coordinates [x_min, y_min, width, height].
+    masks : Sequence[np.ndarray] or None
+        One binary mask per object, in the same order as the objects, as left in
+        ``SegmentationModel.last_masks``. Required by the "mask-median" association
+        and ignored by "bbox-center".
+    association : str
+        Which depth-association strategy to use; see :func:`attach_object_depths`.
 
     Returns
     -------
     dict
-        The input dictionary of objects, updated with an additional key "coord_center&depth" for each object, containing a list [center_x, center_y, depth_mm] representing the center pixel coordinates and the corresponding depth in millimeters.
+        The input dictionary of objects, updated for each object with "coord_center&depth"
+        (a list [center_x, center_y, depth_mm]), "object_depth_mm" and "depth_association".
+        Under "mask-median" the centre is only the object's image-space reference centre:
+        the depth is estimated over the mask rather than sampled at that pixel.
     """
     if isinstance(image_path, str) or isinstance(image_path, Path):
         if isinstance(image_path, str):
@@ -495,4 +587,9 @@ def main_coords(
 
     provider = SensorDepthProvider.from_frames(rgb, depth, depth_unit_scale=1.0)
     result = provider.estimate(rgb, depth)
-    return attach_object_depths(dict_objects, result.depth_mm)
+    return attach_object_depths(
+        dict_objects,
+        result.depth_mm,
+        masks=masks,
+        association=association,
+    )
