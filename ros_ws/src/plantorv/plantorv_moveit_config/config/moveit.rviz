@@ -1,0 +1,77 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+      Cell Size: 0.25
+      Plane Cell Count: 12
+      Reference Frame: world
+    - Class: rviz_default_plugins/TF
+      Enabled: false
+      Name: TF
+    - Class: moveit_rviz_plugin/PlanningScene
+      Enabled: true
+      Name: PlanningScene
+      Move Group Namespace: ""
+      Planning Scene Topic: /monitored_planning_scene
+      Scene Geometry:
+        Scene Alpha: 0.9
+        Show Scene Geometry: true
+      Robot Alpha: 0.5
+      Scene Robot:
+        Show Robot Collision: false
+        Show Robot Visual: true
+    - Class: moveit_rviz_plugin/MotionPlanning
+      Enabled: true
+      Name: MotionPlanning
+      Move Group Namespace: ""
+      MoveIt_Goal_Tolerance: 0
+      MoveIt_Planning_Attempts: 10
+      MoveIt_Planning_Time: 5
+      MoveIt_Use_Cartesian_Path: false
+      MoveIt_Allow_Replanning: false
+      Planning Group: ur_manipulator
+      Planning Scene Topic: /monitored_planning_scene
+      Robot Description: robot_description
+      Trajectory Topic: /display_planned_path
+      Planned Path:
+        Loop Animation: false
+        Show Robot Collision: false
+        Show Robot Visual: true
+        Show Trail: false
+        State Display Time: 0.05 s
+        Trajectory Topic: /display_planned_path
+      Query Goal State: true
+      Query Start State: false
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: world
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 2.2
+      Focal Point:
+        X: 0.0
+        Y: 0.15
+        Z: 1.05
+      Pitch: 0.55
+      Yaw: 1.6
+      Name: Current View
+      Target Frame: world
+Window Geometry:
+  Height: 900
+  Width: 1400
+  Displays:
+    collapsed: false

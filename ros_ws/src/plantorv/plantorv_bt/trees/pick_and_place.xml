@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!--
+  The smallest useful tree: one cube into one tray, by name.
+
+  Every node here is either a control node of BehaviorTree.CPP 4 or a leaf
+  registered by plantorv_bt, so this file also opens in Groot.
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+
+  <BehaviorTree ID="MainTree">
+    <Sequence name="pick_and_place">
+      <Home/>
+      <Log message="moving cube_1 into the blue tray"/>
+      <RetryUntilSuccessful num_attempts="3">
+        <Pick object="cube_1"/>
+      </RetryUntilSuccessful>
+      <Place target="tray_blue"/>
+      <Home/>
+    </Sequence>
+  </BehaviorTree>
+
+</root>

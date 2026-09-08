@@ -1,0 +1,27 @@
+# OMPL planners available to the planner node. RRTConnect is the default: it is
+# fast and always finds *a* path, which is what the planner's repeated-planning
+# strategy relies on -- it asks for several plans and keeps the shortest, which
+# is cheaper and more predictable here than asking one asymptotically optimal
+# planner to converge. RRTstar is kept configured for when a single optimal
+# plan is wanted instead; select it per goal through the planner's planner_id
+# parameter.
+planner_configs:
+  RRTConnect:
+    type: geometric::RRTConnect
+    range: 0.0  # 0 lets OMPL pick from the state space extent
+  RRTstar:
+    type: geometric::RRTstar
+    range: 0.0
+    goal_bias: 0.05
+    delay_collision_checking: 1
+  PRMstar:
+    type: geometric::PRMstar
+
+ur_manipulator:
+  default_planner_config: RRTConnect
+  planner_configs:
+    - RRTConnect
+    - RRTstar
+    - PRMstar
+  projection_evaluator: joints(shoulder_pan_joint,shoulder_lift_joint)
+  longest_valid_segment_fraction: 0.005

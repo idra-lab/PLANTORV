@@ -1,0 +1,60 @@
+# The one description of the workcell.
+#
+# Everything else is derived from this file: scripts/generate_world.py turns it
+# into worlds/plantorv_table.world, scene_spawner.py spawns the cubes from it,
+# world_model.py answers pose queries with it, and the URDF reads the table and
+# stand dimensions out of it. Change a number here and rerun the generator --
+# do not edit the .world by hand.
+#
+# Frame `world` sits on the floor, at the centre of the table top: x runs along
+# the long side of the table, y towards the robot, z up.
+
+frame_id: world
+
+table:
+  # Long side x short side x height. The top surface is therefore at z = 1.0.
+  size: [2.0, 1.0, 1.0]
+  color: [0.72, 0.60, 0.44, 1.0]
+
+robot:
+  # The stand stands on the table top, centred on the middle of the long side.
+  stand_size: [0.25, 0.25, 0.20]
+  stand_xy: [0.0, 0.45]
+  stand_color: [0.35, 0.35, 0.38, 1.0]
+  # Mount height of base_link above the floor: table height + stand height.
+  # Kept explicit because the planner and the URDF both need it.
+  mount_height: 1.20
+  # Yaw of the base, radians. 0 points the arm's +x along the table's +x; -pi/2
+  # turns its front towards the trays.
+  yaw: -1.5707963267948966
+
+# Both trays sit in the middle of the table, one either side of the centre.
+trays:
+  - name: tray_blue
+    xy: [-0.18, 0.08]
+    inner: [0.24, 0.18, 0.06]
+    wall: 0.015
+    color: [0.10, 0.20, 0.80, 1.0]
+  - name: tray_red
+    xy: [0.18, 0.08]
+    inner: [0.24, 0.18, 0.06]
+    wall: 0.015
+    color: [0.80, 0.10, 0.10, 1.0]
+
+# The objects to be sorted, between the robot and the trays.
+cubes:
+  size: 0.10
+  mass: 0.20
+  items:
+    - name: cube_1
+      xy: [-0.26, 0.26]
+      yaw: 0.0
+      color: [0.10, 0.35, 0.90, 1.0]
+    - name: cube_2
+      xy: [0.00, 0.26]
+      yaw: 0.35
+      color: [0.90, 0.15, 0.15, 1.0]
+    - name: cube_3
+      xy: [0.26, 0.26]
+      yaw: -0.20
+      color: [0.10, 0.35, 0.90, 1.0]

@@ -1,0 +1,43 @@
+# The planner's knobs. The distances are what make pick and place work in this
+# cell: a UR3 whose base is only 20 cm above the desk has little room over a
+# 10 cm cube, so the approach height and the clearances below are deliberately
+# small and worth revisiting if the stand or the objects change.
+planner:
+  ros__parameters:
+    planning_group: ur_manipulator
+    tool_link: tool0
+    planning_frame: world
+
+    joint_names:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+
+    # Same values as the `home` group state in the SRDF.
+    home_positions: [0.0, -1.5707963, 1.5707963, -1.5707963, -1.5707963, 0.0]
+
+    planner_id: RRTConnect
+    # Plans asked for per goal; the shortest is kept. See
+    # MoveItClient.plan_to_joint_goal for why this rather than one long search.
+    planning_attempts: 6
+    allowed_planning_time: 2.0
+
+    velocity_scaling: 0.25
+    acceleration_scaling: 0.25
+
+    # Height the tool approaches from and retreats to, straight up from the
+    # object.
+    approach_distance: 0.12
+    # Gap left between the tool frame and the top face of a grasped object.
+    tool_gap: 0.005
+    # Height above a tray's rim at which a carried object is let go.
+    drop_gap: 0.03
+
+    cartesian_step: 0.005
+    # Fraction of a straight-line move that has to be collision free for it to
+    # be used at all. Below this the planner falls back or fails loudly rather
+    # than executing a partial descent.
+    cartesian_min_fraction: 0.85

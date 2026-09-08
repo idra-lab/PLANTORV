@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>plantorv_sim</name>
+  <version>1.0.0</version>
+  <description>Gazebo workcell for PLANTORV: a UR3 on a stand over a desk, two trays and cubes</description>
+  <maintainer email="enrico.saccon@unitn.it">Enrico Saccon</maintainer>
+  <license>Apache 2.0</license>
+
+  <depend>plantorv_interfaces</depend>
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>shape_msgs</depend>
+  <depend>moveit_msgs</depend>
+  <depend>gazebo_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>python3-yaml</depend>
+
+  <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>gazebo_ros2_control</exec_depend>
+  <exec_depend>ur_description</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <exec_depend>joint_trajectory_controller</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

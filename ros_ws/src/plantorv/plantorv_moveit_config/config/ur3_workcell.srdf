@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Copyright 2025 Enrico Saccon
+  Licensed under the Apache License, Version 2.0.
+
+  The semantics MoveIt needs on top of plantorv_sim's URDF. Written by hand
+  rather than generated, because the workcell is small and the interesting part
+  (which self-collisions to ignore) is short enough to state with reasons.
+
+  The desk and the stand are part of the robot description, so they are checked
+  against the arm like any other link. That is deliberate: the arm is mounted
+  20 cm above a desk it can easily drive into, and having the planner know that
+  is most of the value of modelling the desk at all. Only the pairs that touch
+  by construction are turned off below.
+-->
+<robot name="ur3_workcell">
+
+  <group name="ur_manipulator">
+    <chain base_link="base_link" tip_link="tool0"/>
+  </group>
+
+  <!-- Matches plantorv_sim/config/initial_positions.yaml: elbow up, tool down
+       over the desk, clear of the trays. -->
+  <group_state name="home" group="ur_manipulator">
+    <joint name="shoulder_pan_joint" value="0.0"/>
+    <joint name="shoulder_lift_joint" value="-1.5707963"/>
+    <joint name="elbow_joint" value="1.5707963"/>
+    <joint name="wrist_1_joint" value="-1.5707963"/>
+    <joint name="wrist_2_joint" value="-1.5707963"/>
+    <joint name="wrist_3_joint" value="0.0"/>
+  </group_state>
+
+  <!-- The frame the fake grasp attaches objects to. -->
+  <end_effector name="tool" parent_link="tool0" group="ur_manipulator"/>
+
+  <!-- Consecutive links of the arm. -->
+  <disable_collisions link1="base_link_inertia" link2="shoulder_link" reason="Adjacent"/>
+  <disable_collisions link1="shoulder_link" link2="upper_arm_link" reason="Adjacent"/>
+  <disable_collisions link1="upper_arm_link" link2="forearm_link" reason="Adjacent"/>
+  <disable_collisions link1="forearm_link" link2="wrist_1_link" reason="Adjacent"/>
+  <disable_collisions link1="wrist_1_link" link2="wrist_2_link" reason="Adjacent"/>
+  <disable_collisions link1="wrist_2_link" link2="wrist_3_link" reason="Adjacent"/>
+  <!-- Two joints apart and geometrically unable to meet. -->
+  <disable_collisions link1="wrist_1_link" link2="wrist_3_link" reason="Never"/>
+
+  <!-- The mounting stack. These are bolted together, so they are always in
+       contact and would otherwise make every state invalid. -->
+  <disable_collisions link1="table_link" link2="stand_link" reason="Adjacent"/>
+  <disable_collisions link1="stand_link" link2="base_link_inertia" reason="Adjacent"/>
+  <!-- The shoulder turns directly above the stand, within its footprint. -->
+  <disable_collisions link1="stand_link" link2="shoulder_link" reason="Never"/>
+  <disable_collisions link1="table_link" link2="base_link_inertia" reason="Never"/>
+
+</robot>
