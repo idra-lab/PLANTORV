@@ -3,30 +3,30 @@
 set -euo pipefail
 
 SEG_MODELS=("sam21-l" "sam1-h" "fastsam-s" "mobile-sam" "sam3") # This must correspond to the names in the segmentation/conf folder
-LLM_MODELS=("azure_claude-sonnet46" "azure_gpt52") # This must correspond to the names in the LLM/conf folder
-DEPTH_METHODS=("monocular") # These are the --depth-source values, `python3 depth_estimation.py --help`.
+LLM_MODELS=("azure_gpt54-mini" "azure_gpt54-nano") # This must correspond to the names in the LLM/conf folder
+DEPTH_METHODS=("sensor" "monocular") # These are the --depth-source values, `python3 depth_estimation.py --help`.
 DEPTH_ASSOCIATION_METHODS=("bbox-center" "mask-median") # These are the methods to associate the depth with the segmentation mask, `python3 depth_estimation.py --help`.
 
 source .venv/bin/activate
 
 
-# First compute the ArUco markers for all images
-python3 aruco/aruco_detector.py \
-    --clean_dir dataset/rgb_aruco \
-    --tag_dir dataset/rgb_aruco \
-    --out_dir output_aruco \  
-    --camera_yaml aruco/camera.yaml \
-    --config_yaml aruco/config.yaml
+# # First compute the ArUco markers for all images
+# python3 aruco/aruco_detector.py \
+#     --clean_dir dataset/rgb_aruco \
+#     --tag_dir dataset/rgb_aruco \
+#     --out_dir output_aruco \  
+#     --camera_yaml aruco/camera.yaml \
+#     --config_yaml aruco/config.yaml
 
 
-# Then segment the RGB images
-for SEG_MODEL in "${SEG_MODELS[@]}"; do
-    echo "Running segmentation with model: ${SEG_MODEL}"
-    python3 segmentation.py \
-        --segmenter-config segmentation/conf/${SEG_MODEL}.yaml \
-        --input-dir dataset/rgb \
-        --output-dir results/output_segmentation_${SEG_MODEL}
-done
+# # Then segment the RGB images
+# for SEG_MODEL in "${SEG_MODELS[@]}"; do
+#     echo "Running segmentation with model: ${SEG_MODEL}"
+#     python3 segmentation.py \
+#         --segmenter-config segmentation/conf/${SEG_MODEL}.yaml \
+#         --input-dir dataset/rgb \
+#         --output-dir results/output_segmentation_${SEG_MODEL}
+# done
 
 
 # Then compute the depth estimation for all images

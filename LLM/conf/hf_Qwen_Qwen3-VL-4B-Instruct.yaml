@@ -1,0 +1,27 @@
+
+
+PROVIDER: "huggingface"
+# Local checkout under models/ (git-ignored), not a Hub id: the weights are read from
+# disk, so CACHE_DIR plays no part and no download happens at load time. Relative to the
+# repository root, like the dataset paths the pipeline stages take.
+MODEL_NAME: "models/huggingface/Qwen3-VL-4B-Instruct"
+DISABLE_SYSTEM: false
+DEVICE: "cuda"
+# 4.44B parameters: ~4.9 GB of weights at 8 bits, which leaves room for the vision
+# tokens of a 1365x768 frame on a 12 GB card. Drop to 4 for ~2.7 GB.
+QUANTIZE: 8
+# One CUDA device on this machine; DEVICE_MAP stays "auto" because the quantized load
+# path places the model with accelerate either way.
+MULTI_GPU: false
+DEVICE_MAP: "auto"
+
+LLM_CONFIG:
+  max_tokens: 8192
+  temperature: 0.0
+  top_p: 1.0
+  frequency_penalty: 0.0
+  presence_penalty: 0.0
+  stop:
+    - "USER:"
+    - "SYSTEM:"
+  seed: 42
