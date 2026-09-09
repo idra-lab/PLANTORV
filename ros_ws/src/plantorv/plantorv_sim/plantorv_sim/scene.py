@@ -362,8 +362,7 @@ class Scene:
         own stand.
         """
         models = "".join(
-            self._model_element(obj, static=True, indent="    ")
-            for obj in self.of_type(TYPE_TRAY)
+            self._model_element(obj, static=True, indent="    ") for obj in self.of_type(TYPE_TRAY)
         )
         return _WORLD_TEMPLATE.format(models=models)
 

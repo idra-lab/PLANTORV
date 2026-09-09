@@ -95,7 +95,9 @@ class ActionLibrary:
         Attaches or releases an object; raises on failure.
     """
 
-    def __init__(self, node, moveit: MoveItClient, params: Dict, look_up: Callable, grasp: Callable):
+    def __init__(
+        self, node, moveit: MoveItClient, params: Dict, look_up: Callable, grasp: Callable
+    ):
         self.node = node
         self.moveit = moveit
         self.params = params
@@ -105,7 +107,9 @@ class ActionLibrary:
 
     # -- the actions -----------------------------------------------------
 
-    def execute(self, action_name: str, target: str, pose: Optional[Pose], report: Callable) -> ActionOutcome:
+    def execute(
+        self, action_name: str, target: str, pose: Optional[Pose], report: Callable
+    ) -> ActionOutcome:
         """Run one known action. Raises PlanningError if it cannot."""
         handler = self.DISPATCH.get(action_name)
         if handler is None:
@@ -173,7 +177,9 @@ class ActionLibrary:
             raise PlanningError("place needs a target container or a pose")
 
         report("locate", 0.0)
-        release = pose if pose is not None and not target else self._release_pose(self._require(target))
+        release = (
+            pose if pose is not None and not target else self._release_pose(self._require(target))
+        )
         above = self._transit_over(release)
 
         report("approach", 0.2)

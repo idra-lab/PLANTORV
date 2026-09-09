@@ -64,7 +64,9 @@ def generate_launch_description():
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
             " ",
-            PathJoinSubstitution([FindPackageShare("plantorv_sim"), "urdf", "ur3_workcell.urdf.xacro"]),
+            PathJoinSubstitution(
+                [FindPackageShare("plantorv_sim"), "urdf", "ur3_workcell.urdf.xacro"]
+            ),
             " ur_type:=",
             LaunchConfiguration("ur_type"),
             " sim_gazebo:=true",
@@ -102,9 +104,16 @@ def generate_launch_description():
         executable="spawn_entity.py",
         output="screen",
         arguments=[
-            "-topic", "robot_description",
-            "-entity", "ur3_workcell",
-            "-x", "0.0", "-y", "0.0", "-z", "0.0",
+            "-topic",
+            "robot_description",
+            "-entity",
+            "ur3_workcell",
+            "-x",
+            "0.0",
+            "-y",
+            "0.0",
+            "-z",
+            "0.0",
         ],
     )
 
@@ -144,5 +153,8 @@ def generate_launch_description():
     ]
 
     return LaunchDescription(
-        arguments + [gzserver, gzclient, robot_state_publisher, spawn_robot] + controllers + scene_nodes
+        arguments
+        + [gzserver, gzclient, robot_state_publisher, spawn_robot]
+        + controllers
+        + scene_nodes
     )
