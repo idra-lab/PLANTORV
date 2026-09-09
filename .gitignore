@@ -96,3 +96,6 @@ docs/api/
 
 tests/
 test*
+
+log/
+install/

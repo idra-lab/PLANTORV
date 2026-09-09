@@ -1,0 +1,3 @@
+[submodule "ros_ws/src/grippers_ur_ros2"]
+	path = ros_ws/src/grippers_ur_ros2
+	url = git@github.com:idra-lab/grippers_ur_ros2
