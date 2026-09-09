@@ -60,6 +60,16 @@ DEFAULTS = {
     "velocity_scaling": 0.25,
     "acceleration_scaling": 0.25,
     "approach_distance": 0.12,
+    # Height of the transit plane, in the planning frame. Every action starts
+    # and ends with the tool on it, and moves between objects run along it.
+    # A straight line between two points of equal height stays at that height,
+    # so a traverse cannot dip into the table however far it goes -- which is
+    # the whole reason the moves are built this way rather than left to a
+    # sampling planner. It has to clear the tallest thing on the table (the
+    # tray rims at z = 1.135) by more than the length of a carried cube, and
+    # stay inside the arm's reach: at 1.32 the furthest transit point, above a
+    # tray, is 0.473 m from base_link against the UR3's 0.5 m.
+    "transit_height": 1.32,
     "tool_gap": 0.005,
     "drop_gap": 0.03,
     "cartesian_step": 0.005,

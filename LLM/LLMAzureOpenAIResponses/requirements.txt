@@ -1,0 +1,6 @@
+openai
+requests
+retry
+pyyaml
+tiktoken
+python-dotenv

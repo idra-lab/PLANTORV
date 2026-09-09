@@ -251,26 +251,41 @@ class Scene:
     # -- SDF -------------------------------------------------------------
 
     def model_sdf(self, obj: SceneObject, static: Optional[bool] = None) -> str:
-        """Return a standalone ``<sdf>`` document for one object.
+        """Return a standalone ``<sdf>`` document for one object, at the origin.
 
-        This is what ``/spawn_entity`` is given, and what
-        ``scripts/generate_world.py`` embeds in the world file.
+        This is what ``/spawn_entity`` is given. The model is emitted at the
+        origin with no rotation, and the caller says where it goes through the
+        request's ``initial_pose``.
+
+        The pose must not be written here as well. Gazebo composes
+        ``initial_pose`` with the pose in the SDF rather than overriding it, so
+        an absolute pose in both places is applied twice: a cube meant for
+        (-0.26, 0.26, 1.05) is created at (-0.52, 0.52, 2.10), which is past
+        the edge of the table, and falls on the floor. Leaving the pose out
+        also lets ``scene_manager`` respawn a released object wherever the tool
+        happens to be, which is the other reason this document is generated.
         """
         if static is None:
             static = obj.mass <= 0.0
         return (
             '<?xml version="1.0" ?>\n'
             '<sdf version="1.6">\n'
-            f"{self._model_element(obj, static, indent='  ')}"
+            f"{self._model_element(obj, static, indent='  ', at_origin=True)}"
             "</sdf>\n"
         )
 
-    def _model_element(self, obj: SceneObject, static: bool, indent: str = "") -> str:
+    def _model_element(
+        self, obj: SceneObject, static: bool, indent: str = "", at_origin: bool = False
+    ) -> str:
+        # The boxes are always laid out around the object's own centre; only the
+        # model pose changes, so that a spawned model can be placed by the
+        # caller while one embedded in the world file carries its own position.
         px, py, pz = obj.position
+        mx, my, mz, myaw = (0.0, 0.0, 0.0, 0.0) if at_origin else (px, py, pz, obj.yaw)
         body = [
             f'{indent}<model name="{obj.name}">',
             f"{indent}  <static>{'true' if static else 'false'}</static>",
-            f"{indent}  <pose>{px:.6f} {py:.6f} {pz:.6f} 0 0 {obj.yaw:.6f}</pose>",
+            f"{indent}  <pose>{mx:.6f} {my:.6f} {mz:.6f} 0 0 {myaw:.6f}</pose>",
             f'{indent}  <link name="base_link">',
         ]
         if not static:

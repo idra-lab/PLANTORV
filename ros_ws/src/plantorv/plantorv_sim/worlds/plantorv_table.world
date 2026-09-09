@@ -37,78 +37,78 @@
 
     <model name="tray_blue">
       <static>true</static>
-      <pose>-0.180000 0.080000 1.037500 0 0 0.000000</pose>
+      <pose>-0.270000 0.080000 1.067500 0 0 0.000000</pose>
       <link name="base_link">
         <collision name="tray_blue_0_collision">
-          <pose>0.000000 0.000000 -0.030000 0 0 0</pose>
-          <geometry><box><size>0.270000 0.210000 0.015000</size></box></geometry>
+          <pose>0.000000 0.000000 -0.060000 0 0 0</pose>
+          <geometry><box><size>0.510000 0.390000 0.015000</size></box></geometry>
           <surface><friction><ode>
             <mu>1.0</mu><mu2>1.0</mu2>
           </ode></friction></surface>
         </collision>
         <visual name="tray_blue_0_visual">
-          <pose>0.000000 0.000000 -0.030000 0 0 0</pose>
-          <geometry><box><size>0.270000 0.210000 0.015000</size></box></geometry>
+          <pose>0.000000 0.000000 -0.060000 0 0 0</pose>
+          <geometry><box><size>0.510000 0.390000 0.015000</size></box></geometry>
           <material>
             <ambient>0.100 0.200 0.800 1.000</ambient>
             <diffuse>0.100 0.200 0.800 1.000</diffuse>
           </material>
         </visual>
         <collision name="tray_blue_1_collision">
-          <pose>0.000000 0.097500 0.007500 0 0 0</pose>
-          <geometry><box><size>0.270000 0.015000 0.060000</size></box></geometry>
+          <pose>0.000000 0.187500 0.007500 0 0 0</pose>
+          <geometry><box><size>0.510000 0.015000 0.120000</size></box></geometry>
           <surface><friction><ode>
             <mu>1.0</mu><mu2>1.0</mu2>
           </ode></friction></surface>
         </collision>
         <visual name="tray_blue_1_visual">
-          <pose>0.000000 0.097500 0.007500 0 0 0</pose>
-          <geometry><box><size>0.270000 0.015000 0.060000</size></box></geometry>
+          <pose>0.000000 0.187500 0.007500 0 0 0</pose>
+          <geometry><box><size>0.510000 0.015000 0.120000</size></box></geometry>
           <material>
             <ambient>0.100 0.200 0.800 1.000</ambient>
             <diffuse>0.100 0.200 0.800 1.000</diffuse>
           </material>
         </visual>
         <collision name="tray_blue_2_collision">
-          <pose>0.000000 -0.097500 0.007500 0 0 0</pose>
-          <geometry><box><size>0.270000 0.015000 0.060000</size></box></geometry>
+          <pose>0.000000 -0.187500 0.007500 0 0 0</pose>
+          <geometry><box><size>0.510000 0.015000 0.120000</size></box></geometry>
           <surface><friction><ode>
             <mu>1.0</mu><mu2>1.0</mu2>
           </ode></friction></surface>
         </collision>
         <visual name="tray_blue_2_visual">
-          <pose>0.000000 -0.097500 0.007500 0 0 0</pose>
-          <geometry><box><size>0.270000 0.015000 0.060000</size></box></geometry>
+          <pose>0.000000 -0.187500 0.007500 0 0 0</pose>
+          <geometry><box><size>0.510000 0.015000 0.120000</size></box></geometry>
           <material>
             <ambient>0.100 0.200 0.800 1.000</ambient>
             <diffuse>0.100 0.200 0.800 1.000</diffuse>
           </material>
         </visual>
         <collision name="tray_blue_3_collision">
-          <pose>0.127500 0.000000 0.007500 0 0 0</pose>
-          <geometry><box><size>0.015000 0.180000 0.060000</size></box></geometry>
+          <pose>0.247500 0.000000 0.007500 0 0 0</pose>
+          <geometry><box><size>0.015000 0.360000 0.120000</size></box></geometry>
           <surface><friction><ode>
             <mu>1.0</mu><mu2>1.0</mu2>
           </ode></friction></surface>
         </collision>
         <visual name="tray_blue_3_visual">
-          <pose>0.127500 0.000000 0.007500 0 0 0</pose>
-          <geometry><box><size>0.015000 0.180000 0.060000</size></box></geometry>
+          <pose>0.247500 0.000000 0.007500 0 0 0</pose>
+          <geometry><box><size>0.015000 0.360000 0.120000</size></box></geometry>
           <material>
             <ambient>0.100 0.200 0.800 1.000</ambient>
             <diffuse>0.100 0.200 0.800 1.000</diffuse>
           </material>
         </visual>
         <collision name="tray_blue_4_collision">
-          <pose>-0.127500 0.000000 0.007500 0 0 0</pose>
-          <geometry><box><size>0.015000 0.180000 0.060000</size></box></geometry>
+          <pose>-0.247500 0.000000 0.007500 0 0 0</pose>
+          <geometry><box><size>0.015000 0.360000 0.120000</size></box></geometry>
           <surface><friction><ode>
             <mu>1.0</mu><mu2>1.0</mu2>
           </ode></friction></surface>
         </collision>
         <visual name="tray_blue_4_visual">
-          <pose>-0.127500 0.000000 0.007500 0 0 0</pose>
-          <geometry><box><size>0.015000 0.180000 0.060000</size></box></geometry>
+          <pose>-0.247500 0.000000 0.007500 0 0 0</pose>
+          <geometry><box><size>0.015000 0.360000 0.120000</size></box></geometry>
           <material>
             <ambient>0.100 0.200 0.800 1.000</ambient>
             <diffuse>0.100 0.200 0.800 1.000</diffuse>
@@ -118,78 +118,78 @@
     </model>
     <model name="tray_red">
       <static>true</static>
-      <pose>0.180000 0.080000 1.037500 0 0 0.000000</pose>
+      <pose>0.270000 0.080000 1.067500 0 0 0.000000</pose>
       <link name="base_link">
         <collision name="tray_red_0_collision">
-          <pose>0.000000 0.000000 -0.030000 0 0 0</pose>
-          <geometry><box><size>0.270000 0.210000 0.015000</size></box></geometry>
+          <pose>0.000000 0.000000 -0.060000 0 0 0</pose>
+          <geometry><box><size>0.510000 0.390000 0.015000</size></box></geometry>
           <surface><friction><ode>
             <mu>1.0</mu><mu2>1.0</mu2>
           </ode></friction></surface>
         </collision>
         <visual name="tray_red_0_visual">
-          <pose>0.000000 0.000000 -0.030000 0 0 0</pose>
-          <geometry><box><size>0.270000 0.210000 0.015000</size></box></geometry>
+          <pose>0.000000 0.000000 -0.060000 0 0 0</pose>
+          <geometry><box><size>0.510000 0.390000 0.015000</size></box></geometry>
           <material>
             <ambient>0.800 0.100 0.100 1.000</ambient>
             <diffuse>0.800 0.100 0.100 1.000</diffuse>
           </material>
         </visual>
         <collision name="tray_red_1_collision">
-          <pose>0.000000 0.097500 0.007500 0 0 0</pose>
-          <geometry><box><size>0.270000 0.015000 0.060000</size></box></geometry>
+          <pose>0.000000 0.187500 0.007500 0 0 0</pose>
+          <geometry><box><size>0.510000 0.015000 0.120000</size></box></geometry>
           <surface><friction><ode>
             <mu>1.0</mu><mu2>1.0</mu2>
           </ode></friction></surface>
         </collision>
         <visual name="tray_red_1_visual">
-          <pose>0.000000 0.097500 0.007500 0 0 0</pose>
-          <geometry><box><size>0.270000 0.015000 0.060000</size></box></geometry>
+          <pose>0.000000 0.187500 0.007500 0 0 0</pose>
+          <geometry><box><size>0.510000 0.015000 0.120000</size></box></geometry>
           <material>
             <ambient>0.800 0.100 0.100 1.000</ambient>
             <diffuse>0.800 0.100 0.100 1.000</diffuse>
           </material>
         </visual>
         <collision name="tray_red_2_collision">
-          <pose>0.000000 -0.097500 0.007500 0 0 0</pose>
-          <geometry><box><size>0.270000 0.015000 0.060000</size></box></geometry>
+          <pose>0.000000 -0.187500 0.007500 0 0 0</pose>
+          <geometry><box><size>0.510000 0.015000 0.120000</size></box></geometry>
           <surface><friction><ode>
             <mu>1.0</mu><mu2>1.0</mu2>
           </ode></friction></surface>
         </collision>
         <visual name="tray_red_2_visual">
-          <pose>0.000000 -0.097500 0.007500 0 0 0</pose>
-          <geometry><box><size>0.270000 0.015000 0.060000</size></box></geometry>
+          <pose>0.000000 -0.187500 0.007500 0 0 0</pose>
+          <geometry><box><size>0.510000 0.015000 0.120000</size></box></geometry>
           <material>
             <ambient>0.800 0.100 0.100 1.000</ambient>
             <diffuse>0.800 0.100 0.100 1.000</diffuse>
           </material>
         </visual>
         <collision name="tray_red_3_collision">
-          <pose>0.127500 0.000000 0.007500 0 0 0</pose>
-          <geometry><box><size>0.015000 0.180000 0.060000</size></box></geometry>
+          <pose>0.247500 0.000000 0.007500 0 0 0</pose>
+          <geometry><box><size>0.015000 0.360000 0.120000</size></box></geometry>
           <surface><friction><ode>
             <mu>1.0</mu><mu2>1.0</mu2>
           </ode></friction></surface>
         </collision>
         <visual name="tray_red_3_visual">
-          <pose>0.127500 0.000000 0.007500 0 0 0</pose>
-          <geometry><box><size>0.015000 0.180000 0.060000</size></box></geometry>
+          <pose>0.247500 0.000000 0.007500 0 0 0</pose>
+          <geometry><box><size>0.015000 0.360000 0.120000</size></box></geometry>
           <material>
             <ambient>0.800 0.100 0.100 1.000</ambient>
             <diffuse>0.800 0.100 0.100 1.000</diffuse>
           </material>
         </visual>
         <collision name="tray_red_4_collision">
-          <pose>-0.127500 0.000000 0.007500 0 0 0</pose>
-          <geometry><box><size>0.015000 0.180000 0.060000</size></box></geometry>
+          <pose>-0.247500 0.000000 0.007500 0 0 0</pose>
+          <geometry><box><size>0.015000 0.360000 0.120000</size></box></geometry>
           <surface><friction><ode>
             <mu>1.0</mu><mu2>1.0</mu2>
           </ode></friction></surface>
         </collision>
         <visual name="tray_red_4_visual">
-          <pose>-0.127500 0.000000 0.007500 0 0 0</pose>
-          <geometry><box><size>0.015000 0.180000 0.060000</size></box></geometry>
+          <pose>-0.247500 0.000000 0.007500 0 0 0</pose>
+          <geometry><box><size>0.015000 0.360000 0.120000</size></box></geometry>
           <material>
             <ambient>0.800 0.100 0.100 1.000</ambient>
             <diffuse>0.800 0.100 0.100 1.000</diffuse>

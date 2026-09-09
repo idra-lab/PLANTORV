@@ -20,10 +20,24 @@ __maintainers__ = ["Enrico Saccon", "Davide De Martini", "Marco Roveri", "Davide
 
 The behaviour tree names an action and an object; everything about how the arm
 gets there lives here. Four actions are known -- ``home``, ``move_to``,
-``pick`` and ``place`` -- and the last two are the only interesting ones: each
-is an approach from a safe height, a straight descent, the fake grasp, and a
-straight retreat. The descent and the retreat are Cartesian on purpose, so the
-tool comes down on an object rather than swinging into it sideways.
+``pick`` and ``place`` -- and the last two are the only interesting ones.
+
+Every move the arm makes between objects is Cartesian, and the shape is always
+the same: traverse along the transit plane to a point directly above the
+target, descend straight onto it, and lift straight back to the plane. Nothing
+between two objects is left to a sampling planner, so the path the arm takes is
+the same on every run and the same on the real cell as in the simulator, which
+is the point -- an operator can watch it once and know what it will do.
+
+That the arm cannot swing through the table falls out of the geometry rather
+than out of collision checking: both ends of a traverse are on the transit
+plane, and a straight line between two points of equal height stays at that
+height. The plane itself is set high enough to clear the tray rims with a cube
+hanging under the tool; see ``transit_height`` in planner_node.
+
+``home`` is the exception and stays a joint-space move: it is a fixed, known
+configuration rather than a point in the workspace, and it leaves the tool at
+z = 1.514, above the plane, so the invariant still holds afterwards.
 
 Adding an action means adding a method and an entry in ``DISPATCH``. The
 behaviour tree needs no change to call it.
@@ -34,7 +48,7 @@ from typing import Callable, Dict, List, Optional
 
 from geometry_msgs.msg import Pose
 
-from plantorv_planner.geometry import pose_above, raised, square_symmetric_yaw, yaw_of
+from plantorv_planner.geometry import pose_above, square_symmetric_yaw, yaw_of
 from plantorv_planner.moveit_client import MoveItClient, Plan, PlanningError
 
 
@@ -113,11 +127,11 @@ class ActionLibrary:
         if goal is None:
             raise PlanningError("move_to needs either a target object or a pose")
         report("move", 0.0)
-        plan = self._plan_to_pose(goal)
-        self.moveit.execute(plan)
+        # Same shape as pick and place: along the plane, then straight down.
+        outcome = self._traverse(goal) + self._go_straight([goal])
         report("move", 1.0)
         where = target or "the given pose"
-        return ActionOutcome(f"tool at {where}", plan.path_length, plan.planning_time)
+        return ActionOutcome(f"tool at {where}", outcome.path_length, outcome.planning_time)
 
     def _pick(self, target: str, pose: Optional[Pose], report: Callable) -> ActionOutcome:
         if not target:
@@ -128,10 +142,10 @@ class ActionLibrary:
         report("locate", 0.0)
         obj = self._require(target)
         grasp_pose = self._grasp_pose(obj)
-        approach = raised(grasp_pose, self.params["approach_distance"])
+        above = self._transit_over(grasp_pose)
 
         report("approach", 0.2)
-        total = self._go_to(approach)
+        total = self._traverse(grasp_pose)
 
         report("descend", 0.4)
         total += self._go_straight([grasp_pose])
@@ -142,12 +156,12 @@ class ActionLibrary:
 
         report("retreat", 0.8)
         try:
-            total += self._go_straight([approach])
+            total += self._go_straight([above])
         except PlanningError:
             # The object is in the hand either way; leaving the arm down there
             # would be worse than a joint-space lift.
             self.node.get_logger().warn("straight retreat failed, lifting through joint space")
-            total += self._go_to(approach)
+            total += self._go_to(above)
 
         report("done", 1.0)
         return ActionOutcome(f"picked {target}", total.path_length, total.planning_time)
@@ -160,10 +174,10 @@ class ActionLibrary:
 
         report("locate", 0.0)
         release = pose if pose is not None and not target else self._release_pose(self._require(target))
-        approach = raised(release, self.params["approach_distance"])
+        above = self._transit_over(release)
 
         report("approach", 0.2)
-        total = self._go_to(approach)
+        total = self._traverse(release)
 
         report("descend", 0.4)
         total += self._go_straight([release])
@@ -174,7 +188,7 @@ class ActionLibrary:
         self.held = None
 
         report("retreat", 0.8)
-        total += self._go_straight([approach])
+        total += self._go_straight([above])
 
         report("done", 1.0)
         return ActionOutcome(f"placed {placed} in {target}", total.path_length, total.planning_time)
@@ -244,6 +258,39 @@ class ActionLibrary:
     def _plan_to_pose(self, pose: Pose) -> Plan:
         joint_values = self.moveit.inverse_kinematics(pose, self.params["joint_names"])
         return self._plan_to_joints(joint_values)
+
+    def _transit_over(self, pose: Pose) -> Pose:
+        """The point on the transit plane directly above ``pose``."""
+        return pose_above(
+            pose.position.x,
+            pose.position.y,
+            self.params["transit_height"],
+            yaw_of(pose.orientation),
+        )
+
+    def _traverse(self, goal: Pose) -> ActionOutcome:
+        """Move along the transit plane to the point above ``goal``.
+
+        The caller is expected to be on the plane already, which every action
+        arranges by lifting back to it before it returns. Both ends are then at
+        the same height and the straight line between them cannot descend, so
+        this is the move that carries the arm across the table.
+
+        It falls back to a joint-space plan only when the straight line is
+        refused, which means the tool started below the plane -- the first
+        action after the arm has been left somewhere odd. The fallback is
+        announced because it is the one move whose path is not predictable.
+        """
+        above = self._transit_over(goal)
+        try:
+            return self._go_straight([above])
+        except PlanningError as error:
+            self.node.get_logger().warn(
+                f"straight traverse refused ({error}); the tool is probably below the "
+                f"transit plane. Falling back to a joint-space move, whose path is not "
+                f"predictable -- send a `home` first to avoid this."
+            )
+            return self._go_to(above)
 
     def _go_to(self, pose: Pose) -> ActionOutcome:
         """Plan freely to a pose and execute."""

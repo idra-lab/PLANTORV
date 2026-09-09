@@ -14,12 +14,19 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 
-  The UR3 and the two static things it is bolted to: the desk and the stand on
-  it. They live in the robot description rather than in the Gazebo world so
-  that there is exactly one statement of how high base_link sits: Gazebo,
-  RViz, TF and MoveIt's collision checking all read it from here. Their sizes
+  The UR3 and the two static things it is bolted to, namely the desk and the
+  stand on it. They live in the robot description rather than in the Gazebo
+  world so that there is exactly one statement of how high base_link sits, and
+  Gazebo, RViz, TF and MoveIt's collision checking all read it from here. Their sizes
   come from config/scene.yaml, the same file the world and the planning scene
   are generated from.
+
+  Keep a colon followed by a space out of every comment in this file.
+  gazebo_ros2_control hands the generated URDF to the controller manager as a
+  command line parameter override, and rcl parses that value as YAML, where a
+  colon-space is the key/value separator. One in a comment makes
+  the parse fail, no /controller_manager is ever created, and the spawners in
+  simulation.launch.py time out without saying why.
 -->
 <!-- The robot name is a literal, for two reasons. xacro evaluates the root
      element's attributes before it reaches the <xacro:arg> declarations below,
@@ -107,7 +114,7 @@
   <gazebo reference="stand_link"><material>Gazebo/DarkGrey</material></gazebo>
 
   <!-- The parameters ur_robot takes have changed across ur_description
-       releases: `prefix` was renamed `tf_prefix`, and `force_abs_paths` (which
+       releases. `prefix` was renamed `tf_prefix`, and `force_abs_paths` (which
        rewrites mesh package:// URIs to absolute file paths for Gazebo Classic)
        only exists in the later ones. Only the long-standing parameters are
        passed below. If xacro rejects one of them, check the macro's own
@@ -115,6 +122,14 @@
 
          sed -n '/xacro:macro name="ur_robot"/,/">/p' \
            /opt/ros/humble/share/ur_description/urdf/ur_macro.xacro
+
+       `simulation_controllers` is deliberately not passed. The macro emits the
+       <ros2_control> block naming gazebo_ros2_control/GazeboSystem, but the
+       <gazebo><plugin> tag that actually loads the controller manager and reads
+       the controller yaml is not its job. In ur_description 2.7.0 that lives in
+       the top-level ur.urdf.xacro, which declares simulation_controllers as an
+       <xacro:arg>. This file stands in for that top-level file, so it emits the
+       plugin tag itself, at the bottom.
   -->
   <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
   <xacro:ur_robot
@@ -133,8 +148,7 @@
     sim_ignition="false"
     headless_mode="false"
     robot_ip="$(arg robot_ip)"
-    initial_positions="${xacro.load_yaml('$(arg initial_positions_file)')}"
-    simulation_controllers="$(arg simulation_controllers)">
+    initial_positions="${xacro.load_yaml('$(arg initial_positions_file)')}">
     <!-- base_link is mounted on top of the stand; the yaw turns the arm's
          front towards the trays in the middle of the desk. -->
     <origin xyz="0 0 ${stand_size[2] / 2.0}" rpy="0 0 ${mount_yaw}"/>
@@ -142,4 +156,16 @@
 
   <!-- Reported by the planner and used as the grasp frame. tool0 is where the
        gripper would bolt on; the fake grasp attaches objects to it. -->
+
+  <!-- Loads controller_manager inside Gazebo and hands it the controller yaml.
+       Without this the model spawns and the <ros2_control> block is parsed, but
+       no /controller_manager ever appears and both spawners in
+       simulation.launch.py time out. -->
+  <xacro:if value="$(arg sim_gazebo)">
+    <gazebo>
+      <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+        <parameters>$(arg simulation_controllers)</parameters>
+      </plugin>
+    </gazebo>
+  </xacro:if>
 </robot>

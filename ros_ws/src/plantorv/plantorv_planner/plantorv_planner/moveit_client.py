@@ -294,9 +294,22 @@ class MoveItClient:
         request.link_name = self.tool_link
         request.waypoints = list(waypoints)
         request.max_step = step
-        # 0 disables the jump check. The check is meant for redundant arms and
-        # on a 6-DoF wrist it mostly rejects otherwise good paths.
-        request.jump_threshold = 0.0
+        # Reject a solution that changes configuration partway along the line.
+        #
+        # This must not be 0. Zero disables the check, and then consecutive
+        # waypoints are free to come back in different IK branches: every one
+        # of them is collision-free, so the returned fraction is 1.0 and the
+        # path looks good, but the controller interpolates between them in
+        # joint space and the arm sweeps through whatever lies between the two
+        # configurations. That is what put the forearm through the stand and
+        # the table -- a traverse that should have cost about 2 rad of joint
+        # motion came back costing 23.5, all of it in one flip between two
+        # adjacent waypoints.
+        #
+        # The value is a multiple of the average joint motion per step, so it
+        # scales with max_step rather than being an absolute angle. 5.0 is the
+        # MoveIt default and leaves normal motion alone.
+        request.jump_threshold = 5.0
         request.avoid_collisions = True
         # These two were added to GetCartesianPath after Humble's first
         # release. Setting them when they are there gets the returned path

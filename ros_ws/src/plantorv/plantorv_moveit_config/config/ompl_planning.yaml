@@ -1,3 +1,28 @@
+# Which planner plugin this pipeline runs, and what runs after it.
+#
+# Both have to be stated here. move_group reads them from the pipeline's own
+# parameter namespace, and nothing else supplies a default: without
+# planning_plugin the pipeline does not load OMPL at all, and without
+# request_adapters the planned path reaches the controller with every
+# time_from_start still at zero. joint_trajectory_controller rejects that with
+# "Time between points 0 and 1 is not strictly increasing", which surfaces as
+# MoveIt error -4, while RViz still animates the path quite happily -- it
+# interpolates the waypoints and never looks at the timestamps.
+#
+# AddTimeOptimalParameterization is the one that assigns those timestamps, so
+# it must stay in the list. The rest are the MoveIt defaults, which repair a
+# start state that is slightly out of bounds or in collision rather than
+# failing the request outright.
+planning_plugin: ompl_interface/OMPLPlanner
+request_adapters: >-
+  default_planner_request_adapters/AddTimeOptimalParameterization
+  default_planner_request_adapters/ResolveConstraintFrames
+  default_planner_request_adapters/FixWorkspaceBounds
+  default_planner_request_adapters/FixStartStateBounds
+  default_planner_request_adapters/FixStartStateCollision
+  default_planner_request_adapters/FixStartStatePathConstraints
+start_state_max_bounds_error: 0.1
+
 # OMPL planners available to the planner node. RRTConnect is the default: it is
 # fast and always finds *a* path, which is what the planner's repeated-planning
 # strategy relies on -- it asks for several plans and keeps the shortest, which

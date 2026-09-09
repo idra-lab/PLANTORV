@@ -1,0 +1,16 @@
+LLM_VERSION : "gpt-5.4-pro"
+PROVIDER : "azure_responses"
+API_KEY_NAME : "AZURE_OPENAI_API_KEY"
+ENDPOINT_ENV : "AZURE_OPENAI_ENDPOINT"
+# The Responses API needs 2025-04-01-preview or later; the 2024 versions do not serve it.
+API_VERSION : "2025-04-01-preview"
+SYSTEM_FINGERPRINT : "None"
+
+# The -pro tier does not expose /chat/completions at all (every call comes back as
+# "400 The requested operation is unsupported"), so it goes through the Responses API, which
+# renames the token cap and has no seed. temperature/top_p are rejected here as well.
+# reasoning.effort accepts "medium", "high" and "xhigh" on this deployment -- "low" is refused.
+# The cap covers reasoning tokens too, and this model spends a lot of them before answering, so it
+# is set well above the 16384 used for the non-pro deployments.
+LLM_CONFIG:
+  max_output_tokens: 65536

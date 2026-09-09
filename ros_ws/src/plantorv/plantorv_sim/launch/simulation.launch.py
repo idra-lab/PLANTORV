@@ -37,6 +37,7 @@ from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -84,7 +85,13 @@ def generate_launch_description():
         executable="robot_state_publisher",
         output="screen",
         parameters=[
-            {"robot_description": robot_description, "use_sim_time": True},
+            # The xacro output has to be declared a string. Left bare, launch_ros
+            # tries to parse the URDF as YAML to infer the parameter type, and
+            # the first colon in the XML makes that fail.
+            {
+                "robot_description": ParameterValue(robot_description, value_type=str),
+                "use_sim_time": True,
+            },
         ],
     )
 
