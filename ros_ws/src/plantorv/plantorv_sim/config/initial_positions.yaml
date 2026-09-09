@@ -1,0 +1,9 @@
+# Joint values the arm starts at, in Gazebo and under mock hardware. The same
+# configuration is the `home` state in the SRDF: elbow up, tool pointing down
+# over the desk, well clear of the trays.
+shoulder_pan_joint: 0.0
+shoulder_lift_joint: -1.5707963
+elbow_joint: 1.5707963
+wrist_1_joint: -1.5707963
+wrist_2_joint: -1.5707963
+wrist_3_joint: 0.0

@@ -1,0 +1,41 @@
+# ros2_control controllers for the simulated UR3. gazebo_ros2_control loads
+# this file directly (the URDF names it), so the update rate here is the rate
+# the simulated controller manager runs at.
+controller_manager:
+  ros__parameters:
+    update_rate: 500  # Hz
+    use_sim_time: true
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+joint_state_broadcaster:
+  ros__parameters:
+    use_sim_time: true
+
+joint_trajectory_controller:
+  ros__parameters:
+    use_sim_time: true
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false
+    constraints:
+      stopped_velocity_tolerance: 0.2
+      # MoveIt time-parameterises the whole trajectory, so leave the goal-time
+      # tolerance open rather than have long plans abort at the last point.
+      goal_time: 0.0

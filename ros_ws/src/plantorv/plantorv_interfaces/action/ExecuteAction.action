@@ -1,0 +1,38 @@
+# One known manipulation action, planned and executed by plantorv_planner.
+#
+# The planner owns the decomposition: `pick`, for instance, is an approach, a
+# descent, a grasp and a retreat, but the caller -- normally a behaviour tree
+# leaf -- asks for `pick` and waits.
+
+# What to do. One of:
+#   home     move to the named configuration `home` of the planning group
+#   move_to  move the tool frame to `target` (a scene object) or to `pose`
+#   pick     grasp the scene object `target` from above
+#   place    release the held object into/over the scene object `target`
+string action_name
+
+# Name of the scene object the action applies to, resolved through
+# plantorv_interfaces/srv/GetObjectPose. Leave empty to use `pose` instead.
+string target
+
+# Explicit tool-frame goal, used only when `target` is empty. Its frame_id must
+# be a frame TF can resolve against the planning frame.
+geometry_msgs/PoseStamped pose
+
+# Per-goal overrides of the planner parameters. 0 means "keep the default".
+float64 velocity_scaling
+float64 acceleration_scaling
+---
+bool success
+string message
+
+# Joint-space length of the executed trajectory, in radians. This is the
+# quantity the planner minimises when it picks among candidate plans.
+float64 path_length
+
+# Time spent planning, execution excluded.
+builtin_interfaces/Duration planning_time
+---
+# Sub-step the action is in: approach, descend, grasp, retreat, ...
+string stage
+float32 progress

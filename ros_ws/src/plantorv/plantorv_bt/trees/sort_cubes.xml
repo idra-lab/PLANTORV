@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<!--
+  Sort every cube on the desk into the tray of its own colour.
+
+  The loop is the interesting part. DetectObjects puts the names of the cubes
+  on the blackboard; PopFromList takes one at a time and fails when there are
+  none left, which is what ends KeepRunningUntilFailure. Since SortOne is
+  written never to fail (a cube it cannot manage is logged and skipped), an
+  empty list is the only way the loop can end, and the Fallback below turns
+  that one expected failure into success for the run as a whole.
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+
+  <BehaviorTree ID="MainTree">
+    <Sequence name="sort_all">
+      <Home/>
+      <DetectObjects type="cube" output_key="{cubes}"/>
+
+      <Fallback>
+        <KeepRunningUntilFailure>
+          <Sequence name="next_cube">
+            <PopFromList list="{cubes}" output_key="{cube}"/>
+            <SubTree ID="SortOne"/>
+          </Sequence>
+        </KeepRunningUntilFailure>
+        <Log message="no cubes left on the desk"/>
+      </Fallback>
+
+      <Home/>
+    </Sequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="SortOne">
+    <Fallback name="sort_or_skip">
+      <Sequence>
+        <MatchingTray object="{cube}" output_key="{tray}"/>
+        <RetryUntilSuccessful num_attempts="3">
+          <Pick object="{cube}"/>
+        </RetryUntilSuccessful>
+        <Place target="{tray}"/>
+        <!-- Let the cube settle before the arm comes back over the tray. -->
+        <Sleep msec="500"/>
+      </Sequence>
+
+      <Sequence name="give_up_on_this_one">
+        <Log message="could not sort that cube; leaving it and carrying on"/>
+        <Home/>
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+</root>

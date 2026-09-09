@@ -1,0 +1,9 @@
+# Every scene object the world model knows about.
+
+# Return only objects of this type (cube, tray, furniture). Empty means all.
+string type_filter
+---
+string[] names
+string[] types
+string[] colors
+geometry_msgs/Pose[] poses

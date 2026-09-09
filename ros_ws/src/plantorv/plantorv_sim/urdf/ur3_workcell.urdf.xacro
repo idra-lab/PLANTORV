@@ -1,0 +1,171 @@
+<?xml version="1.0"?>
+<!--
+  Copyright 2025 Enrico Saccon
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+
+  The UR3 and the two static things it is bolted to, namely the desk and the
+  stand on it. They live in the robot description rather than in the Gazebo
+  world so that there is exactly one statement of how high base_link sits, and
+  Gazebo, RViz, TF and MoveIt's collision checking all read it from here. Their sizes
+  come from config/scene.yaml, the same file the world and the planning scene
+  are generated from.
+
+  Keep a colon followed by a space out of every comment in this file.
+  gazebo_ros2_control hands the generated URDF to the controller manager as a
+  command line parameter override, and rcl parses that value as YAML, where a
+  colon-space is the key/value separator. One in a comment makes
+  the parse fail, no /controller_manager is ever created, and the spawners in
+  simulation.launch.py time out without saying why.
+-->
+<!-- The robot name is a literal, for two reasons. xacro evaluates the root
+     element's attributes before it reaches the <xacro:arg> declarations below,
+     so $(arg name) here is undefined unless every caller passes name:=... on
+     the command line. And MoveIt matches the URDF against the SRDF by this
+     name, so it has to stay equal to the robot name in
+     plantorv_moveit_config/config/ur3_workcell.srdf. -->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="ur3_workcell">
+
+  <!-- Passed on to the UR macro, which uses it to name the ros2_control
+       system. Not the name of the robot as a whole; see above. -->
+  <xacro:arg name="name" default="ur3"/>
+  <xacro:arg name="ur_type" default="ur3"/>
+  <xacro:arg name="tf_prefix" default=""/>
+  <xacro:arg name="scene_config" default="$(find plantorv_sim)/config/scene.yaml"/>
+  <xacro:arg name="simulation_controllers" default="$(find plantorv_sim)/config/ur3_controllers.yaml"/>
+  <xacro:arg name="initial_positions_file" default="$(find plantorv_sim)/config/initial_positions.yaml"/>
+
+  <!-- sim_gazebo drives ros2_control towards gazebo_ros2_control; turning it
+       off and use_fake_hardware on gives the same robot under mock hardware,
+       which is how the planner is exercised without a simulator running. -->
+  <xacro:arg name="sim_gazebo" default="true"/>
+  <xacro:arg name="use_fake_hardware" default="false"/>
+  <xacro:arg name="robot_ip" default="0.0.0.0"/>
+  <xacro:arg name="safety_limits" default="true"/>
+  <xacro:arg name="safety_pos_margin" default="0.15"/>
+  <xacro:arg name="safety_k_position" default="20"/>
+
+  <xacro:property name="scene" value="${xacro.load_yaml('$(arg scene_config)')}"/>
+  <xacro:property name="table_size" value="${scene['table']['size']}"/>
+  <xacro:property name="stand_size" value="${scene['robot']['stand_size']}"/>
+  <xacro:property name="stand_xy" value="${scene['robot']['stand_xy']}"/>
+  <xacro:property name="mount_height" value="${scene['robot']['mount_height']}"/>
+  <xacro:property name="mount_yaw" value="${scene['robot']['yaw']}"/>
+
+  <xacro:property name="ur_type" value="$(arg ur_type)"/>
+  <xacro:property name="ur_config" value="$(find ur_description)/config/${ur_type}"/>
+
+  <!-- A box link with the inertia of a solid box. Both boxes here are welded to
+       the world, so the inertia only keeps Gazebo from complaining. -->
+  <xacro:macro name="box_link" params="name size mass material">
+    <link name="${name}">
+      <visual>
+        <geometry><box size="${size[0]} ${size[1]} ${size[2]}"/></geometry>
+        <material name="${material}"/>
+      </visual>
+      <collision>
+        <geometry><box size="${size[0]} ${size[1]} ${size[2]}"/></geometry>
+      </collision>
+      <inertial>
+        <mass value="${mass}"/>
+        <inertia
+          ixx="${mass * (size[1]*size[1] + size[2]*size[2]) / 12.0}" ixy="0.0" ixz="0.0"
+          iyy="${mass * (size[0]*size[0] + size[2]*size[2]) / 12.0}" iyz="0.0"
+          izz="${mass * (size[0]*size[0] + size[1]*size[1]) / 12.0}"/>
+      </inertial>
+    </link>
+  </xacro:macro>
+
+  <material name="desk_wood"><color rgba="0.72 0.60 0.44 1.0"/></material>
+  <material name="stand_grey"><color rgba="0.35 0.35 0.38 1.0"/></material>
+
+  <!-- world sits on the floor at the centre of the desk top; x runs along the
+       long side of the desk, y towards the robot. -->
+  <link name="world"/>
+
+  <xacro:box_link name="table_link" size="${table_size}" mass="60.0" material="desk_wood"/>
+  <joint name="world_to_table" type="fixed">
+    <parent link="world"/>
+    <child link="table_link"/>
+    <origin xyz="0 0 ${table_size[2] / 2.0}" rpy="0 0 0"/>
+  </joint>
+
+  <xacro:box_link name="stand_link" size="${stand_size}" mass="15.0" material="stand_grey"/>
+  <joint name="table_to_stand" type="fixed">
+    <parent link="table_link"/>
+    <child link="stand_link"/>
+    <!-- The stand rests on the desk top, at the middle of the long side. -->
+    <origin
+      xyz="${stand_xy[0]} ${stand_xy[1]} ${(table_size[2] + stand_size[2]) / 2.0}"
+      rpy="0 0 0"/>
+  </joint>
+
+  <gazebo reference="table_link"><material>Gazebo/Wood</material></gazebo>
+  <gazebo reference="stand_link"><material>Gazebo/DarkGrey</material></gazebo>
+
+  <!-- The parameters ur_robot takes have changed across ur_description
+       releases. `prefix` was renamed `tf_prefix`, and `force_abs_paths` (which
+       rewrites mesh package:// URIs to absolute file paths for Gazebo Classic)
+       only exists in the later ones. Only the long-standing parameters are
+       passed below. If xacro rejects one of them, check the macro's own
+       signature against the installed package:
+
+         sed -n '/xacro:macro name="ur_robot"/,/">/p' \
+           /opt/ros/humble/share/ur_description/urdf/ur_macro.xacro
+
+       `simulation_controllers` is deliberately not passed. The macro emits the
+       <ros2_control> block naming gazebo_ros2_control/GazeboSystem, but the
+       <gazebo><plugin> tag that actually loads the controller manager and reads
+       the controller yaml is not its job. In ur_description 2.7.0 that lives in
+       the top-level ur.urdf.xacro, which declares simulation_controllers as an
+       <xacro:arg>. This file stands in for that top-level file, so it emits the
+       plugin tag itself, at the bottom.
+  -->
+  <xacro:include filename="$(find ur_description)/urdf/ur_macro.xacro"/>
+  <xacro:ur_robot
+    name="$(arg name)"
+    tf_prefix="$(arg tf_prefix)"
+    parent="stand_link"
+    joint_limits_parameters_file="${ur_config}/joint_limits.yaml"
+    kinematics_parameters_file="${ur_config}/default_kinematics.yaml"
+    physical_parameters_file="${ur_config}/physical_parameters.yaml"
+    visual_parameters_file="${ur_config}/visual_parameters.yaml"
+    safety_limits="$(arg safety_limits)"
+    safety_pos_margin="$(arg safety_pos_margin)"
+    safety_k_position="$(arg safety_k_position)"
+    use_fake_hardware="$(arg use_fake_hardware)"
+    sim_gazebo="$(arg sim_gazebo)"
+    sim_ignition="false"
+    headless_mode="false"
+    robot_ip="$(arg robot_ip)"
+    initial_positions="${xacro.load_yaml('$(arg initial_positions_file)')}">
+    <!-- base_link is mounted on top of the stand; the yaw turns the arm's
+         front towards the trays in the middle of the desk. -->
+    <origin xyz="0 0 ${stand_size[2] / 2.0}" rpy="0 0 ${mount_yaw}"/>
+  </xacro:ur_robot>
+
+  <!-- Reported by the planner and used as the grasp frame. tool0 is where the
+       gripper would bolt on; the fake grasp attaches objects to it. -->
+
+  <!-- Loads controller_manager inside Gazebo and hands it the controller yaml.
+       Without this the model spawns and the <ros2_control> block is parsed, but
+       no /controller_manager ever appears and both spawners in
+       simulation.launch.py time out. -->
+  <xacro:if value="$(arg sim_gazebo)">
+    <gazebo>
+      <plugin filename="libgazebo_ros2_control.so" name="gazebo_ros2_control">
+        <parameters>$(arg simulation_controllers)</parameters>
+      </plugin>
+    </gazebo>
+  </xacro:if>
+</robot>
