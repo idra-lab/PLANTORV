@@ -22,12 +22,12 @@
   <!-- Matches plantorv_sim/config/initial_positions.yaml: elbow up, tool down
        over the desk, clear of the trays. -->
   <group_state name="home" group="ur_manipulator">
-    <joint name="shoulder_pan_joint" value="0.0"/>
-    <joint name="shoulder_lift_joint" value="-1.5707963"/>
-    <joint name="elbow_joint" value="1.5707963"/>
-    <joint name="wrist_1_joint" value="-1.5707963"/>
-    <joint name="wrist_2_joint" value="-1.5707963"/>
-    <joint name="wrist_3_joint" value="0.0"/>
+    <joint name="shoulder_pan_joint" value="1.577254"/>
+    <joint name="shoulder_lift_joint" value="-1.8715166"/>
+    <joint name="elbow_joint" value="-1.5004596"/>
+    <joint name="wrist_1_joint" value="-1.4109242"/>
+    <joint name="wrist_2_joint" value="1.5727162"/>
+    <joint name="wrist_3_joint" value="0.0376991"/>
   </group_state>
 
   <!-- The frame the fake grasp attaches objects to. -->

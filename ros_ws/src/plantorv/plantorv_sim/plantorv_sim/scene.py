@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-__maintainers__ = ["Enrico Saccon", "Davide De Martini", "Marco Roveri", "Davide Nardi"]
+__maintainers__ = ["Enrico Saccon", "Tommaso Faraci"]
 
 """``config/scene.yaml`` read into objects, and turned back into SDF.
 
@@ -132,14 +132,52 @@ class Scene:
 
         return cls.from_file(Path(get_package_share_directory(package)) / "config" / "scene.yaml")
 
+    def to_world(self, xy: Sequence[float], frame: str = "world"):
+        """Convert an (x, y) measured in ``frame`` into the scene frame.
+
+        ``world`` returns it unchanged. ``base`` treats it as the pendant does:
+        the UR controller's own Base feature frame, which is where a jogged TCP
+        position is read off.
+
+        That frame is the arm's base_link turned by pi -- ur_description adds
+        that rotation so `base` matches the UR controller's convention -- and
+        base_link is itself turned by ``robot.yaw`` relative to the scene. So
+        the rotation between the pendant and here is yaw + pi, and with the
+        yaw of pi this cell uses those cancel and the numbers are the same.
+        Which is convenient and is exactly why it is worth doing properly: the
+        day the arm is bolted on at a different angle, the numbers stop
+        matching and nothing would have said so.
+
+        Only x and y. Height is not taken from a measurement at all -- objects
+        are placed sitting on the table.
+        """
+        x, y = (float(v) for v in xy)
+        if frame == "world":
+            return x, y
+        if frame != "base":
+            raise ValueError(
+                f"unknown frame '{frame}' for an object position; "
+                f"use 'world' (the default) or 'base' (what the pendant shows)"
+            )
+        angle = self.mount_yaw + math.pi
+        cos, sin = math.cos(angle), math.sin(angle)
+        base_x, base_y = self.mount_xy
+        return base_x + cos * x - sin * y, base_y + sin * x + cos * y
+
     def _build(self) -> None:
+        # The table and the pedestal both stand on the floor and neither
+        # carries the other, so each is placed from its own xy and its own
+        # height. They used to be nested -- pedestal on table, table at the
+        # origin -- and the arithmetic below is what changed when the frame
+        # moved to the robot's base.
         table = self.config["table"]
         tw, td, th = (float(v) for v in table["size"])
+        tx, ty = (float(v) for v in table.get("xy", [0.0, 0.0]))
         self._add(
             SceneObject(
                 name="table",
                 type=TYPE_FURNITURE,
-                position=(0.0, 0.0, th / 2.0),
+                position=(tx, ty, th / 2.0),
                 dimensions=(tw, td, th),
                 color=tuple(table.get("color", [0.7, 0.6, 0.45, 1.0])),
             )
@@ -152,39 +190,47 @@ class Scene:
             SceneObject(
                 name="robot_stand",
                 type=TYPE_FURNITURE,
-                position=(sx, sy, th + sh / 2.0),
+                position=(sx, sy, sh / 2.0),
                 dimensions=(sw, sd, sh),
                 color=tuple(robot.get("stand_color", [0.35, 0.35, 0.38, 1.0])),
             )
         )
 
         for tray in self.config.get("trays", []):
-            self._add(self._make_tray(tray, table_top=th))
+            self._add(self._make_tray(tray, table_top=th, scene=self))
 
         cubes = self.config.get("cubes", {})
-        size = float(cubes.get("size", 0.1))
+        # `size` is either one number, for a cube, or the three full extents.
+        # The blocks in this cell are 3 x 3 x 6 cm, so they are not cubes; the
+        # scalar form is kept because it reads better when they are, and
+        # because it is what every earlier scene.yaml wrote.
+        size = cubes.get("size", 0.1)
+        if isinstance(size, (list, tuple)):
+            bw, bd, bh = (float(v) for v in size)
+        else:
+            bw = bd = bh = float(size)
         mass = float(cubes.get("mass", 0.2))
         for cube in cubes.get("items", []):
-            cx, cy = (float(v) for v in cube["xy"])
+            cx, cy = self.to_world(cube["xy"], cube.get("frame", "world"))
             self._add(
                 SceneObject(
                     name=cube["name"],
                     type=TYPE_CUBE,
-                    position=(cx, cy, th + size / 2.0),
+                    position=(cx, cy, th + bh / 2.0),
                     yaw=float(cube.get("yaw", 0.0)),
-                    dimensions=(size, size, size),
+                    dimensions=(bw, bd, bh),
                     color=tuple(cube.get("color", [0.2, 0.4, 0.9, 1.0])),
                     mass=mass,
                 )
             )
 
     @staticmethod
-    def _make_tray(tray: Dict, table_top: float) -> SceneObject:
+    def _make_tray(tray: Dict, table_top: float, scene: "Scene") -> SceneObject:
         """Build a tray out of a floor and four walls."""
         iw, idp, ih = (float(v) for v in tray["inner"])
         wall = float(tray.get("wall", 0.015))
         ow, od, oh = iw + 2 * wall, idp + 2 * wall, ih + wall
-        x, y = (float(v) for v in tray["xy"])
+        x, y = scene.to_world(tray["xy"], tray.get("frame", "world"))
 
         # Offsets are from the centre of the outer bounding box, whose bottom
         # rests on the table top.
@@ -239,9 +285,25 @@ class Scene:
 
     @property
     def mount_xy(self) -> Tuple[float, float]:
-        """Where on the table the robot stands."""
+        """Where on the floor the robot's pedestal stands."""
         x, y = self.config["robot"]["stand_xy"]
         return float(x), float(y)
+
+    @property
+    def table_xy(self) -> Tuple[float, float]:
+        """Centre of the table top, in the scene frame."""
+        x, y = self.config["table"].get("xy", [0.0, 0.0])
+        return float(x), float(y)
+
+    @property
+    def table_near_edge(self) -> float:
+        """The y of the table edge nearest the robot.
+
+        The reachable part of the table starts here, so it is worth having a
+        name: everything the arm works on has to sit between this and the
+        limit of its reach.
+        """
+        return self.table_xy[1] - self._objects["table"].dimensions[1] / 2.0
 
     @property
     def mount_yaw(self) -> float:

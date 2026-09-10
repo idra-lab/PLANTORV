@@ -332,7 +332,7 @@ than a value silently ignored — a misspelt threshold would otherwise be record
 configured while changing nothing.
 
 ```yaml
-# segmentation/conf/sam21_l.yaml
+# segmentation/conf/sam21-l.yaml
 MODEL: "sam"
 CHECKPOINT: "models/sam/sam2.1_l.pt"
 

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-__maintainers__ = ["Enrico Saccon", "Davide De Martini", "Marco Roveri", "Davide Nardi"]
+__maintainers__ = ["Enrico Saccon", "Tommaso Faraci"]
 
 """One place that assembles the MoveIt parameters.
 

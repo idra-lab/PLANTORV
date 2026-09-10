@@ -2,7 +2,7 @@ from glob import glob
 
 from setuptools import find_packages, setup
 
-__maintainers__ = ["Enrico Saccon", "Davide De Martini", "Marco Roveri", "Davide Nardi"]
+__maintainers__ = ["Enrico Saccon", "Tommaso Faraci"]
 
 package_name = "plantorv_planner"
 

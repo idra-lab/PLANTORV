@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-__maintainers__ = ["Enrico Saccon", "Davide De Martini", "Marco Roveri", "Davide Nardi"]
+__maintainers__ = ["Enrico Saccon", "Tommaso Faraci"]
 
 """Gazebo, the UR3 on its stand, its controllers, and the scene nodes.
 
@@ -24,12 +24,15 @@ plantorv_moveit_config and the two are composed in plantorv_bringup.
 """
 
 import os
+import tempfile
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
+    OpaqueFunction,
     RegisterEventHandler,
 )
 from launch.conditions import IfCondition
@@ -117,19 +120,54 @@ def generate_launch_description():
         ],
     )
 
-    def spawner(controller):
+    def spawner(controller, extra=None):
         return Node(
             package="controller_manager",
             executable="spawner",
             output="screen",
-            arguments=[controller, "--controller-manager", "/controller_manager"],
+            arguments=[controller, "--controller-manager", "/controller_manager"]
+            + (extra or []),
         )
+
+    def spawn_cartesian_controller(context, *args, **kwargs):
+        """Spawn cartesian_motion_controller, inactive, with the URDF attached.
+
+        On Humble a controller reads ``robot_description`` from a parameter on
+        its own node -- Jazzy added a way to take it from the controller
+        manager, and this package still supports both -- so the URDF cannot sit
+        in ur3_controllers.yaml, which gazebo_ros2_control reads off disk. The
+        spawner loads a params file into a controller before configuring it,
+        which is the hook that is left, so the xacro is resolved here and
+        written to one.
+
+        Inactive, because it wants the same command interfaces as the
+        trajectory controller and the planner decides which of the two runs.
+        """
+        urdf = robot_description.perform(context)
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix="cartesian_motion_controller_",
+            suffix=".yaml",
+            delete=False,
+        )
+        yaml.safe_dump(
+            {"cartesian_motion_controller": {"ros__parameters": {"robot_description": urdf}}},
+            handle,
+        )
+        handle.close()
+        return [
+            spawner(
+                "cartesian_motion_controller",
+                extra=["--inactive", "--param-file", handle.name],
+            )
+        ]
 
     joint_state_broadcaster = spawner("joint_state_broadcaster")
     trajectory_controller = spawner("joint_trajectory_controller")
+    cartesian_controller = OpaqueFunction(function=spawn_cartesian_controller)
 
     # gazebo_ros2_control only exists once the model is in the world, and the
-    # trajectory controller wants joint states before it starts, so the two
+    # trajectory controller wants joint states before it starts, so the
     # spawners are chained rather than raced.
     controllers = [
         RegisterEventHandler(
@@ -137,6 +175,9 @@ def generate_launch_description():
         ),
         RegisterEventHandler(
             OnProcessExit(target_action=joint_state_broadcaster, on_exit=[trajectory_controller])
+        ),
+        RegisterEventHandler(
+            OnProcessExit(target_action=trajectory_controller, on_exit=[cartesian_controller])
         ),
     ]
 

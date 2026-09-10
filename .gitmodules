@@ -1,3 +1,6 @@
 [submodule "ros_ws/src/grippers_ur_ros2"]
 	path = ros_ws/src/grippers_ur_ros2
 	url = git@github.com:idra-lab/grippers_ur_ros2
+[submodule "ros_ws/src/cartesian_controllers"]
+	path = ros_ws/src/cartesian_controllers
+	url = git@github.com:fzi-forschungszentrum-informatik/cartesian_controllers.git

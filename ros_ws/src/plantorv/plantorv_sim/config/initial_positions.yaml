@@ -1,9 +1,15 @@
 # Joint values the arm starts at, in Gazebo and under mock hardware. The same
-# configuration is the `home` state in the SRDF: elbow up, tool pointing down
-# over the desk, well clear of the trays.
-shoulder_pan_joint: 0.0
-shoulder_lift_joint: -1.5707963
-elbow_joint: 1.5707963
-wrist_1_joint: -1.5707963
-wrist_2_joint: -1.5707963
-wrist_3_joint: 0.0
+# configuration is the `home` state in the SRDF and `home_positions` in
+# plantorv_planner/config/planner.yaml -- three copies of one fact, because the
+# simulator, MoveIt and the planner each read their own file.
+#
+# Measured on the real cell and shown in picture.jpg:
+#   shoulder_pan 90.37 deg, shoulder_lift -107.23 deg, elbow -85.97 deg, wrist_1 -80.84 deg, wrist_2 90.11 deg, wrist_3 2.16 deg
+# which puts tool0 at (0.110, 0.360, 1.223) in world with the tool pointing
+# straight down, 0.47 m above the table and above the transit plane.
+shoulder_pan_joint: 1.577254
+shoulder_lift_joint: -1.8715166
+elbow_joint: -1.5004596
+wrist_1_joint: -1.4109242
+wrist_2_joint: 1.5727162
+wrist_3_joint: 0.0376991

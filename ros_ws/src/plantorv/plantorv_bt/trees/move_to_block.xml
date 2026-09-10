@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<!--
+  Stand the tool over the first block, at a height given here rather than
+  worked out from the scene.
+
+  The motion is three straight segments, which is what MoveTo already does and
+  the shape every action in this library uses:
+
+    up, vertically, to the transit plane. From the taught home the tool is
+    already on it, so this segment is empty and nothing happens;
+
+    across, horizontally, at the transit plane, to the point above the block;
+
+    down, vertically, to the height below.
+
+  Nothing moves diagonally towards the table at any point.
+
+  z is 0.90 by hand, not derived. The height the scene would compute for a
+  block is its top face plus a clearance, which assumes tool0 is where the
+  gripper grips. It is not: a taught grasp of this block puts tool0 at 1.037,
+  227 mm higher, because that is how long the gripper is. Until that is in the
+  model, a derived height would drive the gripper through the block, so the
+  height is stated instead and can be lowered a little at a time.
+
+  The block's x and y still come from the scene, so moving the block means
+  editing scene.yaml and not this file.
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+
+  <BehaviorTree ID="MainTree">
+    <Sequence name="stand_over_first_block">
+      <Log message="to the transit plane, across above cube_1, then down to z = 0.90"/>
+      <MoveTo target="cube_1" z="1.037"/>
+      <Log message="The tool is over the block, pointing down"/>
+      <CloseGripper/>
+      <Log message="The gripper has locked"/>
+      <MoveTo target="tray_red" z="1.043"/>
+      <Log message="The block is over the blue tray"/>      
+      <OpenGripper/>
+      <Log message="The gripper has been opened"/>
+    </Sequence>
+  </BehaviorTree>
+
+</root>

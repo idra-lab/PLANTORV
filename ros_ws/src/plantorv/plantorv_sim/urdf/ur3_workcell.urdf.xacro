@@ -14,12 +14,16 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 
-  The UR3 and the two static things it is bolted to, namely the desk and the
-  stand on it. They live in the robot description rather than in the Gazebo
-  world so that there is exactly one statement of how high base_link sits, and
+  The UR3, the pedestal it is bolted to and the table it reaches over. They
+  live in the robot description rather than in the Gazebo world so that there
+  is exactly one statement of how high base_link sits, and
   Gazebo, RViz, TF and MoveIt's collision checking all read it from here. Their sizes
   come from config/scene.yaml, the same file the world and the planning scene
   are generated from.
+
+  The pedestal and the table are siblings, both welded to world and standing on
+  the floor. Neither carries the other. The arm is not mounted on the table; it
+  stands beside it and works over it, which is the layout in picture.jpg.
 
   Keep a colon followed by a space out of every comment in this file.
   gazebo_ros2_control hands the generated URDF to the controller manager as a
@@ -51,12 +55,45 @@
   <xacro:arg name="sim_gazebo" default="true"/>
   <xacro:arg name="use_fake_hardware" default="false"/>
   <xacro:arg name="robot_ip" default="0.0.0.0"/>
+
+  <!-- The three files the UR hardware interface reads at configure time. The
+       ur_robot macro defaults them to the literal string
+       'to_be_filled_by_ur_robot_driver', which is not a path, and the driver
+       then fails to configure with
+
+         Opening file 'to_be_filled_by_ur_robot_driver' failed with error:
+         No such file or directory
+         Failed to 'configure' hardware 'ur3'
+
+       followed by every controller failing to activate because the hardware
+       exported no interfaces. ur_robot_driver's own ur_control.launch.py fills
+       them in; this file stands in for it, so it fills them in too. The values
+       are the same ones that launch file uses. -->
+  <xacro:arg name="script_filename"
+             default="$(find ur_client_library)/resources/external_control.urscript"/>
+  <xacro:arg name="input_recipe_filename"
+             default="$(find ur_robot_driver)/resources/rtde_input_recipe.txt"/>
+  <xacro:arg name="output_recipe_filename"
+             default="$(find ur_robot_driver)/resources/rtde_output_recipe.txt"/>
+
+  <!-- headless_mode true has the driver push the control script to the robot
+       over the primary interface itself. False instead waits for the External
+       Control URCap program to be running on the pendant and to connect. True
+       needs no pendant interaction, which is why it is the default here, and
+       it needs the robot to accept a script, which on an e-Series means
+       Remote Control mode.
+
+       Keep a double hyphen out of every comment in this file, for the same
+       reason as the colon followed by a space noted at the top: XML forbids
+       it inside a comment, and xacro fails to parse the file at all. -->
+  <xacro:arg name="headless_mode" default="true"/>
   <xacro:arg name="safety_limits" default="true"/>
   <xacro:arg name="safety_pos_margin" default="0.15"/>
   <xacro:arg name="safety_k_position" default="20"/>
 
   <xacro:property name="scene" value="${xacro.load_yaml('$(arg scene_config)')}"/>
   <xacro:property name="table_size" value="${scene['table']['size']}"/>
+  <xacro:property name="table_xy" value="${scene['table']['xy']}"/>
   <xacro:property name="stand_size" value="${scene['robot']['stand_size']}"/>
   <xacro:property name="stand_xy" value="${scene['robot']['stand_xy']}"/>
   <xacro:property name="mount_height" value="${scene['robot']['mount_height']}"/>
@@ -86,27 +123,31 @@
     </link>
   </xacro:macro>
 
-  <material name="desk_wood"><color rgba="0.72 0.60 0.44 1.0"/></material>
-  <material name="stand_grey"><color rgba="0.35 0.35 0.38 1.0"/></material>
+  <material name="desk_wood"><color rgba="0.85 0.72 0.52 1.0"/></material>
+  <material name="stand_grey"><color rgba="0.20 0.20 0.22 1.0"/></material>
 
-  <!-- world sits on the floor at the centre of the desk top; x runs along the
-       long side of the desk, y towards the robot. -->
+  <!-- world sits on the floor directly under the robot's base axis, so the
+       robot base is the origin; x runs along the long side of the table, y
+       from the robot out across it. -->
   <link name="world"/>
 
+  <!-- The table, on the floor in front of the robot. Its centre comes from
+       scene.yaml rather than being the origin, because the origin is now the
+       robot rather than the table. -->
   <xacro:box_link name="table_link" size="${table_size}" mass="60.0" material="desk_wood"/>
   <joint name="world_to_table" type="fixed">
     <parent link="world"/>
     <child link="table_link"/>
-    <origin xyz="0 0 ${table_size[2] / 2.0}" rpy="0 0 0"/>
+    <origin xyz="${table_xy[0]} ${table_xy[1]} ${table_size[2] / 2.0}" rpy="0 0 0"/>
   </joint>
 
+  <!-- The pedestal, on the floor, welded to world and not to the table. -->
   <xacro:box_link name="stand_link" size="${stand_size}" mass="15.0" material="stand_grey"/>
-  <joint name="table_to_stand" type="fixed">
-    <parent link="table_link"/>
+  <joint name="world_to_stand" type="fixed">
+    <parent link="world"/>
     <child link="stand_link"/>
-    <!-- The stand rests on the desk top, at the middle of the long side. -->
     <origin
-      xyz="${stand_xy[0]} ${stand_xy[1]} ${(table_size[2] + stand_size[2]) / 2.0}"
+      xyz="${stand_xy[0]} ${stand_xy[1]} ${stand_size[2] / 2.0}"
       rpy="0 0 0"/>
   </joint>
 
@@ -146,11 +187,15 @@
     use_fake_hardware="$(arg use_fake_hardware)"
     sim_gazebo="$(arg sim_gazebo)"
     sim_ignition="false"
-    headless_mode="false"
+    headless_mode="$(arg headless_mode)"
     robot_ip="$(arg robot_ip)"
+    script_filename="$(arg script_filename)"
+    input_recipe_filename="$(arg input_recipe_filename)"
+    output_recipe_filename="$(arg output_recipe_filename)"
     initial_positions="${xacro.load_yaml('$(arg initial_positions_file)')}">
-    <!-- base_link is mounted on top of the stand; the yaw turns the arm's
-         front towards the trays in the middle of the desk. -->
+    <!-- base_link is mounted on top of the pedestal. The yaw turns the arm's
+         front out over the table; see the note on `yaw` in scene.yaml for why
+         it is pi and not a matter of taste. -->
     <origin xyz="0 0 ${stand_size[2] / 2.0}" rpy="0 0 ${mount_yaw}"/>
   </xacro:ur_robot>
 

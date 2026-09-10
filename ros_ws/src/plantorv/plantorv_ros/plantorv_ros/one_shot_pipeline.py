@@ -223,8 +223,8 @@ class OneShotPipelineNode(Node):
             desired_encoding="passthrough",
         )
 
-        rgb_path = self.rgb_dir / "img0.png"
-        depth_path = self.depth_dir / "img0.png"
+        rgb_path = self.rgb_dir / "img_0.png"
+        depth_path = self.depth_dir / "img_0.png"
 
         if not cv2.imwrite(str(rgb_path), rgb):
             raise RuntimeError(
@@ -262,7 +262,7 @@ class OneShotPipelineNode(Node):
         # Raw depth values only span a small fraction of the
         # uint16 range, so the file above looks solid black in a
         # normal viewer. Save a rescaled, colorized copy too.
-        preview_path = self.depth_preview_dir / "img0.png"
+        preview_path = self.depth_preview_dir / "img_0.png"
 
         if not cv2.imwrite(
             str(preview_path),

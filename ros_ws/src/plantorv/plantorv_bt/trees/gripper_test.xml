@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!--
+  Open the gripper, wait, close it, wait, open it again. The arm does not move.
+
+  The tree to run first after wiring the gripper up, because it separates the
+  two things that can be wrong: if this works the driver, the RS485 URCap and
+  the socat tunnel are all fine, and anything that fails later is about the
+  arm rather than the hand.
+
+  Sleeps because the driver returns as soon as the gripper reports the move,
+  and watching it is the only check there is that it did what was asked. There
+  is no feedback here about whether anything is held.
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+
+  <BehaviorTree ID="MainTree">
+    <Sequence name="open_close_open">
+      <Log message="opening"/>
+      <OpenGripper/>
+      <Sleep msec="1500"/>
+      <Log message="closing"/>
+      <CloseGripper/>
+      <Sleep msec="1500"/>
+      <Log message="opening again"/>
+      <OpenGripper/>
+    </Sequence>
+  </BehaviorTree>
+
+</root>
