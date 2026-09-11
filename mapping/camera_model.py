@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -63,7 +63,7 @@ _ROT = np.asarray(
 )
 _TRANS = np.asarray([-32.6072, -0.835282, 1.99768], dtype=np.float64)
 
-_DEPTH_DIST = Distortion(
+_DEPTH_DISTORTION = Distortion(
     k1=20.449,
     k2=9.65474,
     k3=0.311488,
@@ -74,7 +74,7 @@ _DEPTH_DIST = Distortion(
     p2=-8.77438e-06,
 )
 
-_RGB_DIST = Distortion(
+_RGB_DISTORTION = Distortion(
     k1=0.0767264,
     k2=-0.104236,
     k3=0.0419684,
@@ -87,11 +87,11 @@ _RGB_DIST = Distortion(
 
 _HARDCODED_CALIBRATIONS: List[CalibrationSet] = [
     CalibrationSet(
-        depth_distortion=_DEPTH_DIST,
+        depth_distortion=_DEPTH_DISTORTION,
         depth_intrinsic=Intrinsics(
             cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024
         ),
-        rgb_distortion=_RGB_DIST,
+        rgb_distortion=_RGB_DISTORTION,
         rgb_intrinsic=Intrinsics(
             cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360
         ),
@@ -99,11 +99,11 @@ _HARDCODED_CALIBRATIONS: List[CalibrationSet] = [
         trans=_TRANS,
     ),
     CalibrationSet(
-        depth_distortion=_DEPTH_DIST,
+        depth_distortion=_DEPTH_DISTORTION,
         depth_intrinsic=Intrinsics(
             cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024
         ),
-        rgb_distortion=_RGB_DIST,
+        rgb_distortion=_RGB_DISTORTION,
         rgb_intrinsic=Intrinsics(
             cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480
         ),
@@ -111,11 +111,11 @@ _HARDCODED_CALIBRATIONS: List[CalibrationSet] = [
         trans=_TRANS,
     ),
     CalibrationSet(
-        depth_distortion=_DEPTH_DIST,
+        depth_distortion=_DEPTH_DISTORTION,
         depth_intrinsic=Intrinsics(
             cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576
         ),
-        rgb_distortion=_RGB_DIST,
+        rgb_distortion=_RGB_DISTORTION,
         rgb_intrinsic=Intrinsics(
             cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360
         ),
@@ -123,11 +123,11 @@ _HARDCODED_CALIBRATIONS: List[CalibrationSet] = [
         trans=_TRANS,
     ),
     CalibrationSet(
-        depth_distortion=_DEPTH_DIST,
+        depth_distortion=_DEPTH_DISTORTION,
         depth_intrinsic=Intrinsics(
             cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576
         ),
-        rgb_distortion=_RGB_DIST,
+        rgb_distortion=_RGB_DISTORTION,
         rgb_intrinsic=Intrinsics(
             cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480
         ),
@@ -262,3 +262,88 @@ def _project_to_pixels(
     u = intr.fx * xd + intr.cx
     v = intr.fy * yd + intr.cy
     return u, v
+
+
+def scale_intrinsics(intrinsic: Intrinsics, width: int, height: int) -> Intrinsics:
+    """Return intrinsics of the same sensor sampled onto a frame of another size.
+
+    The focal length in pixels scales with the sampling density, and the
+    principal point follows the convention OpenCV resizes with: the centre of a
+    destination pixel sits at ``(x + 0.5) / scale - 0.5`` of the source, so the
+    principal point of the scaled frame is ``(c + 0.5) * scale - 0.5``. The
+    distortion coefficients act on normalised coordinates and do not scale.
+
+    Parameters
+    ----------
+    intrinsic : Intrinsics
+        Intrinsics recorded at their own resolution.
+    width : int
+        Width of the frame the intrinsics are wanted for.
+    height : int
+        Height of that frame.
+
+    Returns
+    -------
+    Intrinsics
+        The same optics expressed in the pixels of the requested frame size.
+
+    Raises
+    ------
+    ValueError
+        If the requested size is not a uniform scaling of the recorded one,
+        which would mean a different field of view rather than a resampling.
+    """
+    scale_x = width / intrinsic.width
+    scale_y = height / intrinsic.height
+    if abs(scale_x - scale_y) > 1e-6:
+        raise ValueError(
+            f"{width}x{height} is not a uniform scaling of the calibrated "
+            f"{intrinsic.width}x{intrinsic.height}: the aspect ratio differs"
+        )
+
+    return Intrinsics(
+        cx=(intrinsic.cx + 0.5) * scale_x - 0.5,
+        cy=(intrinsic.cy + 0.5) * scale_y - 0.5,
+        fx=intrinsic.fx * scale_x,
+        fy=intrinsic.fy * scale_y,
+        width=width,
+        height=height,
+    )
+
+
+def rgb_calibration_for_size(width: int, height: int) -> Optional[Tuple[Intrinsics, Distortion]]:
+    """Return the colour-sensor calibration of a frame of that size.
+
+    The colour intrinsics are recorded at 640x360 and 640x480 only, but the
+    camera streams colour at larger sizes of the same two aspect ratios, and
+    `RGBDMapper` itself aligns depth into the recorded size and leaves the
+    result to be resampled up to the frame. A frame whose size is a uniform
+    scaling of a recorded one is therefore the same optics sampled more finely,
+    and its intrinsics are the recorded ones scaled by :func:`scale_intrinsics`.
+    A size of neither aspect ratio has no calibration.
+
+    Parameters
+    ----------
+    width : int
+        Width of the colour frame in pixels.
+    height : int
+        Height of the colour frame in pixels.
+
+    Returns
+    -------
+    Optional[Tuple[Intrinsics, Distortion]]
+        The colour intrinsics for that frame size and the distortion
+        coefficients, which are independent of the size, or None when no
+        calibration shares the frame's aspect ratio.
+    """
+    for calibration in _HARDCODED_CALIBRATIONS:
+        intrinsic = calibration.rgb_intrinsic
+        if intrinsic.width == width and intrinsic.height == height:
+            return intrinsic, calibration.rgb_distortion
+
+    for calibration in _HARDCODED_CALIBRATIONS:
+        intrinsic = calibration.rgb_intrinsic
+        if width * intrinsic.height == height * intrinsic.width:
+            return scale_intrinsics(intrinsic, width, height), calibration.rgb_distortion
+
+    return None

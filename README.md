@@ -636,9 +636,11 @@ and the annotation dictionary, and adds three keys per object:
 from mapping.rgbd_mapper import main_coords
 
 image_dict = main_coords(image, depth_path, image_dict)
-# image_dict["mask_0"]["coord_center&depth"] == [center_x, center_y, depth_mm]
-# image_dict["mask_0"]["object_depth_mm"]    == depth_mm
-# image_dict["mask_0"]["depth_association"]  == "bbox-center"
+# image_dict["mask_0"]["coord_center&depth"]    == [center_x, center_y, depth_mm]
+# image_dict["mask_0"]["object_depth_mm"]       == depth_mm
+# image_dict["mask_0"]["depth_association"]     == "bbox-center"
+# image_dict["mask_0"]["object_point_camera_m"] == [x, y, z]   # metres, camera frame
+# image_dict["mask_0"]["object_point_pixel"]    == [u, v]
 ```
 
 The centre is always the middle of the object's bounding box. How the single depth value is
@@ -663,6 +665,47 @@ which is what [`evaluation/depth_correlation.py`](evaluation/depth_correlation.p
 `object_depth_mm` holds the same number under a name that does not claim where it was
 measured, and `depth_association` records which strategy actually produced it (`bbox-center`
 for an object that fell back).
+
+### The 3D point
+
+`object_point_camera_m` is the object as `[x, y, z]` **metres in the colour camera's optical
+frame**: x to the right of the image, y down it, z along the optical axis, origin at the
+colour sensor. It is obtained by undistorting one pixel to normalised coordinates through the
+colour intrinsics and scaling by the depth, so `z` is the same number `object_depth_mm`
+carries, in metres. `object_point_pixel` is the `[u, v]` it was back-projected through.
+
+The intrinsics are looked up by frame size from `rgb_calibration_for_size`, which reads the
+same hardcoded colour calibration the reprojection uses. This works for either
+`--depth-source`, because both hand `attach_object_depths` a depth map already registered to
+the RGB frame and therefore the size of it.
+
+[`mapping/camera_model.py`](mapping/camera_model.py) records the colour intrinsics at
+**640x360** and **640x480** only, but the camera streams colour at larger sizes of those two
+aspect ratios — 1280x720 is 640x360 sampled twice as finely, and `RGBDMapper` already aligns
+depth into 640x360 and lets `SensorDepthProvider` resample the result up to the frame. A frame
+whose size is a uniform scaling of a recorded one therefore gets the recorded intrinsics
+scaled by `scale_intrinsics`: the focal lengths scale with the sampling density and the
+principal point follows the convention OpenCV resizes with, `(c + 0.5) * scale - 0.5`. The
+distortion coefficients act on normalised coordinates and are the same at any size. A frame of
+an aspect ratio neither entry shares leaves `object_point_camera_m` at `None` rather than
+inventing intrinsics, as does an object with no valid depth. Pass
+`rgb_calibration=(intrinsics, distortion)` to `attach_object_depths` to override the lookup.
+
+Which pixel the point is back-projected through depends on the association:
+
+- `bbox-center` uses the centre of the bounding box, the pixel the depth was read at.
+- `mask-median` cannot use the bounding-box centre: the depth is a median over the mask, and
+  pairing it with a centre that lies at a different distance would describe a point the scene
+  does not contain. The mask's **centroid** is used when the centroid's own depth is within
+  0.1 mm (1e-4 m) of the median, and otherwise the **valid mask pixel nearest to the centroid
+  whose depth is within that tolerance**. When the median matches no pixel at all — which the
+  median of an even number of depths allows — the candidates become the mask pixels whose
+  depth is closest to the median, and the nearest of those to the centroid is taken. The
+  reported `z` stays the median in every case.
+
+Note that the monocular backend scales its prediction with `--depth-focal-length-px`, whose
+default is neither of the calibrated colour focal lengths, so a monocular `z` is metric on its
+own focal rather than on the calibration the back-projection uses.
 
 The masks come from `SegmentationModel.last_masks`, which `individual_mask` fills in the same
 order as the crops and boxes it returns; `segmentation.py` stores them next to the crops, and
