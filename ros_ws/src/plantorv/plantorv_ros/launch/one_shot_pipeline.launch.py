@@ -57,7 +57,13 @@ def generate_launch_description():
             description='Reach the camera over Ethernet instead of USB.',
         ),
         DeclareLaunchArgument('camera_name', default_value='camera'),
-        DeclareLaunchArgument('depth_registration', default_value='true'),
+        # Keep the D2C alignment off. With it on the driver rewrites
+        # /camera/depth/image_raw into the colour frame, so the depth
+        # image arrives at the colour resolution (1280x720). The
+        # RGBDMapper in mapping/rgbd_mapper.py does that alignment
+        # itself and needs the native 640x576 NFOV depth frame; a
+        # pre-aligned one has no matching hardcoded calibration.
+        DeclareLaunchArgument('depth_registration', default_value='false'),
 
         # Ethernet only. With enumerate_net_device set to false the driver
         # connects straight to net_device_ip:net_device_port instead of
@@ -94,9 +100,13 @@ def generate_launch_description():
             'depth_topic',
             default_value=['/', camera_name, '/depth/image_raw'],
         ),
+        # depth_registered/points is the coloured cloud, which the driver
+        # only publishes with enable_colored_point_cloud:=true (and that in
+        # turn forces D2C). depth/points is the plain cloud published by
+        # default.
         DeclareLaunchArgument(
             'pointcloud_topic',
-            default_value=['/', camera_name, '/depth_registered/points'],
+            default_value=['/', camera_name, '/depth/points'],
         ),
     ]
 

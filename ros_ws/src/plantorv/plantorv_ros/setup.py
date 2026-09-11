@@ -13,6 +13,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
+        ('share/' + package_name + '/rviz', glob('rviz/*.rviz')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,7 +25,11 @@ setup(
     entry_points={
         'console_scripts': [
             'rgbd_capturer = plantorv_ros.rgbd_capturer:main', 
-            'one_shot_pipeline = plantorv_ros.one_shot_pipeline:main'
+            'one_shot_pipeline = plantorv_ros.one_shot_pipeline:main',
+            'charuco_tf_publisher = plantorv_ros.charuco_tf_publisher:main',
+            'aruco_tf_publisher = plantorv_ros.aruco_tf_publisher:main',
+            'save_marker_transforms = plantorv_ros.save_marker_transforms:main',
+            'static_marker_publisher = plantorv_ros.static_marker_publisher:main'
         ],
     },
 )

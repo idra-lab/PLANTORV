@@ -1,0 +1,129 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /TF1
+        - /Charuco board1
+        - /Aruco markers1
+        - /Scene cloud1
+        - /Coloured cloud1
+      Splitter Ratio: 0.5
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 0.1
+      Plane: XY
+      Plane Cell Count: 20
+      Color: 160; 160; 164
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Reference Frame: <Fixed Frame>
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Marker Scale: 0.2
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Update Interval: 0
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Charuco board
+      Enabled: true
+      Topic:
+        Value: /charuco_tf_publisher/board_markers
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Aruco markers
+      Enabled: true
+      Topic:
+        Value: /aruco_tf_publisher/marker_outlines
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/Image
+      Name: Aruco detection
+      Enabled: true
+      Topic:
+        Value: /aruco_tf_publisher/debug_image
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/Image
+      Name: Charuco detection
+      Enabled: true
+      Topic:
+        Value: /charuco_tf_publisher/debug_image
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Scene cloud
+      Enabled: true
+      Topic:
+        Value: /camera/depth/points
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+        History Policy: Keep Last
+      Color Transformer: AxisColor
+      Axis: Z
+      Size (m): 0.003
+      Style: Points
+      Decay Time: 0
+      Use Fixed Frame: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Coloured cloud
+      Enabled: true
+      Topic:
+        Value: /camera/depth_registered/points
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+        History Policy: Keep Last
+      Color Transformer: RGB8
+      Size (m): 0.003
+      Style: Points
+      Decay Time: 0
+      Use Fixed Frame: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: camera_color_optical_frame
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 1.5
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.5
+      Pitch: -0.5
+      Yaw: 1.57
+      Target Frame: <Fixed Frame>
+    Saved: ~
+Window Geometry:
+  Height: 900
+  Width: 1400
+  Displays:
+    collapsed: false
+  Charuco detection:
+    collapsed: false
+  Aruco detection:
+    collapsed: false
