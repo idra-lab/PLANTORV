@@ -30,6 +30,7 @@ Requires ``ultralytics >= 8.3.237`` and the gated ``sam3.pt`` checkpoint; see
 """
 
 import base64
+import gc
 import html
 import json
 import tempfile
@@ -43,6 +44,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union, c
 
 import cv2
 import numpy as np
+import torch
 import yaml
 from PIL import Image
 from ultralytics.models.sam import SAM3SemanticPredictor
@@ -324,6 +326,14 @@ class SAM3Model(SegmentationModel):
             ``save_dir``.
         """
         super().__init__(save_dir=save_dir, filters=filters)
+
+        # Release what earlier models left behind before loading SAM 3. Collecting
+        # first drops unreferenced tensors, so the cache they sat in can be freed.
+        # This only returns memory cached by this process: whatever another
+        # process holds, such as a vLLM server, stays where it is.
+        if str(device).startswith("cuda") and torch.cuda.is_available():
+            gc.collect()
+            torch.cuda.empty_cache()
 
         checkpoint = str(sam3_checkpoint)
         if not checkpoint.endswith(SAM3_CHECKPOINTS):
