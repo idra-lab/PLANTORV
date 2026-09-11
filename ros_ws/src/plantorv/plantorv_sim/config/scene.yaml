@@ -1,76 +1,124 @@
 # The one description of the workcell.
 #
 # Everything else is derived from this file: scripts/generate_world.py turns it
-# into worlds/plantorv_table.world, scene_spawner.py spawns the cubes from it,
+# into worlds/plantorv_table.world, scene_manager.py spawns the cubes from it,
 # world_model.py answers pose queries with it, and the URDF reads the table and
 # stand dimensions out of it. Change a number here and rerun the generator --
 # do not edit the .world by hand.
 #
-# Frame `world` sits on the floor, at the centre of the table top: x runs along
-# the long side of the table, y towards the robot, z up.
+# Frame `world` sits on the floor, directly under the robot's base axis, so the
+# robot base is the origin. x runs along the long side of the table, y from the
+# robot towards and across the table, z up.
+#
+# This is the layout in picture.jpg: the arm on a pedestal behind the table's
+# near long edge, reaching out over it. The pedestal and the table both stand
+# on the floor and are independent of each other -- the arm is not bolted to
+# the table.
 
 frame_id: world
 
-table:
-  # Long side x short side x height. The top surface is therefore at z = 1.0.
-  size: [2.0, 1.0, 1.0]
-  color: [0.72, 0.60, 0.44, 1.0]
-
 robot:
-  # The stand stands on the table top, centred on the middle of the long side.
-  stand_size: [0.25, 0.25, 0.20]
-  stand_xy: [0.0, 0.45]
-  stand_color: [0.35, 0.35, 0.38, 1.0]
-  # Mount height of base_link above the floor: table height + stand height.
-  # Kept explicit because the planner and the URDF both need it.
-  mount_height: 1.20
-  # Yaw of the base, radians. 0 points the arm's +x along the table's +x; -pi/2
-  # turns its front towards the trays.
-  yaw: -1.5707963267948966
+  # The pedestal, on the floor, centred under the base axis. base_link sits on
+  # top of it, so the stand height and mount_height are the same number.
+  stand_size: [0.25, 0.25, 0.975]
+  stand_xy: [0.0, 0.0]
+  # Mount height of base_link above the floor. Kept explicit because the
+  # planner and the URDF both need it. Equal to the stand height, since the
+  # base bolts to the top of it.
+  mount_height: 0.975
+  # Yaw of the base about z, radians.
+  #
+  # pi, and not by taste. The home configuration below puts tool0 at bearing
+  # -106.98 degrees in base_link's own frame; turning the base by pi carries
+  # that to +73 degrees in world, which points the tool out over the table at
+  # (0.110, 0.360, 1.223) -- where picture.jpg shows it. Any other yaw here
+  # aims the same joint values somewhere off the table.
+  yaw: 3.141592653589793
+  stand_color: [0.20, 0.20, 0.22, 1.0]
 
-# Both trays sit in the middle of the table, one either side of the centre.
+# The table, on the floor in front of the robot. 160 cm along its long side,
+# 80 cm deep, 75 cm high, and the robot stands at the middle of the long side.
 #
-# Every inner dimension is twice what it used to be, which makes the outer
-# footprint 0.51 x 0.39 and forces the pair apart to x = +-0.27 to leave a gap
-# between them. That is as far out as they can go: the planner releases over
-# the tray's centre, and at x = +-0.27, y = 0.08 the approach pose is 0.496 m
-# from base_link against the UR3's 0.5 m reach. Moving the trays any further
-# from the robot puts placing out of reach -- see the note on the cubes.
+# xy is the centre of the top. The near edge therefore falls at y = 0.13, which
+# is 5 mm clear of the pedestal -- the table is pushed up to the pedestal, not
+# around it.
 #
-# The walls are left at 0.015; they are structural, not part of "twice as big".
+# Only about the nearest 40 cm of those 80 is inside a UR3's reach, and about
+# |x| < 0.44 of the 1.6 m width. The rest of the table is real and in the way,
+# which is why it is described here rather than left out.
+table:
+  size: [1.60, 0.80, 0.75]
+  xy: [0.0, 0.53]
+  color: [0.85, 0.72, 0.52, 1.0]
+
+# Two trays, side by side and touching, in front of the robot.
+#
+# 27.5 x 40 x 2.5 cm each, as measured. The 40 cm side runs along x, the
+# table's long axis, and they meet at x = 0, so the pair is 80 cm across and
+# 27.5 cm deep. That orientation is what picture.jpg shows: seen from where
+# that photo was taken, a 40 cm side across by a 27.5 cm side in depth appears
+# about 2.3 to 2.9 times wider than deep, and the trays in the photo are about
+# 2.4 to 2.7. Turned the other way they would look roughly square, and they
+# do not.
+#
+# `inner` plus `wall` has to come to the measured outside, so the numbers here
+# are 2.5 mm of wall short of it on each side; the outer box works out at
+# exactly 0.400 x 0.275 x 0.025.
+#
+# The near edge is at y = 0.275, which is 15 cm clear of the pedestal's front
+# face at y = 0.125. Fifteen centimetres from the base *axis* instead would put
+# the near edge at 0.15 and leave 1 cm between the table edge and the trays,
+# with nowhere for the blocks to stand -- and beside the trays is 0.52 m out,
+# past the arm's reach. The photo shows the blocks in front of the trays, so
+# the gap is measured from the pedestal.
+#
+# Placing into them is the furthest the arm ever has to go: the release pose
+# over a tray centre is 0.4703 m from base_link against a reach of 0.5. With
+# base_link at 0.975 the arm reaches 22.5 cm down to the table as well as out,
+# and it is the downward part that costs -- the release pose is 1.2 cm further
+# out than the transit point above it, not nearer. The outer corners of the
+# trays are not reachable at all, which does not matter, because the planner
+# releases over the centre.
 trays:
   - name: tray_blue
-    xy: [-0.27, 0.08]
-    inner: [0.48, 0.36, 0.12]
-    wall: 0.015
+    xy: [-0.20, 0.4125]
+    inner: [0.392, 0.267, 0.021]
+    wall: 0.004
     color: [0.10, 0.20, 0.80, 1.0]
   - name: tray_red
-    xy: [0.27, 0.08]
-    inner: [0.48, 0.36, 0.12]
-    wall: 0.015
+    xy: [-0.181, 0.336]
+    inner: [0.392, 0.267, 0.021]
+    wall: 0.004
     color: [0.80, 0.10, 0.10, 1.0]
 
-# The objects to be sorted, between the robot and the trays.
+# The blocks to be sorted, on the table between the robot and the trays.
 #
-# The doubled trays reach to y = 0.275 and the robot stand starts at y = 0.325,
-# so the 5 cm strip between them does not hold a 10 cm cube. The cubes sit at
-# y = 0.36 instead, beside the stand rather than in front of it: nothing else
-# on this table is both clear of the trays and inside the arm's reach. They are
-# kept off the centreline because the stand occupies x = -0.125 .. 0.125 at
-# this depth.
+# 3 x 3 cm and 6 cm high, so not cubes. `size` takes the three extents here
+# rather than one number. They keep the type name `cube` because that is what
+# the behaviour trees ask DetectObjects for and what the Gazebo model and the
+# planning-scene id are called; renaming the type would be a change to the
+# trees, not to the scene.
+#
+# At y = 0.20 they span 0.185 to 0.215, which leaves 5.5 cm to the table's near
+# edge and 6 cm to the trays. Spread in x so a traverse between two of them
+# does not run the length of the row.
+#
+# A block standing 6 cm tall is what sets the transit plane: carried under the
+# tool, its underside has to pass over the other blocks at 0.81, not just over
+# the 2.5 cm tray rims.
 cubes:
-  size: 0.10
-  mass: 0.20
+  size: [0.03, 0.03, 0.06]
+  mass: 0.05
   items:
     - name: cube_1
-      xy: [-0.36, 0.36]
+      xy: [0.355, 0.170]
       yaw: 0.0
       color: [0.10, 0.35, 0.90, 1.0]
     - name: cube_2
-      xy: [-0.22, 0.36]
+      xy: [-0.03, 0.25]
       yaw: 0.35
       color: [0.90, 0.15, 0.15, 1.0]
     - name: cube_3
-      xy: [0.30, 0.36]
+      xy: [0.12, 0.25]
       yaw: -0.20
       color: [0.10, 0.35, 0.90, 1.0]

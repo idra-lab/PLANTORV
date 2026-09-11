@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-__maintainers__ = ["Enrico Saccon", "Davide De Martini", "Marco Roveri", "Davide Nardi"]
+__maintainers__ = ["Enrico Saccon", "Tommaso Faraci"]
 
 """The four things the planner asks MoveIt for.
 
@@ -53,14 +53,14 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
+from plantorv_planner.errors import PlanningError
 from plantorv_planner.geometry import joint_path_length
 
 # How long to wait for any one call to move_group before giving up.
 CALL_TIMEOUT = 30.0
 
-
-class PlanningError(RuntimeError):
-    """MoveIt could not do what was asked. The message says what was asked."""
+# Re-exported: callers still import the error from here.
+__all__ = ["MoveItClient", "Plan", "PlanningError"]
 
 
 @dataclass
@@ -89,13 +89,31 @@ class MoveItClient:
         Link the Cartesian moves and the IK are expressed for.
     planning_frame : str
         Frame goals are given in.
+    switcher : ControllerSwitcher, optional
+        Used to activate the trajectory controller before a trajectory is
+        executed. Needed whenever something else may hold the command
+        interfaces -- which, since the Cartesian controller arrived, is most of
+        the time. Left out, execution assumes the controller is already active.
+    controller : str
+        Name of the trajectory controller move_group executes through. Must
+        match plantorv_moveit_config's moveit_controllers.yaml.
     """
 
-    def __init__(self, node: Node, group: str, tool_link: str, planning_frame: str):
+    def __init__(
+        self,
+        node: Node,
+        group: str,
+        tool_link: str,
+        planning_frame: str,
+        switcher=None,
+        controller: str = "joint_trajectory_controller",
+    ):
         self.node = node
         self.group = group
         self.tool_link = tool_link
         self.planning_frame = planning_frame
+        self.switcher = switcher
+        self.controller = controller
 
         callbacks = ReentrantCallbackGroup()
         self.move_client = ActionClient(node, MoveGroup, "/move_action", callback_group=callbacks)
@@ -340,9 +358,17 @@ class MoveItClient:
     # -- execution -------------------------------------------------------
 
     def execute(self, plan: Plan) -> None:
-        """Run a trajectory on the controller and wait for it to finish."""
+        """Run a trajectory on the controller and wait for it to finish.
+
+        The controller is activated first. move_group sends the trajectory to a
+        controller by name and does not care whether that controller currently
+        holds the joints; an inactive one rejects the goal, and the error that
+        comes back says nothing about why.
+        """
         if plan.is_empty:
             return
+        if self.switcher is not None:
+            self.switcher.ensure(self.controller)
         goal = ExecuteTrajectory.Goal()
         goal.trajectory = plan.trajectory
         result = self._send_action(self.execute_client, goal, timeout=CALL_TIMEOUT * 4)

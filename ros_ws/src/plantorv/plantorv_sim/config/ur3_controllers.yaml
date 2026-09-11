@@ -12,6 +12,14 @@ controller_manager:
     joint_trajectory_controller:
       type: joint_trajectory_controller/JointTrajectoryController
 
+    # Wants the same command interfaces as the trajectory controller, so only
+    # one of the two runs at a time. plantorv_planner switches between them:
+    # joint-space moves (`home`, and anything MoveIt executes) need the
+    # trajectory controller, straight tool moves need this one. It is spawned
+    # inactive for that reason.
+    cartesian_motion_controller:
+      type: cartesian_motion_controller/CartesianMotionController
+
 joint_state_broadcaster:
   ros__parameters:
     use_sim_time: true
@@ -39,3 +47,61 @@ joint_trajectory_controller:
       # MoveIt time-parameterises the whole trajectory, so leave the goal-time
       # tolerance open rather than have long plans abort at the last point.
       goal_time: 0.0
+
+# The controller that runs every straight tool move. It solves no inverse
+# kinematics: it integrates a simulated twin of the arm forward from the
+# measured joint positions towards the target pose, so the configuration it
+# produces is always continuous with the one the arm is in. That is why it is
+# here -- see plantorv_planner/cartesian_client.py.
+#
+# robot_description is missing on purpose. On Humble a controller reads the
+# URDF from a parameter on its own node, and the URDF is xacro output, so the
+# simulation launch resolves it and hands it to the spawner in a generated
+# params file.
+cartesian_motion_controller:
+  ros__parameters:
+    use_sim_time: true
+
+    # Must match tool_link and controller_base_frame in
+    # plantorv_planner/config/planner.yaml. `world` is the root of the workcell
+    # URDF, so targets in the planning frame need no transform; the controller
+    # refuses a target in any frame but this one.
+    robot_base_link: world
+    end_effector_link: tool0
+
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+
+    command_interfaces:
+      - position
+
+    solver:
+      # Overall responsiveness, and how many steps of the internal simulation
+      # run per control cycle. More iterations track a moving target more
+      # closely and cost more time in the update loop.
+      # Raised from 1.0 once the streamed target ran at a useful speed. At
+      # 0.15 m/s the tool trailed the target by up to 12.5 mm, and the lag is
+      # what makes a descent start off to one side of the cube it is aimed at
+      # rather than straight above it. Lag falls roughly in proportion to this.
+      error_scale: 3.0
+      iterations: 10
+      # Publishes the tool pose on ~/current_pose. The planner reads the pose
+      # from TF instead, so this is on for looking at, not for the planner.
+      publish_state_feedback: true
+
+    # How hard the controller pulls towards the target, per axis. These and
+    # error_scale are the whole tuning: too low and the tool lags the streamed
+    # target and the move times out short, too high and it overshoots on the
+    # descent. Start here, watch a `pick`, and change error_scale first.
+    pd_gains:
+      trans_x: {p: 1.0, d: 0.0}
+      trans_y: {p: 1.0, d: 0.0}
+      trans_z: {p: 1.0, d: 0.0}
+      rot_x: {p: 0.5, d: 0.0}
+      rot_y: {p: 0.5, d: 0.0}
+      rot_z: {p: 0.5, d: 0.0}

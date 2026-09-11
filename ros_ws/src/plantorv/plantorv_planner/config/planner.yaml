@@ -16,8 +16,11 @@ planner:
       - wrist_2_joint
       - wrist_3_joint
 
-    # Same values as the `home` group state in the SRDF.
-    home_positions: [0.0, -1.5707963, 1.5707963, -1.5707963, -1.5707963, 0.0]
+    # Same values as the `home` group state in the SRDF and as
+    # plantorv_sim/config/initial_positions.yaml. Measured on the real cell,
+    # in degrees: 90.37, -107.23, -85.97, -80.84, 90.11, 2.16. Puts tool0 at
+    # (0.110, 0.360, 1.223) pointing down.
+    home_positions: [1.577254, -1.8715166, -1.5004596, -1.4109242, 1.5727162, 0.0376991]
 
     planner_id: RRTConnect
     # Plans asked for per goal; the shortest is kept. See
@@ -28,6 +31,35 @@ planner:
     velocity_scaling: 0.25
     acceleration_scaling: 0.25
 
+    # Height of the transit plane, in the planning frame. Every action starts
+    # and ends with the tool on it, and every move between two objects runs
+    # along it. Both ends of such a move are at this height and a straight line
+    # between two points of equal height stays at that height, so a traverse
+    # cannot dip into the table however far it goes.
+    #
+    # Since the straight moves went to cartesian_motion_controller, which
+    # checks nothing, that argument is the only thing keeping the arm off the
+    # table.
+    #
+    # 1.223 is not calculated, it is the height the tool is at when the arm is
+    # at the taught home configuration, read off TF on the real cell. That
+    # makes it a height an operator has looked at and found clear, which is
+    # worth more than a derivation from a table height that is still unproven.
+    #
+    # It also makes the first move of any action flat: home already sits on the
+    # plane, so a traverse from home is a pure horizontal move at a height
+    # known to be safe, rather than a descent into a region measured from the
+    # model.
+    #
+    # Reach is what bounds it from above. At 1.223 the tool is 0.248 above
+    # base_link, and that vertical component is spent out of the same 0.5 m as
+    # the horizontal: home is 0.4508 m out, the taught position of cube_1
+    # 0.4652 m. A tray centre at the position currently in scene.yaml would be
+    # 0.5212 m, past the arm entirely -- but those tray positions are inferred
+    # rather than measured, and the one block that has been measured moved
+    # 167 mm when it was, so they should not be trusted to bound anything.
+    transit_height: 1.223
+
     # Height the tool approaches from and retreats to, straight up from the
     # object.
     approach_distance: 0.12
@@ -36,8 +68,185 @@ planner:
     # Height above a tray's rim at which a carried object is let go.
     drop_gap: 0.03
 
+    # Spacing along a straight move. Under the Cartesian back end this is how
+    # finely the commanded path is sampled for the workspace check; under the
+    # MoveIt back end it is max_step, as before.
     cartesian_step: 0.005
-    # Fraction of a straight-line move that has to be collision free for it to
-    # be used at all. Below this the planner falls back or fails loudly rather
-    # than executing a partial descent.
+
+    # Which back end runs the straight moves.
+    #
+    # "cartesian" streams target poses to cartesian_motion_controller. It never
+    # solves inverse kinematics, so consecutive points on a line cannot land in
+    # different arm configurations -- the failure jump_threshold in
+    # moveit_client exists to catch, and which once cost a 23.5 rad traverse.
+    #
+    # "moveit" puts /compute_cartesian_path back, to compare the two on the
+    # same tree. Compare the path_length in the action result: under the
+    # Cartesian back end it is measured rather than planned, but it is the same
+    # quantity.
+    motion_backend: cartesian
+
+    # Whether to start a MoveIt client at all. False, and nothing in the normal
+    # cycle misses it: `home` is a joint-space move sent straight to the
+    # trajectory controller (see joint_client.py) and the straight moves go to
+    # cartesian_motion_controller. move_group and OMPL are then not running,
+    # which is two fewer things to interrogate when a move does not happen.
+    #
+    # What is given up: the free-space fallback in `pick`, which is refused
+    # with a message instead of replaced, and the "moveit" motion_backend
+    # above. Reaching a pose from an arbitrary state is the one thing here that
+    # really is a planning problem, so it is refused rather than faked.
+    use_moveit: false
+
+    # Build and log every joint-space trajectory and send nothing. The way to
+    # read what `home` would do before it does it.
+    dry_run: false
+
+    # Joint-space limits for `home`, multiplied by the scaling factors above,
+    # so 0.10 rad/s and 0.20 rad/s^2 by default. Deliberately slow: the route
+    # is a straight line in joint space and nothing checks what it passes
+    # through.
+    joint_speed: 0.40        # rad/s
+    joint_accel: 0.80        # rad/s^2
+
+    # The whole-arm check. See plantorv_planner/link_guard.py.
+    #
+    # This is what the workspace bounds above do not do. They test where tool0
+    # goes; this walks the arm's own skeleton, taken from /robot_description,
+    # and tests every link against the table and pedestal boxes in that same
+    # description. A joint move is checked before it is sent, so a bad one is
+    # refused with the arm standing still. A Cartesian move cannot be checked
+    # in advance -- the controller chooses the configuration as it goes -- so
+    # there it runs on the measured configuration every cycle and abandons the
+    # move on contact with the inflated shell.
+    #
+    # link_radius is both the link thickness and the margin: a UR3's links are
+    # about 40 mm in radius, so 60 mm leaves 20 mm, and a Cartesian move stops
+    # about that far short of touching anything.
+    use_link_guard: true
+    link_radius: 0.06        # m
+
+    # The Robotiq 2f85 driver in grippers_ur_ros2, which serves one service and
+    # takes one word: open, close, activate or status. It is not ros2_control;
+    # the node tunnels to the robot's RS485 URCap and speaks Modbus on the far
+    # side, so it needs socat on the PATH and that URCap running on the
+    # pendant.
+    #
+    # False here and set true by the launch when running against the real arm.
+    # In simulation there is nothing to talk to, and `pick` still uses the fake
+    # grasp rather than the gripper.
+    use_gripper: false
+    gripper_service: /r2f85_gripper
+    gripper_timeout: 15.0    # s
+
+    # The two controllers that want the same command interfaces. Only one runs
+    # at a time; the planner switches. The trajectory controller's name must
+    # match plantorv_moveit_config/config/moveit_controllers.yaml, and against
+    # the real arm it is the driver's scaled_joint_trajectory_controller.
+    trajectory_controller: joint_trajectory_controller
+    cartesian_controller: cartesian_motion_controller
+
+    # The controller's robot_base_link. It refuses a target given in any other
+    # frame instead of transforming it, so keeping this equal to
+    # planning_frame -- which the workcell URDF is rooted at -- means nothing
+    # has to be transformed. Against a robot_description rooted at the arm,
+    # set base_link here and the client transforms through TF.
+    controller_base_frame: world
+
+    # The link the arm is mounted on, which is what the reach bounds below are
+    # measured from. This is not controller_base_frame, and the difference
+    # matters: that one is the frame the controller accepts targets in, and on
+    # this cell it is `world`, whose origin is the middle of the desk. Measure
+    # reach from there and every pose in the cell is over a metre out.
+    arm_base_frame: base_link
+
+    # Tool speed limits at velocity_scaling = acceleration_scaling = 1.0.
+    #
+    # These are multiplied by the scaling factors above, which default to 0.25,
+    # so the arm cruises at a quarter of what is written here: 0.15 m/s and
+    # 0.375 m/s^2. Read them together or the answer is four times wrong in the
+    # slow direction, which is not obvious from watching -- a slow arm looks
+    # like a cautious one. Setting 0.10 here gave 0.025 m/s and a 62 s pick,
+    # every second of it spent streaming the target rather than waiting for
+    # the arm, which tracked it to under half a millimetre throughout.
+    #
+    # The scaling factors are kept in the multiplication rather than removed
+    # because they are what a per-goal override in ExecuteAction sets, and a
+    # caller asking for half speed should get half speed here as it does from
+    # MoveIt.
+    #
+    # Which of the three binds depends on the distance. Over the 0.55 m
+    # traverse from home to a cube, speed binds at 5.8 s against 2.7 s for
+    # acceleration; over the 0.05 m descent into a tray, acceleration binds.
+    cartesian_speed: 0.60        # m/s
+    cartesian_accel: 1.50        # m/s^2
+    cartesian_rot_speed: 4.00    # rad/s
+
+    # Rate the target pose is published at. Far below the controller's own
+    # update rate on purpose: it converges towards a target under its own
+    # control law rather than tracking a stream point by point.
+    cartesian_rate: 125.0        # Hz
+
+    # When the tool counts as arrived.
+    # When the tool counts as arrived at a move that ends on an object: the
+    # descent onto a cube, and the pose a carried cube is released from.
+    cartesian_pos_tolerance: 0.002   # m
+    # When it counts as arrived anywhere else -- the end of a traverse, a lift
+    # onto the transit plane, a retreat. The controller converges
+    # asymptotically, so the last millimetre costs several times what the first
+    # centimetre does, and at the end of a traverse it buys nothing: the move
+    # finishes in open air and the descent after it is aimed at an absolute
+    # pose, which corrects whatever error is left. Most segments of a pick are
+    # of this kind, so this number rather than the one above is what sets how
+    # long a pick takes.
+    # 5 mm rather than something looser, because this number sets how far off
+    # the line a descent may begin. A traverse ends with the tool trailing the
+    # target, mostly along the direction of travel, so whatever is left here is
+    # lateral error at the top of the descent that follows -- and the gap
+    # between cube_1 and cube_2 is 4 cm.
+    cartesian_transit_tolerance: 0.005   # m
+    cartesian_rot_tolerance: 0.02    # rad
+    cartesian_timeout: 20.0          # s
+    # How long the tool may go without getting any closer before the move is
+    # called failed. The solver does not refuse a pose out of reach -- it
+    # converges as near as it can and holds there, which looks like a slow
+    # move. Without this, a bad target costs the whole timeout with the arm
+    # pulling against its limits.
+    cartesian_stall_time: 1.5        # s
+
+    # The volume the tool may move in. This is what stands in for collision
+    # checking, which the controller does not do: every commanded path is
+    # sampled at cartesian_step and every sample tested against these bounds.
+    #
+    # min_z is the desk surface, so the tool cannot be driven into it.
+    #
+    # The reach bounds are measured from base_link, which the layout puts at
+    # (0, 0.45, 1.20). They come from the scene, not from the arm's datasheet:
+    #
+    #   the furthest pose the planner ever builds is the release pose over a
+    #   tray centre, at 0.4703 m, with the transit point above it at 0.4591 and
+    #   the home pose at 0.4508. The outer bound has to clear all three and
+    #   stay under the UR3's 0.5 m, which leaves 30 mm of room -- the trays are
+    #   at the limit of what this arm can place into, and the release is the
+    #   move that gets closest to it;
+    #
+    #   the blocks sit in a row in front of the trays, so a traverse between
+    #   two of them passes 0.2016 m from base_link. The inner bound has to be
+    #   under that or the commonest traverse in sort_cubes.xml is refused. It
+    #   is there to catch a target driven at the base, not to second-guess the
+    #   layout.
+    #
+    # Both are checked against scene.yaml by plantorv_sim's
+    # test_scene.py, so a layout change that breaks them fails a test rather
+    # than a run.
+    #
+    # This checks where the tool goes. It does not check where the rest of the
+    # arm goes to put it there -- the transit plane above is what does that,
+    # and it is now the only thing that does.
+    workspace_min_z: 0.76
+    workspace_min_reach: 0.16
+    workspace_max_reach: 0.48
+
+    # Only read by the MoveIt back end. Fraction of a straight-line move that
+    # has to be collision free for it to be used at all.
     cartesian_min_fraction: 0.85

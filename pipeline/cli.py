@@ -29,7 +29,7 @@ ESTIMATED_DEPTH_SOURCES = ("depth-anything-v2", "monocular")
 # the backend, its checkpoint, what is forwarded to it and the thresholds that decide
 # which masks survive; see segmentation/conf.
 DEFAULT_SEGMENTER_CONFIG_FILE = (
-    Path(__file__).resolve().parent.parent / "segmentation" / "conf" / "sam21_l.yaml"
+    Path(__file__).resolve().parent.parent / "segmentation" / "conf" / "sam21-l.yaml"
 )
 
 

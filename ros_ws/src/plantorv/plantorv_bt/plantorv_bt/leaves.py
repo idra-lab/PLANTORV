@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-__maintainers__ = ["Enrico Saccon", "Davide De Martini", "Marco Roveri", "Davide Nardi"]
+__maintainers__ = ["Enrico Saccon", "Tommaso Faraci"]
 
 """The leaves that talk to the rest of the system.
 
@@ -164,6 +164,12 @@ class MoveTo(PlannerLeaf):
 
     With a target, the tool goes to the approach height over that object; with
     coordinates, straight to the point they name, tool pointing down.
+
+    ``<MoveTo target="cube_1" z="0.90"/>`` gives both: the object says where to
+    stand, the z says how high. The height the scene would work out is derived
+    from the block's top face and assumes tool0 is where the gripper grips,
+    which it is not while there is a real gripper on the flange, so being able
+    to say the height outright is what makes a taught height usable.
     """
 
     ACTION = "move_to"
@@ -171,6 +177,11 @@ class MoveTo(PlannerLeaf):
     def build_goal(self):
         goal = super().build_goal()
         if goal.target:
+            if "z" in self.attributes:
+                goal.pose.header.frame_id = self.port("frame", "world")
+                goal.pose.pose.position.z = float(self.port("z", 0.0, cast=float))
+                goal.pose.pose.orientation.x = 1.0
+                goal.pose.pose.orientation.w = 0.0
             return goal
         if "x" not in self.attributes:
             self.context.logger.error("MoveTo needs either a target or x, y and z")
@@ -203,6 +214,22 @@ class Place(PlannerLeaf):
 
     def on_result(self, result) -> None:
         self.blackboard.set("held_object", "")
+
+
+class OpenGripper(PlannerLeaf):
+    """``<OpenGripper/>`` -- open the gripper and wait."""
+
+    ACTION = "open_gripper"
+
+
+class CloseGripper(PlannerLeaf):
+    """``<CloseGripper/>`` -- close the gripper and wait.
+
+    Succeeds when the gripper reports that it moved, which is not the same as
+    reporting that it is holding something.
+    """
+
+    ACTION = "close_gripper"
 
 
 class ServiceLeaf(TreeNode):
@@ -331,6 +358,8 @@ LEAVES = {
     "MoveTo": MoveTo,
     "Pick": Pick,
     "Place": Place,
+    "OpenGripper": OpenGripper,
+    "CloseGripper": CloseGripper,
     "DetectObjects": DetectObjects,
     "MatchingTray": MatchingTray,
     "Log": Log,

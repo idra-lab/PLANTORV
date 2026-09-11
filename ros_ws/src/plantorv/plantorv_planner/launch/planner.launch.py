@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-__maintainers__ = ["Enrico Saccon", "Davide De Martini", "Marco Roveri", "Davide Nardi"]
+__maintainers__ = ["Enrico Saccon", "Tommaso Faraci"]
 
 """The planner node, on its own."""
 
@@ -35,6 +35,17 @@ def generate_launch_description():
         [
             DeclareLaunchArgument("planner_config", default_value=default_config),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
+            # Overridden by plantorv_bringup, because the name differs between
+            # the two back ends: Gazebo spawns joint_trajectory_controller and
+            # the UR driver spawns scaled_joint_trajectory_controller. The
+            # planner switches between this and the Cartesian controller, and a
+            # switch naming a controller the manager has not loaded fails.
+            DeclareLaunchArgument(
+                "trajectory_controller", default_value="joint_trajectory_controller"
+            ),
+            DeclareLaunchArgument("use_moveit", default_value="false"),
+            DeclareLaunchArgument("dry_run", default_value="false"),
+            DeclareLaunchArgument("use_gripper", default_value="false"),
             Node(
                 package="plantorv_planner",
                 executable="planner",
@@ -42,7 +53,13 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     LaunchConfiguration("planner_config"),
-                    {"use_sim_time": LaunchConfiguration("use_sim_time")},
+                    {
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
+                        "trajectory_controller": LaunchConfiguration("trajectory_controller"),
+                        "use_moveit": LaunchConfiguration("use_moveit"),
+                        "dry_run": LaunchConfiguration("dry_run"),
+                        "use_gripper": LaunchConfiguration("use_gripper"),
+                    },
                 ],
             ),
         ]

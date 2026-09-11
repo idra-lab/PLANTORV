@@ -1,0 +1,12 @@
+
+
+LLM_VERSION : "gpt-5.5"
+API_KEY_NAME : "AZURE_OPENAI_API_KEY"
+ENDPOINT_ENV : "AZURE_OPENAI_ENDPOINT"
+API_VERSION : "2024-12-01-preview"
+SYSTEM_FINGERPRINT : "None"
+
+# The gpt-5 family rejects temperature/top_p and renamed the token cap.
+LLM_CONFIG:
+  max_completion_tokens: 16384
+  seed: 42

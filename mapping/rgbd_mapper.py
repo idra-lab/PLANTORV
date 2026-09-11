@@ -10,8 +10,11 @@ from mapping.camera_model import (
     _HARDCODED_PROFILES,
     AlignProfile,
     CalibrationSet,
+    Distortion,
+    Intrinsics,
     _project_to_pixels,
     _undistort_pixels_to_normalized,
+    rgb_calibration_for_size,
 )
 from utility.utility import logger
 
@@ -21,6 +24,14 @@ from utility.utility import logger
 # median of the depths under the object's segmentation mask.
 DEPTH_ASSOCIATIONS = ("bbox-center", "mask-median")
 DEFAULT_DEPTH_ASSOCIATION = "bbox-center"
+
+# How far the depth of a candidate reference pixel may sit from the depth reported for the
+# object and still be considered the same measurement, in millimetres. Under
+# `mask-median` the reported depth is a median, which is not necessarily a depth any
+# single pixel carries, so the pixel the 3D point is back-projected from is chosen among
+# those that agree with it to within this tolerance. 0.1 mm is the 1e-4 m the depth of two
+# pixels has to differ by before the difference matters to anything downstream.
+DEPTH_MATCH_TOLERANCE_MM = 0.1
 
 
 class RGBDMapper:
@@ -298,6 +309,7 @@ def attach_object_depths(
     masks: Optional[Sequence[np.ndarray]] = None,
     association: str = DEFAULT_DEPTH_ASSOCIATION,
     neighborhood: int = 1,
+    rgb_calibration: Optional[Tuple[Intrinsics, Distortion]] = None,
 ) -> dict:
     """Attach RGB centre coordinates and aligned depth to detected objects.
 
@@ -315,18 +327,27 @@ def attach_object_depths(
         excluded. When a mask covers no valid depth at all the object falls back
         to ``"bbox-center"``.
 
-    Every object gets three keys:
+    Every object gets five keys:
 
     - ``"coord_center&depth"``, kept for backwards compatibility, as
       ``[cx, cy, depth_mm]``;
     - ``"object_depth_mm"``, the same depth under a name that does not claim the
       value was read at ``(cx, cy)``;
     - ``"depth_association"``, the strategy that actually produced the value,
-      which is ``"bbox-center"`` for an object that fell back.
+      which is ``"bbox-center"`` for an object that fell back;
+    - ``"object_point_camera_m"``, the object as ``[x, y, z]`` metres in the
+      colour camera's optical frame (x right, y down, z along the optical axis),
+      or None when the depth is missing or the frame size has no colour
+      calibration;
+    - ``"object_point_pixel"``, the ``[u, v]`` the 3D point was back-projected
+      through, which says where in the image the point belongs.
 
     Under ``"mask-median"`` ``(cx, cy)`` is only the object's image-space
     reference centre: the depth is estimated over the whole mask rather than
-    sampled at that pixel.
+    sampled at that pixel. The 3D point does not use that centre; it is
+    back-projected through the pixel :func:`_mask_median_reference_pixel`
+    chooses, which is the mask's centroid when the centroid's own depth matches
+    the median and the nearest matching pixel to it otherwise.
 
     Parameters
     ----------
@@ -344,11 +365,17 @@ def attach_object_depths(
     neighborhood : int
         Radius of the square searched around the centre pixel when it holds no
         valid depth. ``0`` disables the search.
+    rgb_calibration : Tuple[Intrinsics, Distortion] or None
+        Colour intrinsics and distortion the 3D points are back-projected with.
+        By default they are looked up from the size of ``aligned_depth_mm``,
+        which is the size of the RGB frame it is registered to; a frame size the
+        colour sensor was never calibrated at leaves
+        ``"object_point_camera_m"`` at None rather than assuming intrinsics.
 
     Returns
     -------
     dict
-        The same dictionary, with the three depth keys added to every object.
+        The same dictionary, with the five depth keys added to every object.
 
     Raises
     ------
@@ -378,6 +405,19 @@ def attach_object_depths(
             )
         object_masks = masks
 
+    # The depth image is registered to the RGB frame, so its shape is the size of the
+    # frame the pixels are to be back-projected through. A resolution the colour sensor
+    # was never calibrated at leaves the 3D point unset rather than guessing intrinsics.
+    height, width = aligned_depth_mm.shape
+    calibration = (
+        rgb_calibration if rgb_calibration is not None else rgb_calibration_for_size(width, height)
+    )
+    if calibration is None:
+        logger.debug(
+            f"no colour calibration for a {width}x{height} frame; "
+            "the objects get no 'object_point_camera_m'"
+        )
+
     for position, mask_id in enumerate(dict_objects.keys()):
         coords = dict_objects[mask_id]["bbox"]
         ix, iy, delta_x, delta_y = coords
@@ -386,6 +426,9 @@ def attach_object_depths(
 
         depth_mm: Optional[float] = None
         used = "bbox-center"
+        # The pixel the 3D point is back-projected through. It is the centre of the
+        # bounding box unless the mask median moves it; see `_mask_median_reference_pixel`.
+        reference_pixel: Tuple[int, int] = (int(cx), int(cy))
         if object_masks:
             mask = object_masks[_mask_index(mask_id, position, len(object_masks))]
             depth_mm = _median_depth_over_mask(aligned_depth_mm, mask, mask_id)
@@ -395,6 +438,11 @@ def attach_object_depths(
                 )
             else:
                 used = "mask-median"
+                reference_pixel = _mask_median_reference_pixel(
+                    aligned_depth_mm,
+                    mask,
+                    depth_mm,
+                )
 
         if depth_mm is None:
             depth_mm = _find_depth_at_rgb(
@@ -404,11 +452,142 @@ def attach_object_depths(
                 neighborhood,
             )
 
+        point_camera_m: Optional[list] = None
+        if depth_mm is not None and calibration is not None:
+            point_camera_m = backproject_pixel_to_camera_m(
+                reference_pixel[0],
+                reference_pixel[1],
+                depth_mm,
+                calibration[0],
+                calibration[1],
+            )
+
         dict_objects[mask_id]["coord_center&depth"] = [cx, cy, depth_mm]
         dict_objects[mask_id]["object_depth_mm"] = depth_mm
         dict_objects[mask_id]["depth_association"] = used
+        dict_objects[mask_id]["object_point_camera_m"] = point_camera_m
+        dict_objects[mask_id]["object_point_pixel"] = [reference_pixel[0], reference_pixel[1]]
 
     return dict_objects
+
+
+def backproject_pixel_to_camera_m(
+    u: int,
+    v: int,
+    depth_mm: float,
+    intrinsic: Intrinsics,
+    distortion: Distortion,
+) -> list:
+    """Back-project one RGB pixel and its depth into the colour camera frame.
+
+    The pixel is undistorted to normalised image coordinates and scaled by the
+    axial depth, so the result is the 3D point of the colour camera's optical
+    frame: x to the right of the image, y down it, z along the optical axis.
+
+    Parameters
+    ----------
+    u : int
+        Column of the pixel in the RGB frame.
+    v : int
+        Row of the pixel in the RGB frame.
+    depth_mm : float
+        Axial depth at that pixel, in millimetres.
+    intrinsic : Intrinsics
+        Colour intrinsics of the frame the pixel belongs to.
+    distortion : Distortion
+        Colour distortion coefficients of the same frame.
+
+    Returns
+    -------
+    list
+        ``[x, y, z]`` in metres, in the colour camera frame.
+    """
+    x_n, y_n = _undistort_pixels_to_normalized(
+        np.asarray([float(u)], dtype=np.float64),
+        np.asarray([float(v)], dtype=np.float64),
+        intrinsic,
+        distortion,
+    )
+    z_m = float(depth_mm) / 1000.0
+    return [float(x_n[0]) * z_m, float(y_n[0]) * z_m, z_m]
+
+
+def _mask_median_reference_pixel(
+    aligned_depth_mm: np.ndarray,
+    mask: np.ndarray,
+    median_mm: float,
+    tolerance_mm: float = DEPTH_MATCH_TOLERANCE_MM,
+) -> Tuple[int, int]:
+    """Return the pixel a mask-median depth is back-projected through.
+
+    The median is a property of the whole mask, not of any one pixel, so pairing
+    it with the centroid of the mask would describe a 3D point the scene does not
+    contain whenever the centroid lies at a different distance -- a mask spanning
+    a depth discontinuity, or one whose centroid falls in a hole. The centroid is
+    therefore kept only when its own depth agrees with the median to within
+    ``tolerance_mm``; otherwise the nearest pixel to the centroid that does agree
+    is taken instead.
+
+    When no pixel of the mask is within the tolerance, which the median of an even
+    number of depths allows, the pixels whose depth is closest to the median are
+    used as the candidates rather than giving up on a reference pixel.
+
+    Parameters
+    ----------
+    aligned_depth_mm : np.ndarray
+        HxW depth image in millimetres, registered to the RGB frame.
+    mask : np.ndarray
+        HxW binary mask of the object, already checked against the depth image.
+    median_mm : float
+        The depth reported for the object, as returned by
+        :func:`_median_depth_over_mask`.
+    tolerance_mm : float
+        How far a candidate's depth may sit from ``median_mm``.
+
+    Returns
+    -------
+    Tuple[int, int]
+        The ``(u, v)`` pixel to back-project, guaranteed to be a pixel of the mask
+        carrying a valid depth.
+
+    Raises
+    ------
+    ValueError
+        If the mask covers no valid depth, which means ``median_mm`` did not come
+        from this mask.
+    """
+    mask_array = np.asarray(mask).astype(bool)
+    valid = mask_array & np.isfinite(aligned_depth_mm) & (aligned_depth_mm > 0.0)
+    rows, columns = np.nonzero(valid)
+    if rows.size == 0:
+        raise ValueError("the mask covers no valid depth, so it has no reference pixel")
+
+    centroid_u = float(np.mean(columns))
+    centroid_v = float(np.mean(rows))
+
+    # The centroid of a concave or split mask can fall outside it, so it is only
+    # usable when it is one of the mask's own valid pixels.
+    rounded_u = int(round(centroid_u))
+    rounded_v = int(round(centroid_v))
+    height, width = aligned_depth_mm.shape
+    if (
+        0 <= rounded_u < width
+        and 0 <= rounded_v < height
+        and valid[rounded_v, rounded_u]
+        and abs(float(aligned_depth_mm[rounded_v, rounded_u]) - median_mm) <= tolerance_mm
+    ):
+        return rounded_u, rounded_v
+
+    difference = np.abs(aligned_depth_mm[valid].astype(np.float64) - median_mm)
+    candidates = np.nonzero(difference <= tolerance_mm)[0]
+    if candidates.size == 0:
+        candidates = np.nonzero(difference == difference.min())[0]
+
+    distance_squared = (columns[candidates] - centroid_u) ** 2 + (
+        rows[candidates] - centroid_v
+    ) ** 2
+    nearest = candidates[int(np.argmin(distance_squared))]
+    return int(columns[nearest]), int(rows[nearest])
 
 
 def _mask_index(mask_id: object, position: int, mask_count: int) -> int:
@@ -548,7 +727,9 @@ def main_coords(
     -------
     dict
         The input dictionary of objects, updated for each object with "coord_center&depth"
-        (a list [center_x, center_y, depth_mm]), "object_depth_mm" and "depth_association".
+        (a list [center_x, center_y, depth_mm]), "object_depth_mm", "depth_association",
+        "object_point_camera_m" (a list [x, y, z] in metres in the colour camera frame) and
+        "object_point_pixel" (the pixel that point was back-projected through).
         Under "mask-median" the centre is only the object's image-space reference centre:
         the depth is estimated over the mask rather than sampled at that pixel.
     """

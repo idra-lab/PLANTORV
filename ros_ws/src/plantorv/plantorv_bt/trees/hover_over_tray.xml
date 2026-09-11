@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!--
+  One move, to a point in the air above tray_blue. Nothing is picked up and
+  nothing is placed; this is the tree to run first on the real arm.
+
+  z = 1.075 is 30 cm above the tray's rim at 0.775. Not 40: the tray centre is
+  0.4584 m out from the base axis, so at 40 cm above the rim the tool would be
+  0.5002 m from base_link, past a UR3's 0.5 m reach. 35 cm is 0.4823 m, which
+  is inside the arm's reach but outside the planner's workspace guard and would
+  be refused. 30 cm is 0.4692 m and has room to spare.
+
+  There is no <Home/> first, on purpose. On the real cell the arm starts
+  wherever it was left, and MoveTo already lifts the tool onto the transit
+  plane before traversing, so adding a home move here would only be one more
+  motion to watch.
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+
+  <BehaviorTree ID="MainTree">
+    <Sequence name="hover">
+      <Log message="moving to 30 cm above tray_blue: world (-0.20, 0.4125, 1.075)"/>
+      <MoveTo x="-0.20" y="0.4125" z="1.075" frame="world"/>
+      <Log message="there; the tool is over the tray, pointing down"/>
+    </Sequence>
+  </BehaviorTree>
+
+</root>
