@@ -22,7 +22,6 @@ from rclpy.node import Node
 from tf2_ros import Buffer, TransformListener
 
 from plantorv_ros import marker_transform_file
-from plantorv_ros.marker_transform_file import DEFAULT_FILE
 from plantorv_ros.pose_overlay import (
     quaternion_angle_degrees,
     quaternion_average,
@@ -39,7 +38,9 @@ class SaveMarkerTransforms(Node):
             "frames", ["charuco_board", "robot_base_marker"]
         )
 
-        self.declare_parameter("output_file", DEFAULT_FILE)
+        self.declare_parameter(
+            "output_file", marker_transform_file.default_file()
+        )
 
         # How many samples to average, and how long to wait for them.
         self.declare_parameter("samples", 30)

@@ -136,6 +136,24 @@ the printed board rather than trusting the generator settings. Boards
 generated with OpenCV older than 4.6 have their markers shifted by one
 square; pass `legacy_pattern:=true` for those.
 
+The launch also replays the recorded transforms, so the live frames
+and the recorded ones stand side by side in RViz: `charuco_board` is
+what the camera sees right now, `static_charuco_board` what was
+recorded, and the two should sit on top of each other. Set
+`use_static_transforms:=false` to leave them out, or point
+`static_transforms_file:=...` somewhere else.
+
+The `camera_to_camera` entry is deliberately not replayed here.
+It publishes `camera_color_optical_frame` as a child of
+`static_camera_color_optical_frame`, which is how a bringup with no
+camera gets that frame; with the driver running it already has a
+parent, `camera_color_frame`, and a frame cannot have two. The launch
+publishes the identity bridge the other way round instead, from
+`camera_color_optical_frame` to
+`static_camera_color_optical_frame`, which hangs the recorded subtree
+under the live camera. `static_transforms_frames` chooses what gets
+replayed, by file key or by frame name.
+
 The preloaded RViz config shows the TF tree, the board outline, two
 point clouds and the annotated image.
 
@@ -354,11 +372,15 @@ ros2 launch plantorv_ros save_marker_transforms.launch.py
 
 That starts the camera and both detectors, averages 30 samples of
 `charuco_board` and `robot_base_marker` in
-`camera_color_optical_frame`, writes
-`~/.ros/plantorv/marker_transforms.yaml` and shuts the whole launch
-down again. Pass `output_file:=...` to keep it somewhere else, such as
-inside the repository, where it can be committed with the rest of the
-setup.
+`camera_color_optical_frame`, writes the transform file and shuts the
+whole launch down again.
+
+The file it writes, and the one the replay reads, is
+`plantorv_bringup`'s `config/static_transforms.yaml`, found through
+`get_package_share_directory` rather than a hardcoded path. The
+workspace installs with symlinks, so the installed share path leads
+back to the source tree and a recording lands on the copy under
+version control. Pass `output_file:=...` to write somewhere else.
 
 The first `settle_time` seconds, two by default, are thrown away: the
 camera starts with auto exposure and auto white balance still moving,
@@ -415,9 +437,10 @@ is ignored on replay.
 ros2 launch plantorv_ros static_marker_transforms.launch.py
 ```
 
-This publishes every transform in the file on `/tf_static` and nothing
-else: no camera, no detection, no OpenCV. Include it from a bringup
-launch to have the frames available from the start.
+This publishes every transform in
+`plantorv_bringup`'s `config/static_transforms.yaml` on `/tf_static`
+and nothing else: no camera, no detection, no OpenCV. Include it from
+a bringup launch to have the frames available from the start.
 
 ```python
 IncludeLaunchDescription(

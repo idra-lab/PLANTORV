@@ -1,129 +1,380 @@
 Panels:
   - Class: rviz_common/Displays
+    Help Height: 70
     Name: Displays
     Property Tree Widget:
       Expanded:
+        - /Global Options1
+        - /Status1
         - /TF1
         - /Charuco board1
         - /Aruco markers1
         - /Scene cloud1
         - /Coloured cloud1
+        - /RobotModel1
+        - /RobotModel1/Status1
       Splitter Ratio: 0.5
+    Tree Height: 782
 Visualization Manager:
   Class: ""
   Displays:
-    - Class: rviz_default_plugins/Grid
-      Name: Grid
+    - Alpha: 0.5
+      Cell Size: 0.10000000149011612
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
       Enabled: true
-      Cell Size: 0.1
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
       Plane: XY
       Plane Cell Count: 20
-      Color: 160; 160; 164
-      Line Style:
-        Line Width: 0.03
-        Value: Lines
       Reference Frame: <Fixed Frame>
+      Value: true
     - Class: rviz_default_plugins/TF
-      Name: TF
       Enabled: true
-      Marker Scale: 0.2
+      Frame Timeout: 15
+      Frames:
+        All Enabled: true
+        base:
+          Value: true
+        base_link:
+          Value: true
+        base_link_inertia:
+          Value: true
+        camera_color_optical_frame:
+          Value: true
+        flange:
+          Value: true
+        forearm_link:
+          Value: true
+        ft_frame:
+          Value: true
+        shoulder_link:
+          Value: true
+        stand_link:
+          Value: true
+        static_camera_color_optical_frame:
+          Value: true
+        static_charuco_board:
+          Value: true
+        static_robot_base_marker:
+          Value: true
+        table_link:
+          Value: true
+        tool0:
+          Value: true
+        upper_arm_link:
+          Value: true
+        world:
+          Value: true
+        wrist_1_link:
+          Value: true
+        wrist_2_link:
+          Value: true
+        wrist_3_link:
+          Value: true
+      Marker Scale: 0.20000000298023224
+      Name: TF
       Show Arrows: false
       Show Axes: true
       Show Names: true
+      Tree:
+        camera_color_optical_frame:
+          static_camera_color_optical_frame:
+            static_charuco_board:
+              world:
+                stand_link:
+                  base_link:
+                    base:
+                      {}
+                    base_link_inertia:
+                      shoulder_link:
+                        upper_arm_link:
+                          forearm_link:
+                            wrist_1_link:
+                              wrist_2_link:
+                                wrist_3_link:
+                                  flange:
+                                    tool0:
+                                      {}
+                                  ft_frame:
+                                    {}
+                table_link:
+                  {}
+            static_robot_base_marker:
+              {}
       Update Interval: 0
+      Value: true
     - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
       Name: Charuco board
-      Enabled: true
+      Namespaces:
+        {}
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
         Value: /charuco_tf_publisher/board_markers
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Reliable
-        History Policy: Keep Last
+      Value: true
     - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
       Name: Aruco markers
-      Enabled: true
+      Namespaces:
+        {}
       Topic:
-        Value: /aruco_tf_publisher/marker_outlines
         Depth: 5
         Durability Policy: Volatile
+        History Policy: Keep Last
         Reliability Policy: Reliable
-        History Policy: Keep Last
+        Value: /aruco_tf_publisher/marker_outlines
+      Value: true
     - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
       Name: Aruco detection
-      Enabled: true
+      Normalize Range: true
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
         Value: /aruco_tf_publisher/debug_image
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Best Effort
-        History Policy: Keep Last
+      Value: true
     - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
       Name: Charuco detection
-      Enabled: true
+      Normalize Range: true
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
         Value: /charuco_tf_publisher/debug_image
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Best Effort
-        History Policy: Keep Last
-    - Class: rviz_default_plugins/PointCloud2
-      Name: Scene cloud
-      Enabled: true
-      Topic:
-        Value: /camera/depth/points
-        Depth: 5
-        Durability Policy: Volatile
-        Reliability Policy: Best Effort
-        History Policy: Keep Last
-      Color Transformer: AxisColor
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 0.5498535633087158
+        Min Value: -0.31216147541999817
+        Value: true
       Axis: Z
-      Size (m): 0.003
-      Style: Points
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: AxisColor
       Decay Time: 0
-      Use Fixed Frame: true
-    - Class: rviz_default_plugins/PointCloud2
-      Name: Coloured cloud
-      Enabled: true
+      Enabled: false
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: Scene cloud
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.003000000026077032
+      Style: Points
       Topic:
-        Value: /camera/depth_registered/points
         Depth: 5
         Durability Policy: Volatile
-        Reliability Policy: Best Effort
+        Filter size: 10
         History Policy: Keep Last
-      Color Transformer: RGB8
-      Size (m): 0.003
-      Style: Points
-      Decay Time: 0
+        Reliability Policy: Best Effort
+        Value: /camera/depth/points
       Use Fixed Frame: true
+      Use rainbow: true
+      Value: false
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: RGB8
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: Coloured cloud
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.003000000026077032
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /camera/depth_registered/points
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Description File: ""
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: false
+        Link Tree Style: Links in Alphabetic Order
+        base:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        base_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        base_link_inertia:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        flange:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        forearm_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        ft_frame:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        shoulder_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        stand_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        table_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        tool0:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        upper_arm_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        world:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+        wrist_1_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        wrist_2_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+        wrist_3_link:
+          Alpha: 1
+          Show Axes: false
+          Show Trail: false
+          Value: true
+      Mass Properties:
+        Inertia: false
+        Mass: false
+      Name: RobotModel
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+  Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: camera_color_optical_frame
+    Fixed Frame: world
     Frame Rate: 30
+  Name: root
   Tools:
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/FocusCamera
     - Class: rviz_default_plugins/Measure
       Line color: 128; 128; 0
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Name: Current View
-      Distance: 1.5
+      Distance: 2.636361598968506
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
       Focal Point:
         X: 0
         Y: 0
         Z: 0.5
-      Pitch: -0.5
-      Yaw: 1.57
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 0.6900001764297485
       Target Frame: <Fixed Frame>
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 0.8081847429275513
     Saved: ~
 Window Geometry:
-  Height: 900
-  Width: 1400
-  Displays:
+  Aruco detection:
     collapsed: false
   Charuco detection:
     collapsed: false
-  Aruco detection:
+  Displays:
     collapsed: false
+  Height: 2102
+  Hide Left Dock: false
+  Hide Right Dock: false
+  QMainWindow State: 000000ff00000000fd000000010000000000000156000007dafc0200000003fb00000022004300680061007200750063006f00200064006500740065006300740069006f006e010000003e0000021e0000002800fffffffb0000001e0041007200750063006f00200064006500740065006300740069006f006e01000002620000021e0000002800fffffffb000000100044006900730070006c006100790073010000048600000392000000ca00ffffff00000754000007da00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Width: 2224
+  X: 1605
+  Y: 29

@@ -46,6 +46,15 @@ The pieces come up in order rather than at once: move_group needs the robot
 description and the controllers Gazebo brings with it, and starting it into an
 empty world only produces a minute of warnings. The planner and the tree wait
 for what they need on their own, so they are started with move_group.
+
+The measured frames come up with everything else. `config/static_transforms.yaml`
+holds what the ChArUco board and the ArUco marker on the robot base were seen
+at, recorded once by `plantorv_ros`, and publishing it puts the camera and the
+board into the same tree as `world`. `world` itself is the robot description's
+root link and gets its place from that file, so the arm is positioned by what
+the camera measured rather than by a number typed into a launch file. Record it
+again after moving the camera or the robot; `static_transforms:=false` leaves
+the whole thing out.
 """
 
 import os
@@ -56,6 +65,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, Time
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch_ros.actions import Node
 
 
 def _include(package, launch_file, arguments=None, condition=None):
@@ -69,20 +79,29 @@ def _include(package, launch_file, arguments=None, condition=None):
 
 
 def generate_launch_description():
-    default_tree = os.path.join(
-        get_package_share_directory("plantorv_bt"), "trees", "sort_cubes.xml"
-    )
+    trees_dir = os.path.join(get_package_share_directory("plantorv_bt"), "trees")
+    default_tree = os.path.join(trees_dir, "sort_cubes.xml")
 
     arguments = [
         DeclareLaunchArgument("gui", default_value="true", description="Run the Gazebo client"),
-        DeclareLaunchArgument("rviz", default_value="true", description="Run RViz with MoveIt"),
+        DeclareLaunchArgument(
+            "rviz",
+            default_value="true",
+            description="Run RViz. With use_moveit:=true that is the MoveIt one, "
+            "with the MotionPlanning panel; otherwise a plain robot and TF view.",
+        ),
         DeclareLaunchArgument("ur_type", default_value="ur3"),
         DeclareLaunchArgument(
             "run_tree",
             default_value="true",
             description="Start the behaviour tree executor as well",
         ),
-        DeclareLaunchArgument("tree", default_value=default_tree),
+        DeclareLaunchArgument(
+            "tree",
+            default_value=default_tree,
+            description="Behaviour tree to run: an absolute path, or the name of "
+            "one of plantorv_bt's own trees, with or without .xml.",
+        ),
         DeclareLaunchArgument(
             "moveit_delay",
             default_value="6.0",
@@ -124,12 +143,52 @@ def generate_launch_description():
             "note by trajectory_controller below.",
         ),
         DeclareLaunchArgument(
+            "static_transforms",
+            default_value="true",
+            description="Publish the measured camera, board and world frames from "
+            "config/static_transforms.yaml.",
+        ),
+        DeclareLaunchArgument(
+            "static_transforms_file",
+            default_value=os.path.join(
+                get_package_share_directory("plantorv_bringup"),
+                "config",
+                "static_transforms.yaml",
+            ),
+        ),
+        # Everything in the file, by default. Running the camera driver
+        # alongside this launch is the one case that needs narrowing: the
+        # driver publishes camera_color_optical_frame itself, under
+        # camera_color_frame, and camera_to_camera would give that frame a
+        # second parent. Then pass
+        #   static_transforms_frames:="['static_charuco_board',
+        #                               'static_robot_base_marker', 'world']"
+        # which is what plantorv_ros charuco_viz.launch.py does.
+        DeclareLaunchArgument(
+            "static_transforms_frames",
+            default_value="['']",
+            description="Entries of the file to publish, by name or frame. "
+            "Empty means all of them.",
+        ),
+        DeclareLaunchArgument(
             "headless_mode",
             default_value="true",
             description="Driver pushes the control script itself. False waits for the "
             "External Control URCap program on the pendant.",
         ),
     ]
+
+    tree = LaunchConfiguration("tree")
+
+    # A bare name is resolved against plantorv_bt's own trees, so the
+    # usual case is `tree:=go_home` rather than the full share path. An
+    # absolute path is passed through untouched.
+    tree_path = PythonExpression(
+        [
+            "'", tree, "' if '", tree, "'.startswith('/') ",
+            "else '", trees_dir, "/' + '", tree, "'.removesuffix('.xml') + '.xml'",
+        ]
+    )
 
     real = LaunchConfiguration("real")
 
@@ -180,6 +239,25 @@ def generate_launch_description():
             LaunchConfiguration("use_scaled_controller"),
             "' == 'true') else 'joint_trajectory_controller'",
         ]
+    )
+
+    # Straight away, not on the timer: these are latched static transforms
+    # with nothing to wait for, and the planner is happier finding the tree
+    # already complete.
+    #
+    # `world` is a root link of the robot description, so nothing else
+    # publishes a parent for it and this is the only claim on it. Every
+    # entry in the file is published here, camera_to_camera included, since
+    # without a camera driver running that entry is what puts
+    # camera_color_optical_frame on the tree at all.
+    static_transforms = _include(
+        "plantorv_ros",
+        "static_marker_transforms.launch.py",
+        {
+            "input_file": LaunchConfiguration("static_transforms_file"),
+            "frames": LaunchConfiguration("static_transforms_frames"),
+        },
+        condition=IfCondition(LaunchConfiguration("static_transforms")),
     )
 
     simulation = _include(
@@ -236,6 +314,38 @@ def generate_launch_description():
                     )
                 ),
             ),
+            # RViz without MoveIt. The MoveIt config's own RViz is built
+            # around the MotionPlanning and PlanningScene panels, which sit
+            # there empty and complaining unless move_group is up, and
+            # use_moveit is off by default. This one shows the robot, the
+            # TF tree and the measured frames, which is what there is to
+            # look at when the planner drives the controllers directly.
+            Node(
+                package="rviz2",
+                executable="rviz2",
+                name="rviz2",
+                output="log",
+                arguments=[
+                    "-d",
+                    os.path.join(
+                        get_package_share_directory("plantorv_ros"),
+                        "rviz",
+                        "charuco.rviz",
+                    ),
+                ],
+                parameters=[{"use_sim_time": use_sim_time}],
+                condition=IfCondition(
+                    PythonExpression(
+                        [
+                            "'true' if ('",
+                            LaunchConfiguration("rviz"),
+                            "' == 'true' and '",
+                            LaunchConfiguration("use_moveit"),
+                            "' != 'true') else 'false'",
+                        ]
+                    )
+                ),
+            ),
             _include(
                 "plantorv_planner",
                 "planner.launch.py",
@@ -257,10 +367,12 @@ def generate_launch_description():
             _include(
                 "plantorv_bt",
                 "behaviour_tree.launch.py",
-                {"tree": LaunchConfiguration("tree"), "use_sim_time": use_sim_time},
+                {"tree": tree_path, "use_sim_time": use_sim_time},
                 condition=IfCondition(LaunchConfiguration("run_tree")),
             ),
         ],
     )
 
-    return LaunchDescription(arguments + [simulation, hardware, delayed])
+    return LaunchDescription(
+        arguments + [static_transforms, simulation, hardware, delayed]
+    )

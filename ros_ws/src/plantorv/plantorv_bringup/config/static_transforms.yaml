@@ -1,0 +1,99 @@
+# Marker transforms recorded by save_marker_transforms.
+# Replay them with static_marker_publisher.
+parent_frame: camera_color_optical_frame
+recorded_at: '2026-09-10T17:44:08+00:00'
+transforms:
+  charuco_board:
+    parent_frame: static_camera_color_optical_frame
+    child_frame: static_charuco_board
+    translation:
+      x: -0.13495996668228036
+      y: 0.12984354637554643
+      z: 0.7409989743761648
+    rotation:
+      x: 0.6645696721643132
+      y: 0.47563996199516073
+      z: -0.30799498303772677
+      w: 0.487086098976608
+    samples: 30
+    dropped_samples: 0
+    distance_m: 0.7642990377913537
+    translation_spread_m: 0.0
+    rotation_spread_deg: 0.0
+  camera_to_camera:
+    # Identity, and it only ever points this way: from the live frame to
+    # the recorded one. The reverse would make a two-frame loop the
+    # moment anything else parents camera_color_optical_frame -- the
+    # camera driver does, under camera_color_frame -- and a loop makes
+    # tf2 reject the whole tree, not just that pair. With no driver
+    # running camera_color_optical_frame is simply a root frame, which
+    # costs nothing.
+    parent_frame: camera_color_optical_frame
+    child_frame: static_camera_color_optical_frame
+    translation:
+      x: 0.0 
+      y: 0.0 
+      z: 0.0 
+    rotation:
+      x: 0
+      y: 0
+      z: 0
+      w: 1
+    samples: 30
+    dropped_samples: 0
+    distance_m: 0.0
+    translation_spread_m: 0.0
+    rotation_spread_deg: 0.0
+  robot_base_marker:
+    parent_frame: static_camera_color_optical_frame
+    child_frame: static_robot_base_marker
+    translation:
+      x: -0.028546698671843018
+      y: -0.014287665906118697
+      z: 0.9952191927394077
+    rotation:
+      x: -0.9684344226391479
+      y: -0.0016104594756272128
+      z: -0.1598074757972054
+      w: 0.19129491929265452
+    samples: 30
+    dropped_samples: 0
+    distance_m: 0.9957310344661274
+    translation_spread_m: 0.0
+    rotation_spread_deg: 0.0
+  charuco_to_world:
+    # World sits under the robot base, with the board's own orientation,
+    # which is what the robot description expects of its root link.
+    #
+    # It starts from the origin of static_robot_base_marker expressed in
+    # the charuco frame, (-0.231661, 0.199827, 0.055925), and offsets it
+    # to the base axis on the floor: 45 mm back along -x from the marker
+    # face to the axis, and 807 mm down. The board lies flat with its z
+    # axis pointing up, so down is -z.
+    #
+    #   x: -0.231661 - 0.045 = -0.276661
+    #   y:  0.199827         =  0.199827
+    #   z:  0.055925 - 0.807 = -0.751075
+    #
+    # Re-record and redo this offset after moving the camera, the board
+    # or the robot: nothing detects a stale file on its own.
+    #
+    # The rotation is 90 degrees clockwise about the board's z axis,
+    # looking down that axis towards the origin, which is -90 degrees by
+    # the right-hand rule. z is the board normal and it points up, so
+    # this turns the frame in the horizontal plane and leaves up alone:
+    # world x lands on -y of the board, world y on +x, world z stays on
+    # the normal. That is what scene.yaml wants -- x along the long side
+    # of the table, y across it towards the table, z up. The origin does
+    # not move, only the axes.
+    parent_frame: static_charuco_board
+    child_frame: world
+    translation:
+      x: -0.276661
+      y: 0.199827
+      z: -0.751075
+    rotation:
+      x: 0.0
+      y: 0.0
+      z: -0.707106781186547
+      w: 0.707106781186548

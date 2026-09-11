@@ -11,6 +11,8 @@
   <exec_depend>plantorv_moveit_config</exec_depend>
   <exec_depend>plantorv_planner</exec_depend>
   <exec_depend>plantorv_bt</exec_depend>
+  <exec_depend>plantorv_ros</exec_depend>
+  <exec_depend>rviz2</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 
