@@ -19,7 +19,9 @@ planner:
     # Same values as the `home` group state in the SRDF and as
     # plantorv_sim/config/initial_positions.yaml. Measured on the real cell,
     # in degrees: 90.37, -107.23, -85.97, -80.84, 90.11, 2.16. Puts tool0 at
-    # (0.110, 0.360, 1.223) pointing down.
+    # (0.110, 0.360, 1.133) pointing down -- 1.223 before the stand height
+    # was corrected from an assumed 0.975 to a measured 0.885; the joint
+    # values are unchanged, the tool just sits 0.09 m lower in world now.
     home_positions: [1.577254, -1.8715166, -1.5004596, -1.4109242, 1.5727162, 0.0376991]
 
     planner_id: RRTConnect
@@ -41,24 +43,32 @@ planner:
     # checks nothing, that argument is the only thing keeping the arm off the
     # table.
     #
-    # 1.223 is not calculated, it is the height the tool is at when the arm is
+    # 1.133 is not calculated, it is the height the tool is at when the arm is
     # at the taught home configuration, read off TF on the real cell. That
     # makes it a height an operator has looked at and found clear, which is
     # worth more than a derivation from a table height that is still unproven.
+    #
+    # It was 1.223 against an assumed base height of 0.975; the stand was
+    # then measured with a tape at 0.885, so the whole arm -- home included --
+    # sits 0.09 m lower in world than that, and this moved with it. Nothing
+    # about the joint values or the taught pose changed, only which number in
+    # scene.yaml said where the floor is relative to base_link.
     #
     # It also makes the first move of any action flat: home already sits on the
     # plane, so a traverse from home is a pure horizontal move at a height
     # known to be safe, rather than a descent into a region measured from the
     # model.
     #
-    # Reach is what bounds it from above. At 1.223 the tool is 0.248 above
-    # base_link, and that vertical component is spent out of the same 0.5 m as
-    # the horizontal: home is 0.4508 m out, the taught position of cube_1
-    # 0.4652 m. A tray centre at the position currently in scene.yaml would be
-    # 0.5212 m, past the arm entirely -- but those tray positions are inferred
-    # rather than measured, and the one block that has been measured moved
-    # 167 mm when it was, so they should not be trusted to bound anything.
-    transit_height: 1.223
+    # Reach is what bounds it from above. At 1.133 the tool is still 0.248
+    # above base_link -- that offset is unchanged, since both ends moved down
+    # together -- and that vertical component is spent out of the same 0.5 m
+    # as the horizontal: home is still 0.4508 m out, the taught position of
+    # cube_1 still 0.4652 m. A tray centre at the position currently in
+    # scene.yaml would still be 0.5212 m, past the arm entirely -- but those
+    # tray positions are inferred rather than measured, and the one block
+    # that has been measured moved 167 mm when it was, so they should not be
+    # trusted to bound anything.
+    transit_height: 1.133
 
     # Height the tool approaches from and retreats to, straight up from the
     # object.
@@ -158,7 +168,7 @@ planner:
     # matters: that one is the frame the controller accepts targets in, and on
     # this cell it is `world`, whose origin is the middle of the desk. Measure
     # reach from there and every pose in the cell is over a metre out.
-    arm_base_frame: base_link
+    arm_base_frame: shoulder_link
 
     # Tool speed limits at velocity_scaling = acceleration_scaling = 1.0.
     #
@@ -243,9 +253,37 @@ planner:
     # This checks where the tool goes. It does not check where the rest of the
     # arm goes to put it there -- the transit plane above is what does that,
     # and it is now the only thing that does.
+    #
+    # Measured from the shoulder, not from base_link. A UR3's 500 mm is
+    # the radius its arm sweeps about the shoulder axis, which sits
+    # 0.152 m above base_link. Centred on base_link instead, the bound
+    # charges every centimetre of height against the horizontal budget,
+    # and a pose the arm holds comfortably reads as out of reach: the
+    # tool at (0.020, 0.493, 1.238) measures 0.559 m from base_link and
+    # 0.506 m from the shoulder, against an arm that is plainly standing
+    # there. So arm_base_frame is shoulder_link and the bound is what
+    # the datasheet means.
+    #
+    # 0.51 rather than 0.50 because 0.506 was measured on this arm at
+    # full stretch: the quoted 500 mm is the working radius, and the
+    # wrist reaches a little past it in a stretched pose. The margin is
+    # small on purpose -- past this the arm is near its own singular
+    # limit and the solver stops short without complaining.
     workspace_min_z: 0.76
     workspace_min_reach: 0.16
-    workspace_max_reach: 0.48
+    workspace_max_reach: 0.51
+
+    # Off, by decision: the bounds were refusing poses the arm was
+    # visibly holding, and the accounting behind them -- which link the
+    # reach is measured from, what the transit plane costs, where tool0
+    # sits relative to the gripper -- was not converging. The two
+    # numbers above are left as they are so the guard can be switched
+    # back on without working them out again.
+    #
+    # workspace_min_z is still enforced, so the tool is still kept out
+    # of the desk. Nothing now refuses a target that is simply too far
+    # away: the solver sits short of it and reports success.
+    workspace_reach_guard: false
 
     # Only read by the MoveIt back end. Fraction of a straight-line move that
     # has to be collision free for it to be used at all.

@@ -5,6 +5,7 @@ Panels:
       Expanded:
         - /TF1
         - /RobotModel1
+        - /Target point1
       Splitter Ratio: 0.5
 Visualization Manager:
   Class: ""
@@ -33,6 +34,15 @@ Visualization Manager:
       Alpha: 1
       Visual Enabled: true
       Collision Enabled: false
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Target point
+      Enabled: true
+      Topic:
+        Value: /plantorv_bt/target_point
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
     - Class: rviz_default_plugins/TF
       Name: TF
       Enabled: true

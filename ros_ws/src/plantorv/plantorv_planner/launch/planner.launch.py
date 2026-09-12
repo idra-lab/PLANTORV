@@ -45,6 +45,13 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("use_moveit", default_value="false"),
             DeclareLaunchArgument("dry_run", default_value="false"),
+            # Height of the transit plane, in the planning frame. Settable
+            # here so it can be tried without editing planner.yaml, but
+            # raising it costs reach rather than buying it: base_link sits
+            # at z = 0.885 (measured with a tape; it was assumed 0.975
+            # before), so a plane at 1.5 is 0.615 m straight up from it,
+            # past both workspace_max_reach and the UR3's own 0.5 m.
+            DeclareLaunchArgument("transit_height", default_value="1.133"),
             DeclareLaunchArgument("use_gripper", default_value="false"),
             Node(
                 package="plantorv_planner",
@@ -58,6 +65,7 @@ def generate_launch_description():
                         "trajectory_controller": LaunchConfiguration("trajectory_controller"),
                         "use_moveit": LaunchConfiguration("use_moveit"),
                         "dry_run": LaunchConfiguration("dry_run"),
+                        "transit_height": LaunchConfiguration("transit_height"),
                         "use_gripper": LaunchConfiguration("use_gripper"),
                     },
                 ],

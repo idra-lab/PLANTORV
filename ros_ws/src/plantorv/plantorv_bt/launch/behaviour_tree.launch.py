@@ -42,6 +42,13 @@ def generate_launch_description():
             DeclareLaunchArgument("tick_rate", default_value="10.0"),
             DeclareLaunchArgument("autostart", default_value="true"),
             DeclareLaunchArgument("loop", default_value="false"),
+            DeclareLaunchArgument(
+                "preview_seconds",
+                default_value="120.0",
+                description="Seconds a leaf shows its target before moving. "
+                "0 moves straight away. A tree that sets preview_seconds "
+                "itself overrides this.",
+            ),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             Node(
                 package="plantorv_bt",
@@ -54,6 +61,7 @@ def generate_launch_description():
                         "tick_rate": LaunchConfiguration("tick_rate"),
                         "autostart": LaunchConfiguration("autostart"),
                         "loop": LaunchConfiguration("loop"),
+                        "preview_seconds": LaunchConfiguration("preview_seconds"),
                         "use_sim_time": LaunchConfiguration("use_sim_time"),
                     }
                 ],

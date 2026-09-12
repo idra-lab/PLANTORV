@@ -52,11 +52,15 @@ first, and every commanded tool path is checked against a height floor and a
 reach annulus before it is sent. None of that watches the elbow, which is the
 part that has been through the table before.
 
-``home`` is the exception and stays a joint-space move: it is a fixed, known
+``home`` is the exception and ends in a joint-space move: it is a fixed, known
 configuration rather than a point in the workspace, and it leaves the tool
-above the transit plane, so the invariant still holds afterwards. It is also
-the only action that needs the trajectory controller, so it is the only one
-that pays for a controller switch.
+above the transit plane, so the invariant still holds afterwards. That
+invariant is also what it needs on the way in -- the joint-space move gives no
+guarantee about the height it passes through, so ``home`` first rises straight
+onto the transit plane, Cartesian, from wherever the tool is, and only then
+takes the joint-space line to the taught configuration. It is also the only
+action that needs the trajectory controller, so it is the only one that pays
+for a controller switch.
 
 It no longer goes through MoveIt. Going to a known configuration is not a
 search -- the start is on /joint_states, the end is six numbers, and the move
@@ -170,14 +174,38 @@ class ActionLibrary:
         return handler(self, target, pose, report)
 
     def _home(self, target: str, pose: Optional[Pose], report: Callable) -> ActionOutcome:
-        """Straight to the taught configuration, with no planner involved.
+        """Rise to the transit plane, then the taught configuration from there.
 
-        The only action that is a joint-space move, and the only one that does
-        not need a target worked out from the scene: home is six numbers. It is
-        the straight line to them, timed so no joint exceeds its limit, sent to
-        the trajectory controller as one goal.
+        The joint-space move to home is a straight line in joint space, not in
+        Cartesian space, so it gives no guarantee about the height the tool
+        passes through on the way -- fine from the transit plane, where home's
+        own tool height already lives, but not from wherever the arm was left
+        after a fault or a halt mid-descent. So the lift is Cartesian, straight
+        up at the current x, y, the same one ``_traverse`` uses to get onto the
+        plane, and only once the tool is there does the joint-space move to
+        home run.
         """
         report("home", 0.0)
+        outcome = ActionOutcome("")
+        here = self.cartesian.current_pose()
+        plane = float(self.params["transit_height"])
+        if here.position.z < plane - self.params["cartesian_pos_tolerance"]:
+            self.node.get_logger().info(
+                f"the tool is at z = {here.position.z:.3f}, below the transit plane at "
+                f"{plane:.3f}; lifting onto the plane before homing"
+            )
+            outcome += self._go_straight(
+                [
+                    pose_above(
+                        here.position.x,
+                        here.position.y,
+                        plane,
+                        yaw_of(here.orientation),
+                    )
+                ],
+                tolerance=self.params["cartesian_transit_tolerance"],
+            )
+        report("home", 0.5)
         motion = self.joints.move_to_configuration(
             self.params["home_positions"],
             speed=self.params["joint_speed"] * self.params["velocity_scaling"],
@@ -185,8 +213,9 @@ class ActionLibrary:
             dry_run=bool(self.params["dry_run"]),
             link_radius=self.params["link_radius"],
         )
+        outcome += ActionOutcome("at home", motion.path_length, motion.planning_time)
         report("home", 1.0)
-        return ActionOutcome("at home", motion.path_length, motion.planning_time)
+        return outcome
 
     def _move_to(self, target: str, pose: Optional[Pose], report: Callable) -> ActionOutcome:
         """Put the tool over something, at a height.
@@ -490,12 +519,24 @@ class ActionLibrary:
             return self._go_straight_via_moveit(waypoints)
 
         here = self.cartesian.current_pose()
+
+        # The floor is always checked; the reach bounds are optional.
+        # Turned off they become an unbounded ball, which leaves the
+        # sampling and the floor exactly as they were.
+        guarded = bool(self.params["workspace_reach_guard"])
+
         self.cartesian.check_path(
             here,
             waypoints,
             min_z=self.params["workspace_min_z"],
-            min_reach=self.params["workspace_min_reach"],
-            max_reach=self.params["workspace_max_reach"],
+            min_reach=(
+                self.params["workspace_min_reach"] if guarded else 0.0
+            ),
+            max_reach=(
+                self.params["workspace_max_reach"]
+                if guarded
+                else float("inf")
+            ),
             step=self.params["cartesian_step"],
         )
         # The scaling factors are what a per-goal override in ExecuteAction

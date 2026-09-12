@@ -82,6 +82,68 @@ ros2 launch orbbec_camera femto_mega.launch.py \
     net_device_port:=8090
 ```
 
+The node starts the camera itself, so this is the whole thing:
+
+```
+ros2 run plantorv_ros one_shot_pipeline \
+    -p pipeline_script:=/home/enrico/Projects/plantorv/samgpt.py \
+    -p output_dir:=/home/enrico/Projects/plantorv/output_ros
+```
+
+It runs `ros2 launch orbbec_camera femto_mega.launch.py`, waits for the
+first frames, captures, runs the pipeline and stops the camera again on
+the way out. `camera_launch_arguments` reaches that launch file
+untouched, which is how the transport is chosen:
+
+```
+ros2 run plantorv_ros one_shot_pipeline \
+    --ros-args \
+    -p "camera_launch_arguments:=['use_network:=true', 'net_device_ip:=192.168.1.10']" \
+    -p pipeline_script:=/home/enrico/Projects/plantorv/samgpt.py
+```
+
+A camera that is already publishing `rgb_topic` is used as it is, and no
+second driver is started: the device is held by the first one, so the
+second would only fail to open it while the frames arrived from the
+first and hid the fact. `start_camera:=false` never starts one, which is
+what `one_shot_pipeline.launch.py` passes, since that launch file brings
+the driver up itself.
+
+If no frame arrives within `camera_timeout`, 30 seconds by default, or
+the driver exits first, the node says so and exits non-zero rather than
+waiting for a capture that is not coming. A driver that is running but
+silent looks the same from here and is reported the same way.
+
+### Frame sizes
+
+Colour arrives at 1280x720 and depth at 640x576, the native size of
+NFOV unbinned. Those are the driver's own defaults, but the pipeline
+depends on them rather than merely tolerating them: a frame of another
+size is not a smaller picture of the same scene, it comes with
+different intrinsics, and the mapping in `mapping/rgbd_mapper.py` has
+those hardcoded.
+
+So the sizes are stated at both ends. The node asks the driver for them
+when it starts it, adding `color_width`, `color_height`, `depth_width`,
+`depth_height` and `depth_registration:=false` to the launch, and it
+checks every frame that arrives whoever started the camera:
+
+```
+the depth frame is 640x480, not the 640x576 this pipeline is calibrated
+for. Check the camera's width and height, and that depth_registration
+is off
+```
+
+That is a refusal, not a warning: the node exits non-zero and writes
+nothing. `depth_registration` is the usual cause, since with it on the
+driver rewrites depth into the colour frame and it arrives at the
+colour size, 1280x720, looking perfectly healthy.
+
+`rgb_size:=[0, 0]` or `depth_size:=[0, 0]` accepts whatever the camera
+sends. Anything passed through `camera_launch_arguments` overrides what
+the node would have asked for, so a deliberate change of resolution is
+one argument, not an edit.
+
 Pipeline only, against an already running camera:
 
 ```
@@ -430,6 +492,53 @@ Everything below `rotation` is there to be read later, when you want to
 know how good a recording was: how many samples it kept, how many it
 threw away, how far the frame was and how much it wandered. All of it
 is ignored on replay.
+
+### Teaching a point with the arm
+
+Where the camera says a thing is and where the arm can actually touch it
+are two different claims, and when they disagree the arm is the one that
+can be checked by looking. Put the tool on the thing, by hand or by the
+pendant, and write down where that was:
+
+```
+ros2 launch plantorv_ros record_tool_pose.launch.py
+```
+
+That averages `tool0` in the planning frame and writes it to
+`~/.ros/plantorv/taught_point.yaml` as `taught_point`, away from the
+bringup config, since it is a measurement and not part of the cell. It
+is recorded under a new name deliberately: written as `tool0` it would
+be replayed as `tool0`, and two things would then be claiming the frame
+the robot description owns. `record_as:=...` picks another name, and
+`tool_frame:=...` records something else.
+
+The tolerances are tighter than the camera recordings use, 2 mm and 1
+degree, because a stationary arm's joint states are steadier than a
+marker seen across the room.
+
+Replaying it makes the taught pose a frame like any other:
+
+```
+ros2 launch plantorv_ros static_marker_transforms.launch.py \
+    input_file:=$HOME/.ros/plantorv/taught_point.yaml
+```
+
+so a tree reaches it with the point at its own origin:
+
+```xml
+<MoveToPoint x="0.0" y="0.0" z="0.0" frame="taught_point"/>
+```
+
+And it settles the argument. Stand the tool where the camera says the
+thing is, record it, then ask TF for the difference:
+
+```
+ros2 run tf2_ros tf2_echo taught_point move_to_target
+```
+
+That is the error in metres in the planning frame. A constant offset
+whatever the target says the world origin is misplaced; an error that
+grows with distance from the camera says the depth is scaled wrong.
 
 ### Replaying them at bringup
 

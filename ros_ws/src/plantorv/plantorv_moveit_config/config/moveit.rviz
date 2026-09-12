@@ -14,6 +14,15 @@ Visualization Manager:
       Cell Size: 0.25
       Plane Cell Count: 12
       Reference Frame: world
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Target point
+      Topic:
+        Value: /plantorv_bt/target_point
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
     - Class: rviz_default_plugins/TF
       Enabled: false
       Name: TF

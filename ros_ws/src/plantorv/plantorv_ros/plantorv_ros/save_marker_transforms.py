@@ -38,6 +38,14 @@ class SaveMarkerTransforms(Node):
             "frames", ["charuco_board", "robot_base_marker"]
         )
 
+        # What each recorded frame is written down as. Empty, or shorter
+        # than frames, keeps the original names. Renaming matters when
+        # recording a frame something else already publishes: tool0
+        # written as tool0 and replayed would fight the robot
+        # description for it, while tool0 written as taught_point is a
+        # new frame that sits wherever the arm was.
+        self.declare_parameter("record_as", [""])
+
         self.declare_parameter(
             "output_file", marker_transform_file.default_file()
         )
@@ -76,6 +84,27 @@ class SaveMarkerTransforms(Node):
             self.get_parameter("output_file").value
         )
 
+        record_as = [
+            str(value)
+            for value in self.get_parameter("record_as").value
+        ]
+
+        if len(record_as) > len(self.frames):
+            raise ValueError(
+                f"record_as has {len(record_as)} names but frames only "
+                f"{len(self.frames)}"
+            )
+
+        # Recorded frame -> the name it is written under.
+        self.names = {
+            frame: (
+                record_as[index]
+                if index < len(record_as) and record_as[index]
+                else frame
+            )
+            for index, frame in enumerate(self.frames)
+        }
+
         self.samples = int(self.get_parameter("samples").value)
         self.timeout = float(self.get_parameter("timeout").value)
         sample_period = float(
@@ -111,7 +140,11 @@ class SaveMarkerTransforms(Node):
         # Samples per frame, each an (x, y, z, qx, qy, qz, qw) row.
         self.collected = {frame: [] for frame in self.frames}
 
+        # Why the last lookup of each frame failed, if it did.
+        self.last_error = {}
+
         self.started = self.get_clock().now()
+        self.announced_wait = False
         self.finished = False
         self.succeeded = False
 
@@ -149,7 +182,12 @@ class SaveMarkerTransforms(Node):
                     frame,
                     rclpy.time.Time(),
                 )
-            except Exception:
+            except Exception as error:
+                # Kept, not swallowed: when the samples never arrive,
+                # what tf2 objected to is the whole diagnosis, and
+                # "nothing happened" is the least useful thing this
+                # node could report.
+                self.last_error[frame] = str(error)
                 continue
 
             translation = transform.transform.translation
@@ -180,20 +218,37 @@ class SaveMarkerTransforms(Node):
                 self.get_logger().error(
                     f"Only got {len(self.collected[frame])} of "
                     f"{self.samples} samples of '{frame}' in "
-                    f"{self.timeout:.0f} s. Is it being published, and "
-                    f"is its parent '{self.parent_frame}'?"
+                    f"{self.timeout:.0f} s. TF said: "
+                    f"{self.last_error.get(frame, 'nothing, which means the lookup kept succeeding')}"
                 )
+
+            self.get_logger().error(
+                "The frames TF knows about are:\n"
+                + self.buffer.all_frames_as_string()
+            )
 
             self.finish(False)
             return
 
+        waiting = ", ".join(
+            f"{frame} ({len(self.collected[frame])}/{self.samples})"
+            for frame in missing
+        )
+
+        if not self.announced_wait:
+            self.announced_wait = True
+            self.get_logger().info(
+                f"Waiting on {waiting}"
+                + (
+                    f". TF said: {self.last_error[missing[0]]}"
+                    if missing[0] in self.last_error
+                    else ""
+                )
+            )
+            return
+
         self.get_logger().info(
-            "Waiting on "
-            + ", ".join(
-                f"{frame} ({len(self.collected[frame])}/{self.samples})"
-                for frame in missing
-            ),
-            throttle_duration_sec=5.0,
+            f"Waiting on {waiting}", throttle_duration_sec=5.0
         )
 
     def average(self, translations, quaternions):
@@ -276,7 +331,8 @@ class SaveMarkerTransforms(Node):
         # one bad frame is what makes a saved transform wrong.
         return {
             "parent_frame": self.parent_frame,
-            "child_frame": frame,
+            "child_frame": self.names[frame],
+            "recorded_frame": frame,
             "translation": {
                 "x": float(translation[0]),
                 "y": float(translation[1]),
@@ -302,10 +358,15 @@ class SaveMarkerTransforms(Node):
 
         for frame in self.frames:
             entry = self.summarise(frame)
-            entries[frame] = entry
+            entries[self.names[frame]] = entry
+
+            written = self.names[frame]
+            label = (
+                frame if written == frame else f"{frame} as {written}"
+            )
 
             self.get_logger().info(
-                f"{frame}: xyz "
+                f"{label}: xyz "
                 f"{entry['translation']['x']:+.4f} "
                 f"{entry['translation']['y']:+.4f} "
                 f"{entry['translation']['z']:+.4f} m at "

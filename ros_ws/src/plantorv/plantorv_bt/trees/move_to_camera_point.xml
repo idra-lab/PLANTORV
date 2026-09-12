@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<!--
+  Move the tool to one point given in the camera's frame.
+
+  The three numbers are metres in camera_color_optical_frame: x right across
+  the image, y down it, z out along the lens. That is the frame a perception
+  result comes out in, and it is not the frame the planner works in, so
+  MoveToPoint transforms the point through TF before the goal is sent. The
+  planner itself only ever sees a pose in `world`.
+
+  The transform has to exist, which means the recorded transforms have to be
+  running. They come up with plantorv.launch.py by default. Without them the
+  leaf fails and says which frame it could not reach, rather than moving
+  somewhere invented.
+
+  The tool points straight down whatever frame the point is given in. Only the
+  position comes from the camera; carrying the camera's orientation across
+  would aim the gripper along the lens.
+
+  Nothing moves for the first two minutes. The target is shown first and the
+  executor counts down in the log, so the point can be checked against the
+  scene and the tree stopped with Ctrl-C if it is wrong.
+
+  It is shown two ways. As a TF frame, move_to_target, under the planning
+  frame: that needs nothing set up, since the TF display is already in the
+  RViz configs, and `ros2 run tf2_ros tf2_echo world move_to_target` prints
+  it with no RViz at all. And as markers on /plantorv_bt/target_point: a
+  sphere at the target, its coordinates, and a line from the camera to it.
+
+  The line is the useful one when the arm goes somewhere unexpected. If it
+  points at the right part of the scene but ends short or long, the camera's
+  z is wrong or the marker size is. If it points somewhere else entirely, the
+  transforms are.
+
+  The wait is two minutes by default and does not need this file edited to
+  change it:
+
+    ros2 launch plantorv_bringup plantorv.launch.py preview_seconds:=10
+
+  preview_seconds="0" here skips the wait whatever the launch says, since an
+  attribute on the leaf wins over the node's parameter.
+  target_frame="..." renames the frame.
+
+  The numbers below are a point about 70 cm in front of the camera, near the
+  middle of its view. Change them, or name another frame:
+
+    MoveToPoint x="0.0" y="0.0" z="0.70" frame="static_charuco_board"
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+
+  <BehaviorTree ID="MainTree">
+    <Sequence name="move_to_camera_point">
+      <Log message="Transforming the camera-frame point into world"/>
+      <MoveToPoint x="0.06752832488509933" y="0.11149110993345825" z="0.7541801147460937"/>
+      <Log message="The tool is at the point the camera named"/>
+      <CloseGripper/>
+      <Log message="The gripper has locked"/>
+      <MoveToPoint x="0.298420614477212" y="0.10868130976555156" z="0.7418381958007813"/>
+      <Log message="The block is over the blue tray"/>      
+      <OpenGripper/>
+      <Log message="The gripper has been opened"/>
+      <Home/>
+    </Sequence>
+  </BehaviorTree>
+
+</root>
+
+
+            <!-- 0.4184147024131195,
+            0.04073342794642653,
+            0.9720914916992187 -->

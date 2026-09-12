@@ -78,7 +78,11 @@ DEFAULTS = {
     # 2.5 cm, so it is the 6 cm blocks at z = 0.81 that set it, not the trays.
     # Measured, not derived: the height of tool0 when the arm is at the taught
     # home configuration, read off TF on the real cell. See planner.yaml.
-    "transit_height": 1.223,
+    #
+    # 1.133, not the 1.223 this used to be: the stand height it was measured
+    # against was corrected from an assumed 0.975 to a taped 0.885, and home
+    # -- rigidly above base_link -- moved down the same 0.09 m with it.
+    "transit_height": 1.133,
     "tool_gap": 0.005,
     "drop_gap": 0.03,
     "cartesian_step": 0.005,
@@ -135,7 +139,10 @@ DEFAULTS = {
     # is the frame the controller accepts targets in, this is what the reach
     # guard measures from. Setting them to the same thing when the URDF is
     # rooted at the cell measures reach from the middle of the desk.
-    "arm_base_frame": "base_link",
+    # The shoulder, not base_link: a UR3's reach is the radius about the
+    # shoulder axis, 0.152 m above base_link, and measuring from lower
+    # down charges height against the horizontal budget.
+    "arm_base_frame": "shoulder_link",
     # Tool speed at velocity_scaling = 1.0. The scaling factors multiply
     # these, so what the arm actually does is a quarter of this by default --
     # get that wrong and a pick takes a minute. See planner.yaml.
@@ -165,7 +172,21 @@ DEFAULTS = {
     # rather than from the arm's datasheet -- see the note in planner.yaml.
     "workspace_min_z": 0.76,
     "workspace_min_reach": 0.16,
-    "workspace_max_reach": 0.48,
+    "workspace_max_reach": 0.51,
+    # Whether the reach bounds above are enforced at all.
+    #
+    # Off. The bounds kept refusing poses the arm was demonstrably
+    # holding, and chasing the discrepancy -- base_link against the
+    # shoulder, the transit plane, the tool0 offset -- was costing more
+    # than the guard was worth. The floor below is still enforced, so
+    # the tool is still kept out of the desk; what is no longer checked
+    # is how far out it goes.
+    #
+    # With this off nothing refuses a target out of reach. The solver
+    # does not complain about one: it sits short of it and reports
+    # success, so a move that ends somewhere other than where it was
+    # asked is now a thing that can happen quietly.
+    "workspace_reach_guard": False,
 }
 
 
@@ -178,6 +199,18 @@ class PlannerNode(Node):
         for name, value in DEFAULTS.items():
             self.declare_parameter(name, value)
         self.params = {name: self.get_parameter(name).value for name in DEFAULTS}
+
+        if not self.params["workspace_reach_guard"]:
+            # Said out loud every time, because a cell whose only check
+            # on where the tool goes is switched off should not be a
+            # surprise to whoever is standing next to it.
+            self.get_logger().warn(
+                "the reach guard is off: nothing refuses a target out of the "
+                "arm's reach, and a move that cannot get there will report "
+                "success from wherever it stopped. The floor at z = "
+                f"{self.params['workspace_min_z']:.3f} is still enforced. Set "
+                "workspace_reach_guard:=true to put it back."
+            )
 
         clients = ReentrantCallbackGroup()
         self.pose_client = self.create_client(

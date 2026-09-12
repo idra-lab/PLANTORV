@@ -20,18 +20,26 @@ frame_id: world
 robot:
   # The pedestal, on the floor, centred under the base axis. base_link sits on
   # top of it, so the stand height and mount_height are the same number.
-  stand_size: [0.25, 0.25, 0.975]
+  #
+  # 0.885, not 0.975: the real stand was measured with a tape rather than
+  # assumed, and base_link sits 88.5 cm above the floor, not 97.5. Everything
+  # below is otherwise unchanged -- the table and trays stand on the same
+  # floor independently of the pedestal, so their numbers are not affected --
+  # but every height quoted relative to base_link elsewhere (the taught home
+  # pose, the planner's transit plane) moved down by the same 0.09 m and has
+  # been corrected alongside this.
+  stand_size: [0.25, 0.25, 0.885]
   stand_xy: [0.0, 0.0]
   # Mount height of base_link above the floor. Kept explicit because the
   # planner and the URDF both need it. Equal to the stand height, since the
   # base bolts to the top of it.
-  mount_height: 0.975
+  mount_height: 0.885
   # Yaw of the base about z, radians.
   #
   # pi, and not by taste. The home configuration below puts tool0 at bearing
   # -106.98 degrees in base_link's own frame; turning the base by pi carries
   # that to +73 degrees in world, which points the tool out over the table at
-  # (0.110, 0.360, 1.223) -- where picture.jpg shows it. Any other yaw here
+  # (0.110, 0.360, 1.133) -- where picture.jpg shows it. Any other yaw here
   # aims the same joint values somewhere off the table.
   yaw: 3.141592653589793
   stand_color: [0.20, 0.20, 0.22, 1.0]

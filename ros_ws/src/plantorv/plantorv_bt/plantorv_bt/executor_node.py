@@ -56,6 +56,11 @@ class BehaviorTreeExecutor(Node):
         self.declare_parameter("loop", False)
         self.declare_parameter("shutdown_when_done", False)
 
+        # How long a leaf that previews its target waits before acting,
+        # so the wait can be set for a run without editing the tree. A
+        # tree that says preview_seconds itself still wins.
+        self.declare_parameter("preview_seconds", 120.0)
+
         tree_file = self.get_parameter("tree_file").value
         if not tree_file or not os.path.exists(tree_file):
             raise SystemExit(
@@ -64,6 +69,9 @@ class BehaviorTreeExecutor(Node):
             )
 
         self.bridge = RosBridge(self)
+        self.bridge.preview_seconds = float(
+            self.get_parameter("preview_seconds").value
+        )
         self.factory = BehaviorTreeFactory(context=self.bridge)
         for tag, leaf in LEAVES.items():
             self.factory.register(tag, leaf)

@@ -103,6 +103,18 @@ def generate_launch_description():
             "one of plantorv_bt's own trees, with or without .xml.",
         ),
         DeclareLaunchArgument(
+            "transit_height",
+            default_value="1.133",
+            description="Height of the transit plane, in the planning frame. "
+            "Raising it costs reach: base_link is at z = 0.885.",
+        ),
+        DeclareLaunchArgument(
+            "preview_seconds",
+            default_value="120.0",
+            description="Seconds a tree leaf shows its target in RViz before "
+            "moving to it. 0 moves straight away.",
+        ),
+        DeclareLaunchArgument(
             "moveit_delay",
             default_value="6.0",
             description="Seconds to let Gazebo and the controllers settle first",
@@ -353,6 +365,7 @@ def generate_launch_description():
                     "use_sim_time": use_sim_time,
                     "trajectory_controller": trajectory_controller,
                     "use_moveit": LaunchConfiguration("use_moveit"),
+                    "transit_height": LaunchConfiguration("transit_height"),
                     # Only when there is a real gripper on a real arm.
                     "use_gripper": PythonExpression(
                         [
@@ -367,7 +380,11 @@ def generate_launch_description():
             _include(
                 "plantorv_bt",
                 "behaviour_tree.launch.py",
-                {"tree": tree_path, "use_sim_time": use_sim_time},
+                {
+                    "tree": tree_path,
+                    "use_sim_time": use_sim_time,
+                    "preview_seconds": LaunchConfiguration("preview_seconds"),
+                },
                 condition=IfCondition(LaunchConfiguration("run_tree")),
             ),
         ],

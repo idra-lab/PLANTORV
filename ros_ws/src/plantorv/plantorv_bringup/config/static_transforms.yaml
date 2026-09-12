@@ -86,11 +86,28 @@ transforms:
     # the normal. That is what scene.yaml wants -- x along the long side
     # of the table, y across it towards the table, z up. The origin does
     # not move, only the axes.
+    #
+    # Manual correction: robot mesh sat 5 cm off from the camera point
+    # cloud in rviz, base needed to shift -0.05 m along world x. Since
+    # world x is -board_y, a -0.05 m move along world x is a +0.05 m
+    # move along board y, so it lands here as a change to y, not x:
+    #
+    #   y: 0.199827 + 0.05 = 0.249827
+    #
+    # Second correction: +0.02 m along world y. World y is board x, so
+    # it lands here as a change to x, not y:
+    #
+    #   x: -0.276661 + 0.02 = -0.256661
+    #
+    # Third correction: -0.01 m along world y. World y is board x, so
+    # it lands here as a change to x, not y:
+    #
+    #   x: -0.256661 - 0.01 = -0.266661
     parent_frame: static_charuco_board
     child_frame: world
     translation:
-      x: -0.276661
-      y: 0.199827
+      x: -0.266661
+      y: 0.249827
       z: -0.751075
     rotation:
       x: 0.0

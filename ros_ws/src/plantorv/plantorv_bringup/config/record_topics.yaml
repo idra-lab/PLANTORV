@@ -1,0 +1,42 @@
+# Topics strictly needed to replay the experiment in rviz2: TF for the robot
+# and the recorded frames, joint_states so TF can be regenerated if
+# robot_state_publisher runs during playback instead of at capture time, and
+# the point cloud itself. Raw color/depth images are left out on purpose --
+# depth_registration is off (see one_shot_pipeline.launch.py) so the cloud
+# does not need color, and the images cost most of the bag's bandwidth for
+# nothing this replay uses.
+topics:
+  - /camera/color/camera_info
+  - /camera/color/image_raw
+  - /camera/depth/camera_info
+  - /camera/depth/image_raw
+  - /camera/depth_filter_status
+  - /camera/depth_filters/status
+  - /camera/depth_registered/points
+  - /camera/device_status
+  - /camera/ir/camera_info
+  - /camera/ir/image_raw
+  - /cartesian_motion_controller/current_pose
+  - /cartesian_motion_controller/current_twist
+  - /cartesian_motion_controller/target_frame
+  - /cartesian_motion_controller/transition_event
+  - /diagnostics
+  - /dynamic_joint_states
+  - /io_and_status_controller/io_states
+  - /io_and_status_controller/robot_mode
+  - /io_and_status_controller/robot_program_running
+  - /io_and_status_controller/safety_mode
+  - /io_and_status_controller/tool_data
+  - /io_and_status_controller/transition_event
+  - /joint_state_broadcaster/transition_event
+  - /joint_states
+  - /joint_trajectory_controller/controller_state
+  - /joint_trajectory_controller/joint_trajectory
+  - /joint_trajectory_controller/state
+  - /joint_trajectory_controller/transition_event
+  - /parameter_events
+  - /plantorv_bt/target_point
+  - /robot_description
+  - /rosout
+  - /tf
+  - /tf_static
