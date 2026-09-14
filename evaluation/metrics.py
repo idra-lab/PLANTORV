@@ -135,7 +135,9 @@ def compute_depth_metrics(depth_df: pd.DataFrame, ignored: int) -> dict:
     """
     empty = pd.Series(dtype=float)
     abs_errors = depth_df["abs_error_mm"] if "abs_error_mm" in depth_df else empty
-    signed_errors = finite_values(depth_df["signed_error_mm"] if "signed_error_mm" in depth_df else empty)
+    signed_errors = finite_values(
+        depth_df["signed_error_mm"] if "signed_error_mm" in depth_df else empty
+    )
 
     metrics = {
         "num_depth_measurements": int(finite_values(abs_errors).size),

@@ -124,13 +124,9 @@ def _exact_run_directory(
             results_dir / f"results_{seg_token}_{vlm_token}_{association}",  # legacy
         ]
     elif depth == "monocular":
-        candidates = [
-            results_dir / f"results_{seg_token}_{vlm_token}_monocular_{association}"
-        ]
+        candidates = [results_dir / f"results_{seg_token}_{vlm_token}_monocular_{association}"]
     else:
-        candidates = [
-            results_dir / f"results_{seg_token}_{vlm_token}_{depth}_{association}"
-        ]
+        candidates = [results_dir / f"results_{seg_token}_{vlm_token}_{depth}_{association}"]
 
     existing = [path for path in candidates if path.is_dir()]
     if len(existing) == 1:
@@ -152,9 +148,7 @@ def _read_depth_csv(directory: Path) -> tuple[pd.DataFrame, int | None, float | 
     required = set(OBJECT_KEY + ["abs_error_mm"])
     missing_columns = required - set(frame.columns)
     if missing_columns:
-        raise ValueError(
-            f"{depth_csv} is missing required columns: {sorted(missing_columns)}"
-        )
+        raise ValueError(f"{depth_csv} is missing required columns: {sorted(missing_columns)}")
 
     frame = frame.copy()
     frame["abs_error_mm"] = pd.to_numeric(frame["abs_error_mm"], errors="coerce")
@@ -206,9 +200,7 @@ def read_row(
 
     for depth, association in techniques:
         try:
-            directory = _exact_run_directory(
-                results_dir, segmentation, vlm, depth, association
-            )
+            directory = _exact_run_directory(results_dir, segmentation, vlm, depth, association)
             frame, n_attempted, coverage_percent = _read_depth_csv(directory)
             loaded[(depth, association)] = (
                 directory,
@@ -228,10 +220,7 @@ def read_row(
     # the mask-median result toward the easier cases.
     shared: pd.DataFrame | None = None
     if common_objects and loaded:
-        key_frames = [
-            frame[OBJECT_KEY].drop_duplicates()
-            for _, frame, _, _, _ in loaded.values()
-        ]
+        key_frames = [frame[OBJECT_KEY].drop_duplicates() for _, frame, _, _, _ in loaded.values()]
         shared = key_frames[0]
         for keys in key_frames[1:]:
             shared = shared.merge(keys, on=OBJECT_KEY, how="inner")
@@ -333,9 +322,7 @@ def _technique_cells(
             cells.append(_latex_metric(technique.position_var_mm))
     if coverage:
         cells.append(
-            "--"
-            if technique.coverage_percent is None
-            else f"{technique.coverage_percent:.1f}\\%"
+            "--" if technique.coverage_percent is None else f"{technique.coverage_percent:.1f}\\%"
         )
     return cells
 
@@ -489,11 +476,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    pairs = (
-        [(args.segmentation, args.vlm)]
-        if args.segmentation
-        else list(DEFAULT_ROWS)
-    )
+    pairs = [(args.segmentation, args.vlm)] if args.segmentation else list(DEFAULT_ROWS)
 
     # Own-object scoring is the default and is the correct mode for the paper's Table III.
     common_objects = bool(args.common_objects)
@@ -541,9 +524,7 @@ def main(argv: list[str] | None = None) -> int:
             if t.missing:
                 print(f"%   {t.depth:<9} {t.association:<11} MISSING")
                 continue
-            coverage = (
-                "n/a" if t.coverage_percent is None else f"{t.coverage_percent:5.1f}%"
-            )
+            coverage = "n/a" if t.coverage_percent is None else f"{t.coverage_percent:5.1f}%"
             print(
                 f"%   {t.depth:<9} {t.association:<11} valid {t.n_valid:>4} "
                 f"({coverage}), scored {t.n_scored:>4}, positions {t.n_position:>4}: "

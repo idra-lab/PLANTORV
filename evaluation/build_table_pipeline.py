@@ -212,7 +212,9 @@ def read_metrics(
         depth_df = pd.read_csv(depth_csv)
         if not include_ignored_depth and "ignored" in depth_df:
             depth_df = depth_df[depth_df["ignored"] == 0]
-        errors = finite_values(depth_df["abs_error_mm"]) if "abs_error_mm" in depth_df else np.array([])
+        errors = (
+            finite_values(depth_df["abs_error_mm"]) if "abs_error_mm" in depth_df else np.array([])
+        )
         if errors.size:
             depth_mean = float(errors.mean())
             depth_rmse = float(np.sqrt((errors**2).mean()))
@@ -315,9 +317,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="warn and continue instead of failing when a run has not been evaluated",
     )
-    parser.add_argument(
-        "--csv", type=Path, help="also write the numbers to this CSV file"
-    )
+    parser.add_argument("--csv", type=Path, help="also write the numbers to this CSV file")
     args = parser.parse_args(argv)
     if bool(args.segmentation) != bool(args.vlm):
         parser.error("--segmentation and --vlm must be given together")
@@ -326,11 +326,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    pairs = (
-        [(args.segmentation, args.vlm)]
-        if args.segmentation
-        else list(DEFAULT_ROWS)
-    )
+    pairs = [(args.segmentation, args.vlm)] if args.segmentation else list(DEFAULT_ROWS)
 
     rows: list[RunMetrics] = []
     for segmentation, vlm in pairs:

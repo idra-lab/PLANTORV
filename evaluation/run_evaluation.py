@@ -589,9 +589,7 @@ def evaluate_localization(
     return obj_stats, img_stats, summary
 
 
-def evaluate_depth(
-    all_depth_results: list[pd.DataFrame], ignored: int, output_dir: Path
-) -> dict:
+def evaluate_depth(all_depth_results: list[pd.DataFrame], ignored: int, output_dir: Path) -> dict:
     """Write the depth correlation tables and figures.
 
     Parameters
