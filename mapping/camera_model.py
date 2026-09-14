@@ -1,5 +1,7 @@
+import os
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from pathlib import Path
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -51,6 +53,31 @@ class AlignProfile:
     align_right: int
     align_bottom: int
     depth_scale: float
+
+
+@dataclass(frozen=True)
+class CameraToWorldTransform:
+    """Rigid transform that carries a colour-camera point into ``world``.
+
+    Its fields mirror ``tf2``'s ``lookup_transform("world", camera_frame)``:
+    ``translation`` and ``rotation`` express the source camera frame in the
+    target world frame.  Consequently, a point is carried as ``R @ p + t``.
+    """
+
+    target_frame: str
+    source_frame: str
+    translation: np.ndarray  # 3, metres
+    rotation: np.ndarray  # 4, quaternion x, y, z, w
+
+
+# ``save_camera_world_transform`` writes here by default.  Keeping the lookup
+# relative to this module lets the standalone mapping pipeline use the captured
+# transform without importing ROS 2.  Set PLANTORV_CAMERA_TO_WORLD_TRANSFORM to
+# use a transform captured or stored elsewhere.
+DEFAULT_CAMERA_TO_WORLD_TRANSFORM_FILE = (
+    Path(__file__).resolve().parent.parent
+    / "ros_ws/src/plantorv/plantorv_bringup/config/camera_to_world_transform.yaml"
+)
 
 
 _ROT = np.asarray(
@@ -347,3 +374,101 @@ def rgb_calibration_for_size(width: int, height: int) -> Optional[Tuple[Intrinsi
             return scale_intrinsics(intrinsic, width, height), calibration.rgb_distortion
 
     return None
+
+
+def load_camera_to_world_transform(
+    path: Optional[Union[str, Path]] = None,
+) -> Optional[CameraToWorldTransform]:
+    """Read the camera-to-world transform saved by the ROS 2 recorder.
+
+    The recorder writes the transform returned by
+    ``lookup_transform("world", "static_camera_color_optical_frame")``.  A
+    missing file is normal before the camera has been calibrated and returns
+    ``None``; a present but malformed file raises :class:`ValueError` rather
+    than silently producing incorrect world coordinates.
+
+    ``PLANTORV_CAMERA_TO_WORLD_TRANSFORM`` overrides the default location, and
+    ``path`` overrides both.  This keeps offline mapping independent of a
+    running ROS graph while allowing a run-specific calibration file.
+    """
+    configured = (
+        Path(path)
+        if path is not None
+        else Path(
+            os.environ.get(
+                "PLANTORV_CAMERA_TO_WORLD_TRANSFORM",
+                DEFAULT_CAMERA_TO_WORLD_TRANSFORM_FILE,
+            )
+        )
+    )
+
+    if not configured.is_file():
+        return None
+
+    try:
+        import yaml
+    except ImportError as error:  # pragma: no cover - ROS installs PyYAML.
+        raise RuntimeError(
+            "PyYAML is required to read the camera-to-world transform"
+        ) from error
+
+    with configured.open() as handle:
+        document = yaml.safe_load(handle) or {}
+
+    try:
+        target_frame = str(document["target_frame"])
+        source_frame = str(document["source_frame"])
+        translation_data = document["translation"]
+        rotation_data = document["rotation"]
+        translation = np.asarray(
+            [translation_data[axis] for axis in ("x", "y", "z")],
+            dtype=np.float64,
+        )
+        rotation = np.asarray(
+            [rotation_data[axis] for axis in ("x", "y", "z", "w")],
+            dtype=np.float64,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            f"{configured} is not a camera-to-world transform: {error}"
+        ) from error
+
+    if target_frame != "world":
+        raise ValueError(
+            f"{configured} targets '{target_frame}', expected 'world'"
+        )
+    if not np.isfinite(translation).all() or not np.isfinite(rotation).all():
+        raise ValueError(f"{configured} contains non-finite transform values")
+
+    norm = float(np.linalg.norm(rotation))
+    if norm == 0.0:
+        raise ValueError(f"{configured} has a zero-length rotation quaternion")
+
+    return CameraToWorldTransform(
+        target_frame=target_frame,
+        source_frame=source_frame,
+        translation=translation,
+        rotation=rotation / norm,
+    )
+
+
+def point_camera_to_world_m(
+    point_camera_m: Union[List[float], np.ndarray],
+    transform: CameraToWorldTransform,
+) -> list:
+    """Carry one ``[x, y, z]`` camera-frame point into the world frame."""
+    point = np.asarray(point_camera_m, dtype=np.float64)
+    if point.shape != (3,) or not np.isfinite(point).all():
+        raise ValueError("point_camera_m must contain three finite coordinates")
+
+    x, y, z, w = transform.rotation
+    rotation = np.asarray(
+        [
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+            [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+            [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
+        ],
+        dtype=np.float64,
+    )
+    world = rotation @ point + transform.translation
+    return [float(value) for value in world]

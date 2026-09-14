@@ -1,12 +1,15 @@
 <?xml version="1.0"?>
 <!--
-  Move the tool to one point given in the camera's frame.
+  Move the tool to points given in the camera or world frame.
 
   The three numbers are metres in camera_color_optical_frame: x right across
   the image, y down it, z out along the lens. That is the frame a perception
   result comes out in, and it is not the frame the planner works in, so
-  MoveToPoint transforms the point through TF before the goal is sent. The
-  planner itself only ever sees a pose in `world`.
+  MoveToPoint transforms the point through TF before the goal is sent. A point
+  that already has frame="world" is passed to the planner unchanged. Use that
+  attribute when pasting `object_point_world_m`; the example values below are
+  still camera-frame values. The planner itself only ever sees a pose in
+  `world`.
 
   The transform has to exist, which means the recorded transforms have to be
   running. They come up with plantorv.launch.py by default. Without them the

@@ -233,8 +233,9 @@ class MoveToPoint(PlannerLeaf):
     camera's optical frame: x right across the image, y down it, z out along
     the lens. That is where a perception result naturally comes out, and it is
     not where the planner works, so the point is transformed into the planning
-    frame here and the goal that leaves this leaf is in ``world`` like every
-    other.
+    frame here. When ``frame`` already equals ``planning_frame`` (normally
+    ``world``), the numbers are used directly, without a TF lookup. The goal
+    that leaves this leaf is in ``world`` like every other.
 
     Only the point is taken from ``frame``. The tool still points straight
     down in the planning frame, which is the only orientation this cell uses;
@@ -303,11 +304,6 @@ class MoveToPoint(PlannerLeaf):
                     cast=float,
                 )
             )
-
-            if goal.pose.header.frame_id == "world":
-                goal.pose.pose.position.z += 0.17
-            else:
-                self.context.logger.error("Frame is not world")
 
             self.previewed_goal = goal
             self.publish_marker(goal)
@@ -571,6 +567,10 @@ class MoveToPoint(PlannerLeaf):
         stamped.point.z = z
 
         if source_frame == planning_frame:
+            self.context.logger.info(
+                f"{self.describe()}: using ({x:.3f}, {y:.3f}, {z:.3f}) "
+                f"directly in '{planning_frame}'"
+            )
             return stamped.point
 
         try:
