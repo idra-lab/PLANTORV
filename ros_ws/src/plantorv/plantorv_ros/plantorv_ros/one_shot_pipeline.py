@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -10,6 +12,7 @@ import cv2
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
+from rclpy.executors import ExternalShutdownException
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -50,6 +53,42 @@ class OneShotPipelineNode(Node):
         # use the closest cloud seen after this many seconds.
         self.declare_parameter("pointcloud_timeout", 2.0)
 
+        # Camera
+        #
+        # The node brings the driver up itself, so `ros2 run` is enough
+        # and there is nothing to start in another terminal. A launch
+        # file that already starts a camera passes start_camera:=false,
+        # otherwise there would be two drivers fighting over one device.
+        self.declare_parameter("start_camera", True)
+        self.declare_parameter("camera_launch_package", "orbbec_camera")
+        self.declare_parameter("camera_launch_file", "femto_mega.launch.py")
+
+        # Passed to that launch file as they are, so the transport and
+        # everything else is chosen the same way as on its own command
+        # line: ["use_network:=true", "net_device_ip:=192.168.1.10"].
+        self.declare_parameter("camera_launch_arguments", [""])
+
+        # How long the driver gets to produce the first frames before
+        # the node gives up. The Femto Mega takes about four seconds
+        # from cold.
+        self.declare_parameter("camera_timeout", 30.0)
+
+        # How long to look for an already running camera before
+        # concluding there is none.
+        self.declare_parameter("camera_discovery_time", 2.0)
+
+        # The frame sizes the pipeline is calibrated for: colour at the
+        # sensor's 1280x720, depth at the native 640x576 of NFOV
+        # unbinned. They are asked of the driver when this node starts
+        # it, and checked on arrival whoever started it, because a
+        # differently sized frame is not a smaller picture of the same
+        # thing -- it is a different set of intrinsics, and the mapping
+        # in mapping/rgbd_mapper.py has those hardcoded.
+        #
+        # [0, 0] accepts whatever arrives.
+        self.declare_parameter("rgb_size", [1280, 720])
+        self.declare_parameter("depth_size", [640, 576])
+
         # Pipeline
         self.declare_parameter(
             "pipeline_script",
@@ -82,6 +121,13 @@ class OneShotPipelineNode(Node):
             self.get_parameter("pointcloud_timeout").value
         )
 
+        self.rgb_size = tuple(
+            int(value) for value in self.get_parameter("rgb_size").value
+        )
+        self.depth_size = tuple(
+            int(value) for value in self.get_parameter("depth_size").value
+        )
+
         # Input directories given to the existing pipeline.
         self.rgb_dir = self.output_dir / "input" / "rgb"
         self.depth_dir = self.output_dir / "input" / "depth"
@@ -106,6 +152,7 @@ class OneShotPipelineNode(Node):
         # State
         self.capture_started = False
         self.finished = False
+        self.failed = False
 
         # Timestamp representing the RGB-D pair.
         self.target_stamp_ns = None
@@ -116,6 +163,28 @@ class OneShotPipelineNode(Node):
         # Keep several recent point clouds around so clouds arriving
         # slightly before the RGB-D callback are available.
         self.cloud_buffer = deque(maxlen=10)
+
+        # ----------------------------------------------------------
+        # The camera
+        # ----------------------------------------------------------
+
+        # Started before the subscriptions so no frame is missed while
+        # the driver warms up, and torn down again in destroy_node.
+        self.camera = None
+
+        if bool(self.get_parameter("start_camera").value):
+            if self.camera_already_running():
+                self.get_logger().info(
+                    f"Something is already publishing {self.rgb_topic}; "
+                    "using that camera instead of starting one"
+                )
+            else:
+                self.camera = self.start_camera()
+
+        self.camera_deadline = (
+            time.monotonic()
+            + float(self.get_parameter("camera_timeout").value)
+        )
 
         # ----------------------------------------------------------
         # RGB + depth synchronization
@@ -160,6 +229,9 @@ class OneShotPipelineNode(Node):
             self.check_pointcloud_timeout,
         )
 
+        # Watches the start-up only, and stops at the first pair.
+        self.camera_timer = self.create_timer(1.0, self.check_camera)
+
         self.get_logger().info(
             "Waiting for one capture:\n"
             f"  RGB:        {self.rgb_topic}\n"
@@ -168,8 +240,184 @@ class OneShotPipelineNode(Node):
         )
 
     # ------------------------------------------------------------------
+    # The camera
+    # ------------------------------------------------------------------
+
+    def camera_already_running(self) -> bool:
+        """True if some other driver is already publishing the images.
+
+        Starting a second one would only fail: the device is held by the
+        first, which produces three initialization failures and then a
+        dead launch, while the frames arrive from the first driver all
+        along and hide it.
+        """
+        deadline = time.monotonic() + float(
+            self.get_parameter("camera_discovery_time").value
+        )
+
+        # Publishers are not known the instant a node starts. Spinning
+        # briefly is what gives discovery time to answer.
+        while time.monotonic() < deadline:
+            if self.count_publishers(self.rgb_topic) > 0:
+                return True
+
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+        return self.count_publishers(self.rgb_topic) > 0
+
+    def start_camera(self):
+        """Launch the camera driver, and return the process running it.
+
+        `ros2 launch` is a process tree, not one process, so it goes
+        into a session of its own. That way stop_camera can signal the
+        whole group and the driver goes down with it rather than being
+        left holding the device.
+        """
+        package = self.get_parameter("camera_launch_package").value
+        launch_file = self.get_parameter("camera_launch_file").value
+
+        # The sizes this node wants, plus the D2C setting that decides
+        # whether depth keeps them. With depth_registration on, the
+        # driver rewrites depth into the colour frame and it arrives at
+        # the colour resolution instead of its own.
+        arguments = {}
+
+        if all(self.rgb_size):
+            arguments["color_width"] = str(self.rgb_size[0])
+            arguments["color_height"] = str(self.rgb_size[1])
+
+        if all(self.depth_size):
+            arguments["depth_width"] = str(self.depth_size[0])
+            arguments["depth_height"] = str(self.depth_size[1])
+            arguments["depth_registration"] = "false"
+
+        # Anything the caller gave wins, so this stays overridable.
+        for value in self.get_parameter("camera_launch_arguments").value:
+            text = str(value)
+
+            if not text:
+                continue
+
+            name, separator, setting = text.partition(":=")
+            if separator:
+                arguments[name] = setting
+            else:
+                self.get_logger().warn(
+                    f"ignoring camera launch argument '{text}': "
+                    "it is not name:=value"
+                )
+
+        command = [
+            "ros2",
+            "launch",
+            package,
+            launch_file,
+            *(f"{name}:={value}" for name, value in arguments.items()),
+        ]
+
+        self.get_logger().info(f"Starting the camera: {' '.join(command)}")
+
+        try:
+            process = subprocess.Popen(command, start_new_session=True)
+        except FileNotFoundError as error:
+            raise RuntimeError(
+                f"could not run '{command[0]}': {error}. Source the "
+                "workspace, or pass start_camera:=false and start the "
+                "camera yourself."
+            ) from error
+
+        return process
+
+    def stop_camera(self) -> None:
+        """Take the camera down again, and wait until it is gone."""
+        if self.camera is None:
+            return
+
+        process, self.camera = self.camera, None
+
+        if process.poll() is not None:
+            return
+
+        self.get_logger().info("Stopping the camera")
+
+        group = os.getpgid(process.pid)
+
+        # SIGINT first: that is what ros2 launch shuts down cleanly on,
+        # and the driver needs the chance to release the device.
+        for sig, grace in ((signal.SIGINT, 10.0), (signal.SIGTERM, 5.0)):
+            try:
+                os.killpg(group, sig)
+            except ProcessLookupError:
+                return
+
+            try:
+                process.wait(timeout=grace)
+                return
+            except subprocess.TimeoutExpired:
+                continue
+
+        self.get_logger().warn("The camera did not stop; killing it")
+
+        try:
+            os.killpg(group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def check_camera(self) -> None:
+        """Give up if the driver dies, or never produces a frame."""
+        if self.capture_started:
+            return
+
+        if self.camera is not None and self.camera.poll() is not None:
+            self.fail(
+                f"the camera exited with code {self.camera.returncode} "
+                "before a frame arrived"
+            )
+            return
+
+        if time.monotonic() < self.camera_deadline:
+            return
+
+        self.fail(
+            "no frames "
+            f"{float(self.get_parameter('camera_timeout').value):.0f} s "
+            f"after start. Is {self.rgb_topic} being published?"
+        )
+
+    def fail(self, message: str) -> None:
+        """Report why there will be no capture, and stop the node."""
+        self.get_logger().error(message)
+        self.failed = True
+        self.finished = True
+        self.stop_camera()
+
+    def destroy_node(self):
+        self.stop_camera()
+        return super().destroy_node()
+
+    # ------------------------------------------------------------------
     # RGB-D
     # ------------------------------------------------------------------
+
+    def check_size(self, name: str, msg: Image, expected) -> bool:
+        """True if a frame is the size the pipeline is calibrated for."""
+        if not all(expected):
+            return True
+
+        if (msg.width, msg.height) == tuple(expected):
+            return True
+
+        self.fail(
+            f"the {name} frame is {msg.width}x{msg.height}, not the "
+            f"{expected[0]}x{expected[1]} this pipeline is calibrated "
+            "for. Check the camera's width and height, and that "
+            "depth_registration is off -- with it on the driver "
+            "rewrites depth into the colour frame and it arrives at "
+            f"the colour size. Set {name}_size to [0, 0] to accept "
+            "whatever the camera sends."
+        )
+
+        return False
 
     def rgbd_callback(
         self,
@@ -179,8 +427,17 @@ class OneShotPipelineNode(Node):
         if self.capture_started:
             return
 
+        if not self.check_size("rgb", rgb_msg, self.rgb_size):
+            return
+
+        if not self.check_size("depth", depth_msg, self.depth_size):
+            return
+
         self.capture_started = True
         self.capture_start_time = time.monotonic()
+
+        # Frames are arriving, so the start-up watchdog has done its job.
+        self.camera_timer.cancel()
 
         rgb_ns = stamp_ns(rgb_msg)
         depth_ns = stamp_ns(depth_msg)
@@ -445,9 +702,13 @@ class OneShotPipelineNode(Node):
             self.get_logger().error(
                 f"Pipeline failed: {exc}"
             )
+            self.failed = True
 
         finally:
-            rclpy.shutdown()
+            # Saying it is done, rather than shutting the context down
+            # here: that has to happen outside the callback, or spin
+            # does not come back and the camera is never stopped.
+            self.finished = True
 
     # ------------------------------------------------------------------
     # PointCloud2 -> PLY
@@ -650,9 +911,6 @@ class OneShotPipelineNode(Node):
     def finish_without_pipeline(self) -> None:
         self.finished = True
 
-        if rclpy.ok():
-            rclpy.shutdown()
-
 
 def main(args=None):
     rclpy.init(args=args)
@@ -660,14 +918,23 @@ def main(args=None):
     node = OneShotPipelineNode()
 
     try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
+        # Spun a slice at a time rather than with rclpy.spin, so the node
+        # can finish by saying so. Shutting the context down from inside
+        # a callback does not reliably return from spin, and this node
+        # has a camera to stop on the way out.
+        while rclpy.ok() and not node.finished:
+            rclpy.spin_once(node, timeout_sec=0.1)
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        failed = node.failed
         node.destroy_node()
 
         if rclpy.ok():
             rclpy.shutdown()
+
+    if failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

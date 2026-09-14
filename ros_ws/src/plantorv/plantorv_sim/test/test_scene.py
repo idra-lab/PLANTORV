@@ -38,6 +38,13 @@ SCENE_FILE = os.path.join(HERE, "config", "scene.yaml")
 # Reach of a UR3, wrist included, from the shoulder axis.
 UR3_REACH = 0.5
 
+# How far the shoulder axis sits above base_link on a UR3, its d1. The
+# reach above is a radius about that axis, so anything compared against
+# it has to be measured from there: base_link is 0.152 m lower, and
+# measuring from it charges height against the horizontal budget. The
+# planner's guard makes the same distinction, through arm_base_frame.
+SHOULDER_HEIGHT = 0.1519
+
 # The planner's own config, one package over. Read rather than copied, because
 # the numbers below are the ones that have to agree with this layout, and a
 # copy of them here would agree with it for ever.
@@ -72,9 +79,9 @@ def test_the_pedestal_stands_on_the_floor_and_carries_the_arm(scene):
     stand = scene.get("robot_stand")
     # On the floor, not on the table: the two are independent.
     assert stand.position[2] - stand.dimensions[2] / 2.0 == pytest.approx(0.0)
-    assert stand.dimensions[2] == pytest.approx(0.975)
+    assert stand.dimensions[2] == pytest.approx(0.885)
     assert scene.mount_height == pytest.approx(stand.top_z)
-    assert scene.mount_height == pytest.approx(0.975)
+    assert scene.mount_height == pytest.approx(0.885)
 
 
 def test_the_table_is_pushed_up_to_the_pedestal_and_does_not_overlap_it(scene):
@@ -93,12 +100,13 @@ def test_the_arm_reaches_over_the_table_rather_than_standing_on_it(scene):
     itself -- but it is not free either. Every centimetre the base rises is a
     centimetre further the arm has to reach down, and the reach it costs is
     counted against the same 0.5 m budget as the reach across the table. At
-    22.5 cm the release pose over a tray is 0.4703 m out, which is the closest
-    anything in this cell comes to the limit.
+    13.5 cm -- the stand was measured with a tape at 0.885, not the 0.975
+    once assumed -- the release pose over a tray is 0.4587 m out, which is
+    the closest reachable pose in this cell comes to the limit.
     """
     clearance = scene.mount_height - scene.table_height
     assert clearance > 0.0
-    assert clearance == pytest.approx(0.225)
+    assert clearance == pytest.approx(0.135)
 
 
 def test_the_blocks_sit_on_the_table(scene):
@@ -215,14 +223,13 @@ def test_the_arm_can_reach_the_height_it_releases_a_block_from(scene, planner_pa
 def test_the_arm_cannot_reach_down_to_the_tray_rims(scene):
     """A known limit of this layout, recorded so it is not discovered late.
 
-    With base_link at 0.975 and the trays 15 cm out from the pedestal, the
-    centre of a tray's rim is about 0.500 m from the base -- at or just past a
-    UR3's reach. Dropping a block in from above works and is what the planner
-    does. Lowering one in and opening the gripper, which is what a real gripper
-    would want to do and what would stop a block bouncing out, does not.
-
-    If this ever needs to become possible, the trays have to come nearer or the
-    pedestal has to come down; no amount of planner tuning will reach it.
+    This was written against a base_link height of 0.975, since corrected to
+    the measured 0.885. The pedestal has, in effect, already come down: the
+    tray rims that used to sit at or just past a UR3's reach are now closer
+    to 0.40-0.47 m out, comfortably inside it. Lowering into a tray and
+    opening the gripper there may now be possible where it was not before --
+    worth trying on the real cell rather than assumed from this docstring,
+    since it is exactly the thing this test used to rule out.
     """
     base = (*scene.mount_xy, scene.mount_height)
     for tray in scene.of_type(TYPE_TRAY):
@@ -344,6 +351,12 @@ def _base(scene):
     return (x, y, scene.mount_height)
 
 
+def _shoulder(scene):
+    """Where the arm actually reaches from, which is what UR3_REACH is about."""
+    x, y = scene.mount_xy
+    return (x, y, scene.mount_height + SHOULDER_HEIGHT)
+
+
 def test_every_pose_the_planner_builds_is_inside_its_own_reach_guard(scene, planner_params):
     """The outer bound of the workspace guard has to clear the whole task.
 
@@ -352,12 +365,22 @@ def test_every_pose_the_planner_builds_is_inside_its_own_reach_guard(scene, plan
     task needs and the robot fails the task instead; set it over the arm's
     reach and it stops guarding anything.
     """
-    base = _base(scene)
+    shoulder = _shoulder(scene)
     limit = planner_params["workspace_max_reach"]
-    assert limit < UR3_REACH, "the guard is outside the arm's reach, so it guards nothing"
+
+    # A little over UR3_REACH is allowed: the quoted 500 mm is the
+    # working radius, and tool0 was measured 0.506 m from the shoulder on
+    # this arm at full stretch. Much over it and the guard is guarding
+    # nothing again.
+    assert limit <= UR3_REACH + 0.02, (
+        "the guard is well outside the arm's reach, so it guards nothing"
+    )
+
     for name, point in _planner_poses(scene, planner_params):
-        distance = math.dist(base, point)
-        assert distance < limit, f"{name} is {distance:.4f} m from the base, past {limit}"
+        distance = math.dist(shoulder, point)
+        assert distance < limit, (
+            f"{name} is {distance:.4f} m from the shoulder, past {limit}"
+        )
 
 
 def test_every_pose_the_planner_builds_is_above_the_desk(scene, planner_params):
@@ -374,8 +397,13 @@ def test_no_traverse_passes_inside_the_inner_reach_guard(scene, planner_params):
     too narrow for one, so the line from the leftmost to the rightmost crosses
     the centreline directly above base_link. The inner bound of the guard has
     to be under that distance or sort_cubes.xml is refused halfway through.
+
+    Measured from the shoulder, as the guard measures it. A traverse
+    crossing the centreline passes closest to the axis, not to the point
+    on the floor under it, and the shoulder is where the arm's own
+    geometry puts that axis.
     """
-    base = _base(scene)
+    shoulder = _shoulder(scene)
     limit = planner_params["workspace_min_reach"]
     plane = planner_params["transit_height"]
     # Only the things the arm actually traverses between. The table's centre
@@ -387,7 +415,9 @@ def test_no_traverse_passes_inside_the_inner_reach_guard(scene, planner_params):
     ]
 
     closest = min(
-        math.dist(base, tuple(a + step / 200.0 * (b - a) for a, b in zip(first, second)))
+        math.dist(
+            shoulder, tuple(a + step / 200.0 * (b - a) for a, b in zip(first, second))
+        )
         for first in points
         for second in points
         for step in range(201)

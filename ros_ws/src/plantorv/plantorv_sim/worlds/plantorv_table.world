@@ -118,7 +118,7 @@
     </model>
     <model name="tray_red">
       <static>true</static>
-      <pose>0.200000 0.412500 0.762500 0 0 0.000000</pose>
+      <pose>-0.181000 0.336000 0.762500 0 0 0.000000</pose>
       <link name="base_link">
         <collision name="tray_red_0_collision">
           <pose>0.000000 0.000000 -0.010500 0 0 0</pose>

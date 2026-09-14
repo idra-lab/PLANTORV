@@ -1,0 +1,13 @@
+# QoS the recorder's subscription uses, overriding what the publisher offers.
+# The camera driver offers /camera/depth/points as RELIABLE (see the QoS
+# recorded in an earlier bag's metadata.yaml), which lets a subscriber that
+# falls behind -- the bag writer, under disk/CPU load -- back-pressure the
+# publisher instead of just missing frames. That is the likely cause of the
+# point cloud stalling for every subscriber, rviz2 included, once recording
+# starts. best_effort/volatile here means the recorder drops what it cannot
+# keep up with instead of stalling the publisher for everyone.
+/camera/depth_registered/points:
+  reliability: best_effort
+  durability: volatile
+  history: keep_last
+  depth: 5

@@ -18,7 +18,7 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 
 
@@ -27,6 +27,10 @@ def camera_launch(condition, extra_arguments):
     launch_arguments = {
         'camera_name': LaunchConfiguration('camera_name'),
         'depth_registration': LaunchConfiguration('depth_registration'),
+        'color_width': LaunchConfiguration('color_width'),
+        'color_height': LaunchConfiguration('color_height'),
+        'depth_width': LaunchConfiguration('depth_width'),
+        'depth_height': LaunchConfiguration('depth_height'),
     }
     launch_arguments.update(extra_arguments)
 
@@ -64,6 +68,17 @@ def generate_launch_description():
         # itself and needs the native 640x576 NFOV depth frame; a
         # pre-aligned one has no matching hardcoded calibration.
         DeclareLaunchArgument('depth_registration', default_value='false'),
+
+        # The sizes the pipeline is calibrated for: colour at the sensor's
+        # 1280x720, depth at the native 640x576 of NFOV unbinned. These are
+        # the driver's own defaults, stated here because the pipeline
+        # depends on them rather than merely tolerating them, and passed to
+        # the node as well so a frame of another size is refused instead of
+        # quietly mapped with the wrong intrinsics.
+        DeclareLaunchArgument('color_width', default_value='1280'),
+        DeclareLaunchArgument('color_height', default_value='720'),
+        DeclareLaunchArgument('depth_width', default_value='640'),
+        DeclareLaunchArgument('depth_height', default_value='576'),
 
         # Ethernet only. With enumerate_net_device set to false the driver
         # connects straight to net_device_ip:net_device_port instead of
@@ -141,11 +156,27 @@ def generate_launch_description():
         name='one_shot_pipeline',
         output='screen',
         parameters=[{
+            # This launch file starts the driver itself, just above, so
+            # the node must not start a second one.
+            'start_camera': False,
             'rgb_topic': LaunchConfiguration('rgb_topic'),
             'depth_topic': LaunchConfiguration('depth_topic'),
             'pointcloud_topic': LaunchConfiguration('pointcloud_topic'),
             'pipeline_script': LaunchConfiguration('pipeline_script'),
             'output_dir': LaunchConfiguration('output_dir'),
+            # One substitution producing "[1280, 720]", not a Python list
+            # of two substitutions: launch_ros flattens the latter into a
+            # single concatenated string ("1280720") and rclpy then
+            # refuses it as the wrong parameter type, since the node
+            # declares these as integer arrays.
+            'rgb_size': PythonExpression([
+                "[", LaunchConfiguration('color_width'), ", ",
+                LaunchConfiguration('color_height'), "]",
+            ]),
+            'depth_size': PythonExpression([
+                "[", LaunchConfiguration('depth_width'), ", ",
+                LaunchConfiguration('depth_height'), "]",
+            ]),
             'sync_slop': LaunchConfiguration('sync_slop'),
             'pointcloud_timeout': LaunchConfiguration('pointcloud_timeout'),
         }],
@@ -153,3 +184,4 @@ def generate_launch_description():
     )
 
     return LaunchDescription(args + [network_camera, usb_camera, pipeline])
+    # return LaunchDescription([pipeline])

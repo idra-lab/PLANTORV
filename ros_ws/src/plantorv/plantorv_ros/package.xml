@@ -20,6 +20,15 @@
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <!--
+    The recorded transforms default to plantorv_bringup's
+    config/static_transforms.yaml, looked up through the ament index at
+    run time. That is deliberately not declared as a dependency: the
+    bringup includes this package's launch files, so depending on it
+    back would be a cycle. Pass input_file/output_file to use these
+    nodes without that package.
+  -->
   <exec_depend>rviz2</exec_depend>
 
   <test_depend>ament_copyright</test_depend>

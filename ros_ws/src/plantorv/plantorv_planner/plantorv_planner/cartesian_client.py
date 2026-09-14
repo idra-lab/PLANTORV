@@ -298,8 +298,41 @@ class CartesianClient:
         This is a tool-path check and nothing more. It says where the tool may
         go; it says nothing about where the rest of the arm goes to put it
         there.
+
+        Where the arm already is is not a reason to refuse a move. A tool
+        left outside the bounds -- jogged there by hand, or parked by a
+        move that was interrupted -- would otherwise have every path
+        refused, including the one that brings it back, and the cell
+        would be stuck until someone drove it home by joint angles. So
+        the bounds are widened to admit the starting pose, and what is
+        enforced from there is that the path goes no further out, and no
+        further in, than it began.
         """
         base = self._base_position()
+
+        start_reach = math.sqrt(
+            (start.position.x - base.x) ** 2
+            + (start.position.y - base.y) ** 2
+            + (start.position.z - base.z) ** 2
+        )
+
+        if start_reach > max_reach:
+            self.node.get_logger().warn(
+                f"the tool starts {start_reach:.3f} m from the arm's base, already past "
+                f"the {max_reach:.3f} m limit. Allowing this path as long as it goes no "
+                "further out; `home` is the way back, since it moves in joint space and "
+                "is not checked against these bounds."
+            )
+            max_reach = start_reach
+
+        if start_reach < min_reach:
+            self.node.get_logger().warn(
+                f"the tool starts {start_reach:.3f} m from the arm's base, already inside "
+                f"the {min_reach:.3f} m limit. Allowing this path as long as it goes no "
+                "further in; `home` is the way back."
+            )
+            min_reach = start_reach
+
         previous = start
         for goal in waypoints:
             for sample in _samples(previous, goal, step):
@@ -313,15 +346,34 @@ class CartesianClient:
                     + (sample.position.y - base.y) ** 2
                     + (sample.position.z - base.z) ** 2
                 )
-                if reach > max_reach:
-                    raise PlanningError(
-                        f"the path reaches {reach:.3f} m from the arm's base, past the "
-                        f"{max_reach:.3f} m limit"
+                if reach > max_reach or reach < min_reach:
+                    # Where it happened, and split into the part that is
+                    # distance across the cell and the part that is
+                    # height. Both count towards reach, and a traverse
+                    # refused for being too far out is often a target
+                    # well within reach being carried over at a transit
+                    # plane well above the shoulder.
+                    across = math.hypot(
+                        sample.position.x - base.x,
+                        sample.position.y - base.y,
                     )
-                if reach < min_reach:
+                    up = sample.position.z - base.z
+                    where = (
+                        f"at ({sample.position.x:.3f}, "
+                        f"{sample.position.y:.3f}, {sample.position.z:.3f}) "
+                        f"in '{self.planning_frame}', {across:.3f} m across "
+                        f"and {up:+.3f} m up from the base"
+                    )
+
+                    if reach > max_reach:
+                        raise PlanningError(
+                            f"the path reaches {reach:.3f} m from the arm's base, past "
+                            f"the {max_reach:.3f} m limit, {where}"
+                        )
+
                     raise PlanningError(
                         f"the path passes {reach:.3f} m from the arm's base, inside the "
-                        f"{min_reach:.3f} m limit"
+                        f"{min_reach:.3f} m limit, {where}"
                     )
             previous = goal
 

@@ -10,10 +10,13 @@ from mapping.camera_model import (
     _HARDCODED_PROFILES,
     AlignProfile,
     CalibrationSet,
+    CameraToWorldTransform,
     Distortion,
     Intrinsics,
     _project_to_pixels,
     _undistort_pixels_to_normalized,
+    load_camera_to_world_transform,
+    point_camera_to_world_m,
     rgb_calibration_for_size,
 )
 from utility.utility import logger
@@ -310,6 +313,8 @@ def attach_object_depths(
     association: str = DEFAULT_DEPTH_ASSOCIATION,
     neighborhood: int = 1,
     rgb_calibration: Optional[Tuple[Intrinsics, Distortion]] = None,
+    camera_to_world_transform: Optional[CameraToWorldTransform] = None,
+    camera_to_world_file: Optional[Union[str, Path]] = None,
 ) -> dict:
     """Attach RGB centre coordinates and aligned depth to detected objects.
 
@@ -341,6 +346,8 @@ def attach_object_depths(
       calibration;
     - ``"object_point_pixel"``, the ``[u, v]`` the 3D point was back-projected
       through, which says where in the image the point belongs.
+    - ``"object_point_world_m"``, the same point as ``[x, y, z]`` metres in
+      ``world``, or None until a camera-to-world transform has been recorded.
 
     Under ``"mask-median"`` ``(cx, cy)`` is only the object's image-space
     reference centre: the depth is estimated over the whole mask rather than
@@ -371,6 +378,13 @@ def attach_object_depths(
         which is the size of the RGB frame it is registered to; a frame size the
         colour sensor was never calibrated at leaves
         ``"object_point_camera_m"`` at None rather than assuming intrinsics.
+    camera_to_world_transform : CameraToWorldTransform or None
+        Transform that maps the colour camera optical frame to ``world``. When
+        omitted, the transform recorded by ``save_camera_world_transform`` is
+        loaded from ``camera_to_world_file`` or its normal configured location.
+    camera_to_world_file : str or Path or None
+        Optional path to the recorder's YAML output. Ignored when
+        ``camera_to_world_transform`` is provided.
 
     Returns
     -------
@@ -411,6 +425,9 @@ def attach_object_depths(
     height, width = aligned_depth_mm.shape
     calibration = (
         rgb_calibration if rgb_calibration is not None else rgb_calibration_for_size(width, height)
+    )
+    world_transform = camera_to_world_transform or load_camera_to_world_transform(
+        camera_to_world_file
     )
     if calibration is None:
         logger.debug(
@@ -453,6 +470,7 @@ def attach_object_depths(
             )
 
         point_camera_m: Optional[list] = None
+        point_world_m: Optional[list] = None
         if depth_mm is not None and calibration is not None:
             point_camera_m = backproject_pixel_to_camera_m(
                 reference_pixel[0],
@@ -461,11 +479,16 @@ def attach_object_depths(
                 calibration[0],
                 calibration[1],
             )
+            if world_transform is not None:
+                point_world_m = point_camera_to_world_m(
+                    point_camera_m, world_transform
+                )
 
         dict_objects[mask_id]["coord_center&depth"] = [cx, cy, depth_mm]
         dict_objects[mask_id]["object_depth_mm"] = depth_mm
         dict_objects[mask_id]["depth_association"] = used
         dict_objects[mask_id]["object_point_camera_m"] = point_camera_m
+        dict_objects[mask_id]["object_point_world_m"] = point_world_m
         dict_objects[mask_id]["object_point_pixel"] = [reference_pixel[0], reference_pixel[1]]
 
     return dict_objects
@@ -704,6 +727,8 @@ def main_coords(
     *,
     masks: Optional[Sequence[np.ndarray]] = None,
     association: str = DEFAULT_DEPTH_ASSOCIATION,
+    camera_to_world_transform: Optional[CameraToWorldTransform] = None,
+    camera_to_world_file: Optional[Union[str, Path]] = None,
 ) -> dict:
     """
     Given the paths to an RGB image and a depth image, along with a dictionary of objects containing their bounding boxes, this function aligns the depth image to the RGB image and retrieves the depth information for each object.
@@ -722,6 +747,12 @@ def main_coords(
         and ignored by "bbox-center".
     association : str
         Which depth-association strategy to use; see :func:`attach_object_depths`.
+    camera_to_world_transform : CameraToWorldTransform or None
+        Optional already-loaded transform from the colour camera optical frame
+        into ``world``.
+    camera_to_world_file : str or Path or None
+        Optional YAML file written by ``save_camera_world_transform``. It is
+        used when ``camera_to_world_transform`` is not supplied.
 
     Returns
     -------
@@ -729,7 +760,9 @@ def main_coords(
         The input dictionary of objects, updated for each object with "coord_center&depth"
         (a list [center_x, center_y, depth_mm]), "object_depth_mm", "depth_association",
         "object_point_camera_m" (a list [x, y, z] in metres in the colour camera frame) and
-        "object_point_pixel" (the pixel that point was back-projected through).
+        "object_point_world_m" (the same coordinates in world, when a saved
+        camera-to-world transform is available), and "object_point_pixel" (the
+        pixel that point was back-projected through).
         Under "mask-median" the centre is only the object's image-space reference centre:
         the depth is estimated over the mask rather than sampled at that pixel.
     """
@@ -773,4 +806,6 @@ def main_coords(
         result.depth_mm,
         masks=masks,
         association=association,
+        camera_to_world_transform=camera_to_world_transform,
+        camera_to_world_file=camera_to_world_file,
     )

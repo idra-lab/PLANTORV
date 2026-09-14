@@ -10,6 +10,11 @@ The ChArUco board frames the scene; the ArUco node frames the single
 markers standing in it, such as the one on the robot base. Set
 ``use_aruco:=false`` to leave the second node out.
 
+The recorded transforms are replayed alongside the live ones, so the
+two can be compared in RViz: ``charuco_board`` is what the camera sees
+right now, ``static_charuco_board`` what was recorded. Set
+``use_static_transforms:=false`` to leave them out.
+
 The camera is reached over USB by default. Pass ``use_network:=true``
 to reach it over Ethernet instead; see the package README for the
 host-side network setup.
@@ -172,6 +177,30 @@ def generate_launch_description():
         ),
 
         # ------------------------------------------------------------------
+        # Recorded transforms
+        # ------------------------------------------------------------------
+        DeclareLaunchArgument('use_static_transforms', default_value='true'),
+        DeclareLaunchArgument(
+            'static_transforms_file',
+            default_value=os.path.join(
+                get_package_share_directory('plantorv_bringup'),
+                'config',
+                'static_transforms.yaml',
+            ),
+        ),
+        # Everything in the file, the driver running or not. Its
+        # camera_to_camera entry hangs the recorded subtree under the
+        # live camera frame, and points that way round precisely so it
+        # cannot fight the driver over who parents
+        # camera_color_optical_frame.
+        DeclareLaunchArgument(
+            'static_transforms_frames',
+            default_value="['']",
+            description='Recorded entries to replay, by name or frame. '
+                        'Empty means all of them.',
+        ),
+
+        # ------------------------------------------------------------------
         # Visualization
         # ------------------------------------------------------------------
         DeclareLaunchArgument('use_rviz', default_value='true'),
@@ -247,6 +276,23 @@ def generate_launch_description():
         }],
     )
 
+    use_static_transforms = LaunchConfiguration('use_static_transforms')
+
+    static_transforms = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution([
+                FindPackageShare('plantorv_ros'),
+                'launch',
+                'static_marker_transforms.launch.py',
+            ])
+        ),
+        condition=IfCondition(use_static_transforms),
+        launch_arguments={
+            'input_file': LaunchConfiguration('static_transforms_file'),
+            'frames': LaunchConfiguration('static_transforms_frames'),
+        }.items(),
+    )
+
     rviz = Node(
         package='rviz2',
         executable='rviz2',
@@ -263,5 +309,13 @@ def generate_launch_description():
     )
 
     return LaunchDescription(
-        args + [network_camera, usb_camera, charuco, aruco, rviz]
+        args
+        + [
+            network_camera,
+            usb_camera,
+            charuco,
+            aruco,
+            static_transforms,
+            rviz,
+        ]
     )

@@ -3,9 +3,13 @@
 """The recorded marker transform file: where it lives, how it is shaped.
 
 ``save_marker_transforms`` writes it and ``static_marker_publisher``
-reads it, and the launch files need its default path, so the format
-lives here on its own. Nothing in this module imports OpenCV or ROS,
-which keeps it cheap to import while a launch file is being evaluated.
+reads it, so the format and its default location live here on their
+own.
+
+That default is the bringup package's ``config/static_transforms.yaml``,
+the copy that gets committed. In this workspace the installed share
+path is a symlink back to the source tree, so recording through it
+updates the file under version control instead of a throwaway copy.
 
 The file looks like this::
 
@@ -26,15 +30,29 @@ import os
 from pathlib import Path
 
 import yaml
+from ament_index_python.packages import get_package_share_directory
 
-DEFAULT_FILE = os.path.expanduser(
-    "~/.ros/plantorv/marker_transforms.yaml"
-)
+# The committed transforms live with the bringup that replays them.
+DEFAULT_PACKAGE = "plantorv_bringup"
+DEFAULT_RELATIVE_PATH = ("config", "static_transforms.yaml")
 
 HEADER = (
     "# Marker transforms recorded by save_marker_transforms.\n"
     "# Replay them with static_marker_publisher.\n"
 )
+
+
+def default_file() -> str:
+    """Path of the transform file the nodes use unless told otherwise.
+
+    Resolved on call rather than at import, so the package lookup
+    happens where a failure can be reported against the node that
+    needed it.
+    """
+    return os.path.join(
+        get_package_share_directory(DEFAULT_PACKAGE),
+        *DEFAULT_RELATIVE_PATH,
+    )
 
 
 def resolve(path) -> Path:

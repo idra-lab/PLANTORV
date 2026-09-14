@@ -1,12 +1,16 @@
 """Tests for interchangeable metric-depth pipeline components."""
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 
 from mapping.camera_model import (
+    CameraToWorldTransform,
     Distortion,
     Intrinsics,
+    load_camera_to_world_transform,
+    point_camera_to_world_m,
     rgb_calibration_for_size,
     scale_intrinsics,
 )
@@ -431,6 +435,45 @@ def test_an_explicit_calibration_overrides_the_lookup_by_frame_size() -> None:
     )
 
     assert result["mask_0"]["object_point_camera_m"] == [0.0, 0.0, 2.0]
+
+
+def test_camera_points_are_also_written_in_world_when_a_transform_is_available() -> None:
+    depth = np.full((3, 3), 2000.0, dtype=np.float32)
+    transform = CameraToWorldTransform(
+        target_frame="world",
+        source_frame="static_camera_color_optical_frame",
+        translation=np.asarray([1.0, 2.0, 3.0]),
+        # A 90-degree turn around +z maps camera +x onto world +y.
+        rotation=np.asarray([0.0, 0.0, np.sqrt(0.5), np.sqrt(0.5)]),
+    )
+
+    result = attach_object_depths(
+        {"mask_0": {"bbox": [0, 0, 2, 2]}},
+        depth,
+        rgb_calibration=(_PINHOLE, _NO_DISTORTION),
+        camera_to_world_transform=transform,
+    )
+
+    assert result["mask_0"]["object_point_camera_m"] == [0.0, 0.0, 2.0]
+    assert np.allclose(result["mask_0"]["object_point_world_m"], [1.0, 2.0, 5.0])
+
+
+def test_saved_camera_to_world_transform_is_loaded_and_applied(
+    tmp_path: Path,
+) -> None:
+    transform_file = tmp_path / "camera_to_world_transform.yaml"
+    transform_file.write_text(
+        """target_frame: world
+source_frame: static_camera_color_optical_frame
+translation: {x: 1.0, y: 2.0, z: 3.0}
+rotation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}
+"""
+    )
+
+    transform = load_camera_to_world_transform(transform_file)
+
+    assert transform is not None
+    assert point_camera_to_world_m([0.5, -0.5, 2.0], transform) == [1.5, 1.5, 5.0]
 
 
 def test_the_reference_pixel_is_the_centroid_when_it_carries_the_median_depth() -> None:

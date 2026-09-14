@@ -21,7 +21,7 @@ __maintainers__ = ["Enrico Saccon", "Tommaso Faraci"]
 This is the check that was missing. The workspace guard in cartesian_client
 tests where ``tool0`` goes: a height floor and a reach annulus, both about one
 point. It passed a move whose tool path was exactly right and whose forearm
-came at the table, because reaching 0.46 m out with base_link at 0.975 puts
+came at the table, because reaching 0.46 m out with base_link at 0.885 puts
 the arm near full extension and nearly horizontal, and in that posture the
 elbow hangs well below the tool.
 

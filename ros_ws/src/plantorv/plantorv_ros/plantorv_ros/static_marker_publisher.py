@@ -19,16 +19,19 @@ from rclpy.node import Node
 from tf2_ros import StaticTransformBroadcaster
 
 from plantorv_ros import marker_transform_file
-from plantorv_ros.marker_transform_file import DEFAULT_FILE
 
 
 class StaticMarkerPublisher(Node):
     def __init__(self):
         super().__init__("static_marker_publisher")
 
-        self.declare_parameter("input_file", DEFAULT_FILE)
+        self.declare_parameter(
+            "input_file", marker_transform_file.default_file()
+        )
 
-        # Publish only these child frames. Empty means all of them.
+        # Publish only these entries. Empty means all of them. An
+        # entry matches by its key in the file or by the frame it
+        # publishes, which are not always the same name.
         self.declare_parameter("frames", [""])
 
         self.input_file = marker_transform_file.resolve(
@@ -46,16 +49,30 @@ class StaticMarkerPublisher(Node):
 
         transforms = []
 
-        for child_frame, entry in entries.items():
-            if wanted and child_frame not in wanted:
+        for key, entry in entries.items():
+            transform = self.build(key, entry)
+
+            if wanted and not {
+                key, transform.child_frame_id
+            } & set(wanted):
                 continue
 
-            transforms.append(self.build(child_frame, entry))
+            transforms.append(transform)
 
         if not transforms:
+            available = ", ".join(
+                sorted(
+                    {key for key in entries}
+                    | {
+                        str((entry or {}).get("child_frame", key))
+                        for key, entry in entries.items()
+                    }
+                )
+            )
+
             raise ValueError(
                 f"{self.input_file} has none of the requested frames: "
-                f"{', '.join(wanted)}"
+                f"{', '.join(wanted)}. It offers: {available}"
             )
 
         # A static broadcaster latches, so one publish reaches every

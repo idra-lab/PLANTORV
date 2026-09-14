@@ -10,6 +10,8 @@ Place the board and the robot first, check the frames in
 ``charuco_viz.launch.py``, and only then record.
 """
 
+import os
+
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -21,14 +23,18 @@ from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
-from plantorv_ros.marker_transform_file import DEFAULT_FILE
+from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
     args = [
         DeclareLaunchArgument(
             'output_file',
-            default_value=DEFAULT_FILE,
+            default_value=os.path.join(
+                get_package_share_directory('plantorv_bringup'),
+                'config',
+                'static_transforms.yaml',
+            ),
             description='Where to write the recorded transforms.',
         ),
         DeclareLaunchArgument(
