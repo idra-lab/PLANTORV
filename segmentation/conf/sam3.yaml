@@ -13,3 +13,4 @@ SEGMENTATION_CONFIG:
   imgsz: 1036
   conf: 0.2
   iou: 0.1
+  agnostic_nms: true

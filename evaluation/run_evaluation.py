@@ -3,6 +3,13 @@
 The pipeline walks the dataset image by image, matches detected objects to their ArUco
 references, aggregates localization and depth errors, and writes CSV tables, a JSON
 summary, and the figures used in the report to ``results/``.
+
+Localization is measured twice. In pixels, between the bounding box centre and the ArUco
+tag box centre. In millimetres, between the 3D point the depth stage estimated for the
+object (``object_point_camera_m``, which depends on the depth association the run used)
+and the ArUco object position, both in the camera frame. ``evaluation.csv`` holds both
+positions of every match, and ``summary.json`` the statistics of both errors, variances
+included, together with the depth metrics.
 """
 
 import argparse
@@ -17,6 +24,7 @@ import pandas as pd
 from .depth_correlation import compute_depth_correlation
 from .matching import LOCALIZATION_EXCLUDED, match_objects, normalize_name
 from .metrics import (
+    compute_depth_metrics,
     compute_detection_metrics,
     compute_global_metrics,
     image_statistics,
@@ -116,7 +124,7 @@ def process_image(
     aruco_dir: Path,
     rgb_dir: Path = RGB_DIR,
     overlay_dir: Path = OUTPUT_DIR / "overlays",
-) -> tuple[dict, list[dict], pd.DataFrame] | None:
+) -> tuple[dict, list[dict], pd.DataFrame, int] | None:
     """Evaluate a single image against its ArUco ground truth.
 
     Writes the overlay figure for the image as a side effect when the RGB file exists.
@@ -136,9 +144,10 @@ def process_image(
 
     Returns
     -------
-    tuple[dict, list[dict], pd.DataFrame] or None
-        Detection metrics, per-object matches, and depth correlation rows for the image,
-        or ``None`` when the segmentation or ArUco file is missing.
+    tuple[dict, list[dict], pd.DataFrame, int] or None
+        Detection metrics, per-object matches, depth correlation rows for the image, and
+        the number of matched objects whose depth was missing or invalid; or ``None`` when
+        the segmentation or ArUco file is missing.
     """
     rgb_file = rgb_dir / f"rgb_dataset_{image_id}.png"
     seg_file = seg_dir / f"output_img{image_id}.json"
@@ -177,7 +186,7 @@ def process_image(
 
     print(f"Matches found: {len(matches)}")
 
-    return detection_metrics, matches, depth_df
+    return detection_metrics, matches, depth_df, ignored
 
 
 def collect_results(
@@ -186,7 +195,7 @@ def collect_results(
     aruco_dir: Path,
     rgb_dir: Path = RGB_DIR,
     overlay_dir: Path = OUTPUT_DIR / "overlays",
-) -> tuple[list[dict], list[dict], list[pd.DataFrame]]:
+) -> tuple[list[dict], list[dict], list[pd.DataFrame], int]:
     """Evaluate every image and gather the per-image results.
 
     Parameters
@@ -204,25 +213,29 @@ def collect_results(
 
     Returns
     -------
-    tuple[list[dict], list[dict], list[pd.DataFrame]]
-        Object matches across all images, per-image detection metrics, and per-image
-        depth correlation tables.
+    tuple[list[dict], list[dict], list[pd.DataFrame], int]
+        Object matches across all images, per-image detection metrics, per-image depth
+        correlation tables, and the number of matched objects whose depth was missing or
+        invalid. That count is kept apart because an image whose every depth is invalid
+        leaves an empty table, with nowhere to record it.
     """
     all_results: list[dict] = []
     detection_results: list[dict] = []
     all_depth_results: list[pd.DataFrame] = []
+    ignored_depth = 0
 
     for image_id in image_ids:
         result = process_image(image_id, seg_dir, aruco_dir, rgb_dir, overlay_dir)
         if result is None:
             continue
 
-        detection_metrics, matches, depth_df = result
+        detection_metrics, matches, depth_df, ignored = result
         detection_results.append(detection_metrics)
         all_results.extend(matches)
         all_depth_results.append(depth_df)
+        ignored_depth += ignored
 
-    return all_results, detection_results, all_depth_results
+    return all_results, detection_results, all_depth_results, ignored_depth
 
 
 def build_summary(df: pd.DataFrame, detection_df: pd.DataFrame) -> dict:
@@ -258,13 +271,14 @@ def depth_statistics_per_image(depth_results: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     pd.DataFrame
-        Mean, standard deviation, RMSE, and object count per image.
+        Mean, standard deviation, variance, RMSE, and object count per image.
     """
     return (
         depth_results.groupby("image")
         .agg(
             mean_depth_error_mm=("abs_error_mm", "mean"),
             std_depth_error_mm=("abs_error_mm", "std"),
+            var_depth_error_mm=("abs_error_mm", "var"),
             rmse_depth_mm=("abs_error_mm", lambda x: np.sqrt(np.mean(x**2))),
             n_objects=("abs_error_mm", "count"),
         )
@@ -517,7 +531,7 @@ def plot_mean_depth_error_per_image(depth_img_stats: pd.DataFrame, output_dir: P
 
 def evaluate_localization(
     df: pd.DataFrame, detection_df: pd.DataFrame, output_dir: Path
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Write the localization tables and figures.
 
     Parameters
@@ -531,8 +545,10 @@ def evaluate_localization(
 
     Returns
     -------
-    tuple[pd.DataFrame, pd.DataFrame]
-        Per-object and per-image statistics.
+    tuple[pd.DataFrame, pd.DataFrame, dict]
+        Per-object and per-image statistics, and the localization and detection metrics
+        of the run. The caller writes those to ``summary.json``, once the depth metrics
+        are added.
 
     Notes
     -----
@@ -561,8 +577,6 @@ def evaluate_localization(
     img_stats.to_csv(output_dir / "image_statistics.csv", index=False)
 
     summary = build_summary(loc_df, detection_df)
-    save_summary(summary, str(output_dir / "summary.json"))
-    print(summary)
 
     plot_error_distribution(loc_df, output_dir)
     plot_mean_error_per_object(obj_stats, output_dir)
@@ -572,21 +586,31 @@ def evaluate_localization(
     plot_detection_recall_per_image(detection_df, output_dir)
     plot_missed_extra_objects(detection_df, output_dir)
 
-    return obj_stats, img_stats
+    return obj_stats, img_stats, summary
 
 
-def evaluate_depth(all_depth_results: list[pd.DataFrame], output_dir: Path) -> None:
+def evaluate_depth(
+    all_depth_results: list[pd.DataFrame], ignored: int, output_dir: Path
+) -> dict:
     """Write the depth correlation tables and figures.
 
     Parameters
     ----------
     all_depth_results : list[pd.DataFrame]
         Per-image depth correlation tables.
+    ignored : int
+        Matched objects whose depth was missing or invalid, across every image.
     output_dir : Path
         Directory the tables and figures are written to.
+
+    Returns
+    -------
+    dict
+        The depth metrics of the run, for ``summary.json``.
     """
     depth_results = pd.concat(all_depth_results, ignore_index=True)
     depth_results.to_csv(output_dir / "depth_evaluation.csv", index=False)
+    depth_summary = compute_depth_metrics(depth_results, ignored)
 
     plot_depth_error_distribution(depth_results, output_dir)
 
@@ -594,6 +618,8 @@ def evaluate_depth(all_depth_results: list[pd.DataFrame], output_dir: Path) -> N
     depth_img_stats.to_csv(output_dir / "depth_error_per_image.csv", index=False)
 
     plot_mean_depth_error_per_image(depth_img_stats, output_dir)
+
+    return depth_summary
 
 
 def run(
@@ -630,7 +656,7 @@ def run(
     output_dir.mkdir(parents=True, exist_ok=True)
     overlay_dir.mkdir(parents=True, exist_ok=True)
 
-    all_results, detection_results, all_depth_results = collect_results(
+    all_results, detection_results, all_depth_results, ignored_depth = collect_results(
         image_ids, seg_dir, aruco_dir, rgb_dir, overlay_dir
     )
 
@@ -649,8 +675,12 @@ def run(
     df = pd.DataFrame(all_results)
     detection_df = pd.DataFrame(detection_results)
 
-    evaluate_localization(df, detection_df, output_dir)
-    evaluate_depth(all_depth_results, output_dir)
+    _, _, summary = evaluate_localization(df, detection_df, output_dir)
+    # Written once both halves are in, so that summary.json holds the pixel, metric and
+    # depth metrics of the run together.
+    summary.update(evaluate_depth(all_depth_results, ignored_depth, output_dir))
+    save_summary(summary, str(output_dir / "summary.json"))
+    print(summary)
 
 
 def parse_args() -> argparse.Namespace:

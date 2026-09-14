@@ -176,6 +176,8 @@ Do not write ```json.
 - "task_relevant" lists the objects needed to carry out the task, copied
   verbatim from "objects". Do not rephrase them, and do not name anything that is
   not already in "objects". Leave it empty when no task was given.
+
+DO NOT MENTION ANYTHING ABOUT THE GRIPPER OR THE ARUCO/CHARUCO MARKERS. 
 """
 
 # Rendered into `%%TASK%%` when no task is configured.

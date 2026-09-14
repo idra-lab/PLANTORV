@@ -15,7 +15,7 @@ from utility.utility import logger
 DEFAULT_LLM_CONFIG_FILE = (
     Path(__file__).resolve().parent.parent / "LLM" / "conf" / "azure_gpt52.yaml"
 )
-# - The tags should be ONLY one of the following ones: "Blue tray", "Red Tray", "Red Lego block", "Blue Lego block", "Wide and large blue Lego block", "Small blue Lego block", "Yellow Lego block", "Wide red Lego Block with 4 studs", "Green Lego block", "2x2 Blue and red Lego block", "Tall red Lego block", "White and red box", "Blue and white small box", "Big Black Bottle", "Big White bottle", "Metallic Wrench", "Orange Lego block", "Orange small box", "White and green box", "Blue meter", "Black wallet", "Voltimeter", "Calculator", "Blackberry purple and white box", "Ice tea peach white and orange box", "Passion fruit white purple yellow box", "Raspberry pink white box", "Green cup", "White ping-pong", "Orange ping-pong", "End-effector with grappler", "Full robotic arm", "Partial robotic arm", "Unknown object".
+# - The tags should be ONLY one of the following ones: "Robotic arm", "Blue tray", "Red Tray", "Red Lego block", "Blue Lego block", "Orange Lego block", "Yellow Lego block".
 
 # LABELED PROMPT
 ANNOTATION_PROMPT = """You will receive:
@@ -23,7 +23,7 @@ ANNOTATION_PROMPT = """You will receive:
 The second image shows the object and the first one gives the context of the image.
 Your task:
 - Describe the main object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the right or next to another object.
-- The tags should be ONLY one of the following ones: "Robotic arm", "Blue tray", "Red Tray", "Red Lego block", "Blue Lego block", "Orange Lego block".
+- The tags should be ONLY one of the following ones: "Blue tray", "Red Tray", "Red Lego block", "Blue Lego block", "Wide and large blue Lego block", "Small blue Lego block", "Yellow Lego block", "Wide red Lego Block with 4 studs", "Green Lego block", "2x2 Blue and red Lego block", "Tall red Lego block", "White and red box", "Blue and white small box", "Big Black Bottle", "Big White bottle", "Metallic Wrench", "Orange Lego block", "Orange small box", "White and green box", "Blue meter", "Black wallet", "Voltimeter", "Calculator", "Blackberry purple and white box", "Ice tea peach white and orange box", "Passion fruit white purple yellow box", "Raspberry pink white box", "Green cup", "White ping-pong", "Orange ping-pong", "End-effector with grappler", "Full robotic arm", "Partial robotic arm", "Unknown object".
 - Do not change the tags neither use other tags that are not in the list. If you are not sure about the tag, use"Unknown object". For the detection, you can use the context of the whole image.
 Return ONLY raw JSON.
 Do not use markdown code fences.
