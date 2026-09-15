@@ -66,6 +66,84 @@ def error_statistics(values: Iterable[float], unit: str, prefix: str = "") -> di
     }
 
 
+# The interval runs from the 5th to the 95th percentile of the bootstrap estimates.
+BOOTSTRAP_CONFIDENCE = 0.90
+BOOTSTRAP_RESAMPLES = 10000
+BOOTSTRAP_SEED = 0
+
+
+def bootstrap_interval(
+    values: Iterable[float],
+    statistic: str,
+    groups: Iterable | None = None,
+    confidence: float = BOOTSTRAP_CONFIDENCE,
+    n_resamples: int = BOOTSTRAP_RESAMPLES,
+    seed: int = BOOTSTRAP_SEED,
+) -> tuple[float, float] | None:
+    """
+    Percentile bootstrap confidence interval of a statistic of a set of values.
+
+    With ``groups`` the bootstrap resamples whole groups rather than single values: the objects
+    of one image share its segmentation, depth frame and camera pose, so they are not independent,
+    and resampling images keeps that correlation in the interval. A resample is a vector of
+    weights, how many times each group was drawn, so every resample is evaluated at once.
+
+    Parameters
+    ----------
+    values : Iterable[float]
+        The values; non-finite ones are left out, together with their group.
+    statistic : str
+        ``"mean"``, ``"median"`` or ``"rmse"``. The median of a resample is the lower weighted
+        median, which differs from :func:`numpy.median` only by the interpolation of an even count.
+    groups : Iterable | None
+        The group of every value, e.g. its image; None resamples the values one by one.
+    confidence : float
+        The coverage of the interval.
+    n_resamples : int
+        The number of bootstrap resamples.
+    seed : int
+        The seed of the generator, so that a table is reproducible.
+
+    Returns
+    -------
+    tuple[float, float] | None
+        The lower and upper bounds, or None with fewer than two values or groups.
+    """
+    array = pd.to_numeric(pd.Series(list(values), dtype=object), errors="coerce").to_numpy(
+        dtype=float
+    )
+    finite = np.isfinite(array)
+    array = array[finite]
+    if groups is None:
+        group_index = np.arange(array.size)
+    else:
+        labels = pd.Series(list(groups), dtype=object)[finite]
+        group_index = pd.factorize(labels)[0]
+    n_groups = int(group_index.max()) + 1 if array.size else 0
+    if n_groups < 2:
+        return None
+
+    rng = np.random.default_rng(seed)
+    counts = rng.multinomial(n_groups, np.full(n_groups, 1.0 / n_groups), size=n_resamples)
+    weights = counts[:, group_index].astype(float)
+    totals = weights.sum(axis=1)
+
+    if statistic == "mean":
+        estimates = weights @ array / totals
+    elif statistic == "rmse":
+        estimates = np.sqrt(weights @ np.square(array) / totals)
+    elif statistic == "median":
+        order = np.argsort(array)
+        cumulative = np.cumsum(weights[:, order], axis=1)
+        estimates = array[order][np.argmax(cumulative >= totals[:, None] / 2, axis=1)]
+    else:
+        raise ValueError(f"unknown statistic {statistic!r}; expected mean, median or rmse")
+
+    alpha = 100 * (1 - confidence) / 2
+    low, high = np.percentile(estimates, [alpha, 100 - alpha])
+    return float(low), float(high)
+
+
 def compute_global_metrics(df: pd.DataFrame) -> dict:
     """
     Compute global metrics from the DataFrame containing matching results.

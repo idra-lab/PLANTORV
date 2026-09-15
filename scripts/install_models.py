@@ -10,7 +10,8 @@ Covers:
 - FastSAM (Ultralytics' YOLOv8-seg, used through FastSAMModel);
 - SAM 3 (gated, requires a Hugging Face token);
 - DAM-3B (Describe Anything, used through ``scene_understanding/dam_annotator.py``);
-- RandLA-Net trained on S3DIS (Open3D-ML, used through ``segment_pcd.py``).
+- RandLA-Net trained on S3DIS (Open3D-ML, used through ``segment_pcd.py``);
+- PointTransformer trained on S3DIS (Open3D-ML, used through ``segment_pcd.py``, GPU only).
 
 Ultralytics also downloads its own checkpoints on first use, so this script is
 mainly useful for four cases:
@@ -300,6 +301,20 @@ MODELS["randlanet_s3dis"] = Model(
         "RandLA-Net, 13 S3DIS indoor classes (~57 MB, used via segment_pcd.py) [from Open3D-ML]"
     ),
     config="randlanet_s3dis.yml",
+)
+# Same 13 S3DIS classes, served through the same `segment_pcd.py` interface. Open3D
+# 0.19 runs PointTransformer's KNN and furthest-point sampling only on CUDA, so this
+# one needs `--device gpu`; `segment_pcd.py` rejects `--device cpu` up front.
+MODELS["pointtransformer_s3dis"] = Model(
+    key="pointtransformer_s3dis",
+    filename="pointtransformer_s3dis_202109241350utc.pth",
+    url=f"{OPEN3D_ZOO_URL}/pointtransformer_s3dis_202109241350utc.pth",
+    subdir="point_transformer",
+    description=(
+        "PointTransformer, 13 S3DIS indoor classes (~60 MB, GPU only, used via segment_pcd.py) "
+        "[from Open3D-ML]"
+    ),
+    config="pointtransformer_s3dis.yml",
 )
 
 # Width of the key column in `--list` and in the interactive picker, sized to the

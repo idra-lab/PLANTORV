@@ -5,11 +5,14 @@ intentional: the RGB-D + mask-median numbers then reproduce the depth columns of
 main pipeline table. Use ``--common-objects`` only when you explicitly want a paired
 comparison restricted to object keys that are present in every available technique.
 
-Two groups of columns are optional, because each adds a column per technique:
-``--variance`` adds the variance of the errors, and ``--position`` adds the metric position
-error, the distance in millimetres between the 3D point of the technique's association and
-the ArUco position, read from ``evaluation.csv``. The CSV written by ``--csv`` always holds
-every number.
+Every technique shows the median and the RMSE of its depth error. ``--confidence-intervals``
+follows each with a column holding its percentile bootstrap confidence interval, written
+``[5th percentile, 95th percentile]`` of the bootstrap estimates and computed by resampling
+images; ``--ci-maths`` writes the bounds on the value instead, as ``$value^{95th}_{5th}$``.
+``--position-mm`` adds the same two statistics of the metric position error, the distance
+in millimetres between the 3D point of the technique's association and the ArUco position,
+read from ``evaluation.csv``. The CSV written by
+``--csv`` always holds every number, the mean and the variance of the errors included.
 
 Missing runs are never resolved fuzzily. With ``--skip-missing`` they are rendered as
 ``--`` cells; otherwise the script fails and reports the exact expected run names.
@@ -20,7 +23,8 @@ Examples
     python -m evaluation.build_table_depth_ablation --segmentation sam3 --vlm gpt54
     python -m evaluation.build_table_depth_ablation --common-objects
     python -m evaluation.build_table_depth_ablation --skip-missing --coverage
-    python -m evaluation.build_table_depth_ablation --variance --position
+    python -m evaluation.build_table_depth_ablation --position-mm --confidence-intervals
+    python -m evaluation.build_table_depth_ablation --ci-maths
 """
 
 import argparse
@@ -37,9 +41,18 @@ from .build_table_pipeline import (
     SEGMENTATION_LABELS,
     VLM_DIRS,
     VLM_LABELS,
-    _cell,
+    Interval,
+    _cells_with_interval,
     _resolve,
+    add_confidence_interval_arguments,
+    confidence_interval_style,
+    confidence_note,
+    image_groups,
+    interval_columns,
+    median_and_rmse_intervals,
+    metric_headers,
     read_localization_csv,
+    sc,
 )
 
 # (depth source, association) in the order the columns appear.
@@ -71,11 +84,15 @@ class TechniqueMetrics:
     median_mm: float | None
     rmse_mm: float | None
     var_mm: float | None = None
+    median_ci: Interval = None
+    rmse_ci: Interval = None
     n_position: int = 0
     position_mean_mm: float | None = None
     position_median_mm: float | None = None
     position_rmse_mm: float | None = None
     position_var_mm: float | None = None
+    position_median_ci: Interval = None
+    position_rmse_ci: Interval = None
     missing: bool = False
 
 
@@ -87,18 +104,23 @@ class AblationRow:
 
 
 def _errors_stats(
-    errors: np.ndarray,
-) -> tuple[float | None, float | None, float | None, float | None]:
-    """Mean, median, RMSE and sample variance (``ddof=1``) of the finite errors."""
-    errors = np.asarray(errors, dtype=float)
+    frame: pd.DataFrame, column: str
+) -> tuple[float | None, float | None, float | None, float | None, Interval, Interval]:
+    """Compute the statistics of the finite errors in ``column``.
+
+    Returns the mean, median, RMSE and sample variance (``ddof=1``), then the confidence
+    intervals of the median and of the RMSE, resampling the images.
+    """
+    errors = frame[column].to_numpy(dtype=float)
     errors = errors[np.isfinite(errors)]
     if not errors.size:
-        return None, None, None, None
+        return None, None, None, None, None, None
     return (
         float(errors.mean()),
         float(np.median(errors)),
         float(np.sqrt(np.mean(errors**2))),
         float(np.var(errors, ddof=1)) if errors.size > 1 else None,
+        *median_and_rmse_intervals(frame[column], image_groups(frame)),
     )
 
 
@@ -250,9 +272,9 @@ def read_row(
         directory, frame, n_attempted, coverage_percent, position = loaded[key]
         paired = common_objects and shared is not None
         scored = frame.merge(shared, on=OBJECT_KEY, how="inner") if paired else frame
-        mean, median, rmse, var = _errors_stats(scored["abs_error_mm"].to_numpy(dtype=float))
+        mean, median, rmse, var, median_ci, rmse_ci = _errors_stats(scored, "abs_error_mm")
 
-        position_stats: tuple[float | None, ...] = (None, None, None, None)
+        position_stats: tuple = (None, None, None, None, None, None)
         n_position = 0
         if position is not None:
             # The same objects as the depth errors when pairing, so both columns of a
@@ -261,7 +283,7 @@ def read_row(
                 position.merge(shared, on=OBJECT_KEY, how="inner") if paired else position
             )
             n_position = len(scored_position)
-            position_stats = _errors_stats(scored_position["error_mm"].to_numpy(dtype=float))
+            position_stats = _errors_stats(scored_position, "error_mm")
 
         metrics.append(
             TechniqueMetrics(
@@ -276,11 +298,15 @@ def read_row(
                 median_mm=median,
                 rmse_mm=rmse,
                 var_mm=var,
+                median_ci=median_ci,
+                rmse_ci=rmse_ci,
                 n_position=n_position,
                 position_mean_mm=position_stats[0],
                 position_median_mm=position_stats[1],
                 position_rmse_mm=position_stats[2],
                 position_var_mm=position_stats[3],
+                position_median_ci=position_stats[4],
+                position_rmse_ci=position_stats[5],
             )
         )
 
@@ -293,33 +319,28 @@ def read_row(
     )
 
 
-def _latex_metric(value: float | None) -> str:
-    return "--" if value is None else _cell(value)
-
-
-def _metric_names(coverage: bool, variance: bool, position: bool) -> list[str]:
+def _metric_names(coverage: bool, position: bool, ci_style: str | None) -> list[str]:
     """Return the column headers of one technique, in the order :func:`_technique_cells` fills them."""
-    names = ["Mean", "RMSE"] + (["Var"] if variance else [])
+    names = metric_headers("Median", ci_style) + metric_headers("RMSE", ci_style)
     if position:
-        names += ["Pos. Mean", "Pos. RMSE"] + (["Pos. Var"] if variance else [])
+        names += metric_headers("Pos. Median", ci_style) + metric_headers("Pos. RMSE", ci_style)
     if coverage:
-        names.append("Valid")
+        names.append(sc("Valid"))
     return names
 
 
 def _technique_cells(
-    technique: TechniqueMetrics, coverage: bool, variance: bool, position: bool
+    technique: TechniqueMetrics, coverage: bool, position: bool, ci_style: str | None
 ) -> list[str]:
-    cells = [_latex_metric(technique.mean_mm), _latex_metric(technique.rmse_mm)]
-    if variance:
-        cells.append(_latex_metric(technique.var_mm))
+    cells = _cells_with_interval(technique.median_mm, technique.median_ci, ci_style)
+    cells += _cells_with_interval(technique.rmse_mm, technique.rmse_ci, ci_style)
     if position:
-        cells += [
-            _latex_metric(technique.position_mean_mm),
-            _latex_metric(technique.position_rmse_mm),
-        ]
-        if variance:
-            cells.append(_latex_metric(technique.position_var_mm))
+        cells += _cells_with_interval(
+            technique.position_median_mm, technique.position_median_ci, ci_style
+        )
+        cells += _cells_with_interval(
+            technique.position_rmse_mm, technique.position_rmse_ci, ci_style
+        )
     if coverage:
         cells.append(
             "--" if technique.coverage_percent is None else f"{technique.coverage_percent:.1f}\\%"
@@ -331,12 +352,15 @@ def latex_table(
     rows: list[AblationRow],
     techniques: list[tuple[str, str]],
     coverage: bool = False,
-    variance: bool = False,
     position: bool = False,
     caption_note: str = "",
+    ci_style: str | None = None,
 ) -> str:
-    """Render the rows as a tabular with one column group per depth technique."""
-    metric_names = _metric_names(coverage, variance, position)
+    """Render the rows as a tabular with one column group per depth technique.
+
+    The confidence intervals are printed as ``ci_style`` says: None, ``"column"`` or ``"maths"``.
+    """
+    metric_names = _metric_names(coverage, position, ci_style)
     per_technique = len(metric_names)
     n_cols = len(techniques) * per_technique
 
@@ -351,14 +375,14 @@ def latex_table(
     source_cells, source_rules, col = [], [], 3
     for label, count in source_groups:
         width = count * per_technique
-        source_cells.append(f"\\multicolumn{{{width}}}{{c}}{{{label}}}")
+        source_cells.append(f"\\multicolumn{{{width}}}{{c}}{{{sc(label)}}}")
         source_rules.append(f"\\cmidrule(lr){{{col}-{col + width - 1}}}")
         col += width
 
     assoc_cells, assoc_rules, col = [], [], 3
     for _, association in techniques:
         label = ASSOCIATION_LABELS.get(association, association)
-        assoc_cells.append(f"\\multicolumn{{{per_technique}}}{{c}}{{{label}}}")
+        assoc_cells.append(f"\\multicolumn{{{per_technique}}}{{c}}{{{sc(label)}}}")
         assoc_rules.append(f"\\cmidrule(lr){{{col}-{col + per_technique - 1}}}")
         col += per_technique
 
@@ -367,11 +391,11 @@ def latex_table(
     header = [
         f"    \\begin{{tabular}}{{ll{'c' * n_cols}}}",
         "    \\toprule",
-        "    \\multicolumn{2}{c}{Tools} & " + " & ".join(source_cells) + " \\\\",
+        f"    \\multicolumn{{2}}{{c}}{{{sc('Tools')}}} & " + " & ".join(source_cells) + " \\\\",
         "    " + " ".join(source_rules),
         "    & & " + " & ".join(assoc_cells) + " \\\\",
         "    " + " ".join(assoc_rules),
-        "    Segmentation & Annotation & " + " & ".join(metric_cells) + " \\\\",
+        f"    {sc('Segmentation')} & {sc('Annotation')} & " + " & ".join(metric_cells) + " \\\\",
         "    \\midrule",
     ]
 
@@ -379,10 +403,10 @@ def latex_table(
     for row in rows:
         cells: list[str] = []
         for technique in row.techniques:
-            cells += _technique_cells(technique, coverage, variance, position)
+            cells += _technique_cells(technique, coverage, position, ci_style)
         body.append(
             "    {:<12} & {:<12} & ".format(row.segmentation, row.vlm)
-            + " & ".join(f"{c:>6}" for c in cells)
+            + " & ".join(f"{c:>14}" for c in cells)
             + " \\\\"
         )
 
@@ -448,16 +472,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--variance",
-        action="store_true",
-        help="add the variance of the errors (mm^2) to every technique",
-    )
-    parser.add_argument(
+        "--position-mm",
         "--position",
+        dest="position",
         action="store_true",
         help=(
-            "add the metric position error [mm] of every technique: the distance between "
-            "the 3D point of its association and the ArUco position"
+            "add the median and RMSE of the metric position error [mm] of every technique: "
+            "the distance between the 3D point of its association and the ArUco position"
         ),
     )
     parser.add_argument(
@@ -465,6 +486,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="render missing technique runs as -- instead of failing",
     )
+    add_confidence_interval_arguments(parser)
     parser.add_argument("--csv", type=Path, help="also write the numbers to this CSV file")
     args = parser.parse_args(argv)
     if bool(args.segmentation) != bool(args.vlm):
@@ -504,16 +526,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.position:
         note += "; Pos. = metric position error [mm]"
-    if args.variance:
-        note += "; Var in mm^2"
+    ci_style = confidence_interval_style(args)
+    if ci_style is not None:
+        note += f"; {confidence_note(ci_style)}"
     print(
         latex_table(
             rows,
             args.techniques,
             coverage=args.coverage,
-            variance=args.variance,
             position=args.position,
             caption_note=note,
+            ci_style=ci_style,
         )
     )
     print()
@@ -547,12 +570,16 @@ def main(argv: list[str] | None = None) -> int:
                     "coverage_percent": t.coverage_percent,
                     "depth_mean_mm": t.mean_mm,
                     "depth_median_mm": t.median_mm,
+                    **interval_columns("depth_median_mm", t.median_ci),
                     "depth_rmse_mm": t.rmse_mm,
+                    **interval_columns("depth_rmse_mm", t.rmse_ci),
                     "depth_var_mm": t.var_mm,
                     "n_position": t.n_position,
                     "position_mean_mm": t.position_mean_mm,
                     "position_median_mm": t.position_median_mm,
+                    **interval_columns("position_median_mm", t.position_median_ci),
                     "position_rmse_mm": t.position_rmse_mm,
+                    **interval_columns("position_rmse_mm", t.position_rmse_ci),
                     "position_var_mm": t.position_var_mm,
                     "directory": None if t.directory is None else t.directory.name,
                 }

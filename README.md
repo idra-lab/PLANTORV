@@ -931,17 +931,16 @@ python3 segment_pcd.py \
   --confidence-output results/randla_confidence.npy
 ```
 
-Use `--device cpu` instead if CUDA is unavailable. PointTransformer is supported by the
-runtime but is not downloaded by `scripts/install_models.py`; supply a compatible
-configuration and checkpoint yourself. For example, if they are placed under
-`models/pointtransformer/`:
+Use `--device cpu` instead if CUDA is unavailable. PointTransformer S3DIS is installed
+the same way, into `models/point_transformer/`, and needs `--device gpu`:
 
 ```bash
+python3 scripts/install_models.py pointtransformer_s3dis
 python3 segment_pcd.py \
   dataset/rgb/rgb_dataset_1.png \
   dataset/depth/depth_dataset_1.png \
-  --config models/pointtransformer/pointtransformer_s3dis.yml \
-  --checkpoint models/pointtransformer/pointtransformer_s3dis_202109241350utc.pth \
+  --config models/point_transformer/pointtransformer_s3dis.yml \
+  --checkpoint models/point_transformer/pointtransformer_s3dis_202109241350utc.pth \
   --device gpu \
   --semantic-output results/pointtransformer_semantic.ply \
   --labels-output results/pointtransformer_labels.npy \

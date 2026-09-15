@@ -5,14 +5,27 @@ addressed by the four tools that produced it: the VLM, the segmentation model, t
 model and the depth-association strategy. This module resolves those four names to a
 folder, reads the metrics the evaluation pipeline left there, and prints the table body.
 
-Localization metrics and the semantic-annotation recall come from ``summary.json`` (it is
-already restricted to the objects counted in localization): the pixel position error, with
-its variance, and the metric position error, the distance in millimetres between the 3D
-point of the depth association and the ArUco position. Runs evaluated before those keys
-existed fall back to ``evaluation.csv``, or render ``--``. Depth metrics, variance included,
-are aggregated here from ``depth_evaluation.csv``, the same way ``run_evaluation`` plots them.
+The table shows the semantic-annotation recall, and the median and RMSE of the pixel position
+error and of the depth error. ``--position-mm`` adds the same two statistics of the metric
+position error, the distance in millimetres between the 3D point of the depth association
+and the ArUco position. Localization
+metrics and the recall come from ``summary.json`` (it is already restricted to the objects
+counted in localization); runs evaluated before those keys existed fall back to
+``evaluation.csv``, or render ``--``. Depth metrics are aggregated here from
+``depth_evaluation.csv``, the same way ``run_evaluation`` plots them.
+
+``--confidence-intervals`` follows every error with a column holding its percentile bootstrap
+confidence interval, written ``[5th percentile, 95th percentile]`` of the bootstrap
+estimates; ``--ci-maths`` writes the same bounds on the value instead, as
+``$value^{95th}_{5th}$``, and implies ``--confidence-intervals``. The recall never shows an
+interval. The bootstrap resamples images rather than objects, from ``evaluation.csv``,
+``depth_evaluation.csv`` and ``detection_statistics.csv``; an error whose rows are missing
+gets no interval.
+The CSV written by ``--csv`` also keeps the mean and the variance of every error.
 
     python -m evaluation.build_table_pipeline --depth sensor --association mask-median
+    python -m evaluation.build_table_pipeline --position-mm --confidence-intervals
+    python -m evaluation.build_table_pipeline --ci-maths
     python -m evaluation.build_table_pipeline --segmentation sam3 --vlm gpt54 --depth sensor \
         --association mask-median
 """
@@ -25,6 +38,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from .metrics import BOOTSTRAP_CONFIDENCE, BOOTSTRAP_RESAMPLES, bootstrap_interval
 
 DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 
@@ -92,23 +107,41 @@ DEFAULT_ROWS = [
 ]
 
 
+# A confidence interval as (lower, upper) bounds, or None when it could not be computed.
+Interval = tuple[float, float] | None
+
+
 @dataclass
 class RunMetrics:
-    """Everything one table row needs, plus the folder it was read from."""
+    """Everything one table row needs, plus the folder it was read from.
+
+    The ``*_ci`` fields are the confidence intervals of the statistic they follow.
+    """
 
     segmentation: str
     vlm: str
     directory: Path
     recall_percent: float
+    recall_ci: Interval
     mean_error_px: float
+    mean_px_ci: Interval
     median_error_px: float
+    median_px_ci: Interval
     rmse_px: float
+    rmse_px_ci: Interval
     var_error_px: float | None
     position_mean_mm: float | None
+    position_median_mm: float | None
+    position_median_ci: Interval
     position_rmse_mm: float | None
+    position_rmse_ci: Interval
     position_var_mm: float | None
     depth_mean_mm: float | None
+    depth_mean_ci: Interval
+    depth_median_mm: float | None
+    depth_median_ci: Interval
     depth_rmse_mm: float | None
+    depth_rmse_ci: Interval
     depth_var_mm: float | None
 
 
@@ -129,6 +162,18 @@ def sample_variance(values: Iterable[float]) -> float | None:
     """Sample variance (``ddof=1``, as in ``summary.json``) of the finite values, or None below two."""
     errors = finite_values(values)
     return float(np.var(errors, ddof=1)) if errors.size > 1 else None
+
+
+def image_groups(frame: pd.DataFrame) -> pd.Series | None:
+    """Return the image of every row, the unit the bootstrap resamples; None when rows lack it."""
+    return frame["image"] if "image" in frame else None
+
+
+def median_and_rmse_intervals(
+    values: pd.Series, groups: pd.Series | None
+) -> tuple[Interval, Interval]:
+    """Compute the confidence intervals of the median and RMSE of ``values``, resampling ``groups``."""
+    return bootstrap_interval(values, "median", groups), bootstrap_interval(values, "rmse", groups)
 
 
 def read_localization_csv(evaluation_dir: Path) -> pd.DataFrame | None:
@@ -196,29 +241,56 @@ def read_metrics(
     if "var_error_px" not in summary and localization is not None:
         var_error_px = sample_variance(localization["error_px"])
 
+    mean_px_ci = median_px_ci = rmse_px_ci = None
+    if localization is not None:
+        groups = image_groups(localization)
+        mean_px_ci = bootstrap_interval(localization["error_px"], "mean", groups)
+        median_px_ci, rmse_px_ci = median_and_rmse_intervals(localization["error_px"], groups)
+
     position_mean = summary.get("mean_error_mm")
+    position_median = summary.get("median_error_mm")
     position_rmse = summary.get("rmse_mm")
     position_var = summary.get("var_error_mm")
-    if "mean_error_mm" not in summary and localization is not None and "error_mm" in localization:
-        position_errors = finite_values(localization["error_mm"])
-        if position_errors.size:
-            position_mean = float(position_errors.mean())
-            position_rmse = float(np.sqrt((position_errors**2).mean()))
-        position_var = sample_variance(position_errors)
+    position_median_ci = position_rmse_ci = None
+    if localization is not None and "error_mm" in localization:
+        if "mean_error_mm" not in summary:
+            position_errors = finite_values(localization["error_mm"])
+            if position_errors.size:
+                position_mean = float(position_errors.mean())
+                position_median = float(np.median(position_errors))
+                position_rmse = float(np.sqrt((position_errors**2).mean()))
+            position_var = sample_variance(position_errors)
+        position_median_ci, position_rmse_ci = median_and_rmse_intervals(
+            localization["error_mm"], image_groups(localization)
+        )
 
-    depth_mean = depth_rmse = depth_var = None
+    depth_mean = depth_median = depth_rmse = depth_var = None
+    depth_mean_ci = depth_median_ci = depth_rmse_ci = None
     depth_csv = evaluation_dir / "depth_evaluation.csv"
     if depth_csv.exists():
         depth_df = pd.read_csv(depth_csv)
         if not include_ignored_depth and "ignored" in depth_df:
             depth_df = depth_df[depth_df["ignored"] == 0]
-        errors = (
-            finite_values(depth_df["abs_error_mm"]) if "abs_error_mm" in depth_df else np.array([])
-        )
-        if errors.size:
-            depth_mean = float(errors.mean())
-            depth_rmse = float(np.sqrt((errors**2).mean()))
-        depth_var = sample_variance(errors)
+        if "abs_error_mm" in depth_df:
+            errors = finite_values(depth_df["abs_error_mm"])
+            if errors.size:
+                depth_mean = float(errors.mean())
+                depth_median = float(np.median(errors))
+                depth_rmse = float(np.sqrt((errors**2).mean()))
+            depth_var = sample_variance(errors)
+            depth_groups = image_groups(depth_df)
+            depth_mean_ci = bootstrap_interval(depth_df["abs_error_mm"], "mean", depth_groups)
+            depth_median_ci, depth_rmse_ci = median_and_rmse_intervals(
+                depth_df["abs_error_mm"], depth_groups
+            )
+
+    # detection_statistics.csv holds one row per image, so resampling its rows resamples images.
+    recall_ci = None
+    detection_csv = evaluation_dir / "detection_statistics.csv"
+    if detection_csv.exists():
+        interval = bootstrap_interval(pd.read_csv(detection_csv)["recall"], "mean")
+        if interval is not None:
+            recall_ci = (100.0 * interval[0], 100.0 * interval[1])
 
     seg_token = _resolve(segmentation, SEGMENTATION_DIRS, "segmentation model")
     vlm_token = _resolve(vlm, VLM_DIRS, "VLM")
@@ -227,15 +299,26 @@ def read_metrics(
         vlm=VLM_LABELS.get(vlm_token, vlm_token),
         directory=directory,
         recall_percent=100.0 * summary["mean_detection_recall"],
+        recall_ci=recall_ci,
         mean_error_px=summary["mean_error_px"],
+        mean_px_ci=mean_px_ci,
         median_error_px=summary["median_error_px"],
+        median_px_ci=median_px_ci,
         rmse_px=summary["rmse_px"],
+        rmse_px_ci=rmse_px_ci,
         var_error_px=var_error_px,
         position_mean_mm=position_mean,
+        position_median_mm=position_median,
+        position_median_ci=position_median_ci,
         position_rmse_mm=position_rmse,
+        position_rmse_ci=position_rmse_ci,
         position_var_mm=position_var,
         depth_mean_mm=depth_mean,
+        depth_mean_ci=depth_mean_ci,
+        depth_median_mm=depth_median,
+        depth_median_ci=depth_median_ci,
         depth_rmse_mm=depth_rmse,
+        depth_rmse_ci=depth_rmse_ci,
         depth_var_mm=depth_var,
     )
 
@@ -244,44 +327,154 @@ def _cell(value: float | None, digits: int = 1) -> str:
     return "--" if value is None else f"{value:.{digits}f}"
 
 
-def latex_table(rows: list[RunMetrics], caption_note: str = "") -> str:
-    """Render the rows as the full tabular environment used in the report."""
+def _interval_cell(interval: Interval, digits: int = 1) -> str:
+    """Format a confidence interval as ``[lower, upper]``, or ``--`` when there is none."""
+    if interval is None:
+        return "--"
+    low, high = interval
+    return f"[{low:.{digits}f}, {high:.{digits}f}]"
+
+
+def _maths_cell(value: float | None, interval: Interval, digits: int = 1) -> str:
+    """Format a value with its confidence interval as ``$value^{upper}_{lower}$``."""
+    if value is None or interval is None:
+        return _cell(value, digits)
+    low, high = interval
+    return f"${value:.{digits}f}^{{{high:.{digits}f}}}_{{{low:.{digits}f}}}$"
+
+
+def _cells_with_interval(
+    value: float | None, interval: Interval, ci_style: str | None
+) -> list[str]:
+    """Return the cells of a value, with its confidence interval printed as ``ci_style`` says.
+
+    None prints the value alone, ``"column"`` follows it with a ``[lower, upper]`` cell, and
+    ``"maths"`` writes the bounds on the value itself, as ``$value^{upper}_{lower}$``.
+    """
+    if ci_style == "column":
+        return [_cell(value), _interval_cell(interval)]
+    if ci_style == "maths":
+        return [_maths_cell(value, interval)]
+    return [_cell(value)]
+
+
+def sc(title: str) -> str:
+    """Set a column title in small capitals."""
+    return f"{{\\sc {title}}}"
+
+
+def metric_headers(name: str, ci_style: str | None) -> list[str]:
+    """Return the header of a metric, followed by the header of its interval column if any."""
+    headers = [name, interval_header()] if ci_style == "column" else [name]
+    return [sc(header) for header in headers]
+
+
+def _percentiles() -> tuple[str, str]:
+    """Return the percentiles the bounds of a confidence interval are, e.g. 5 and 95."""
+    tail = 100 * (1 - BOOTSTRAP_CONFIDENCE) / 2
+    return f"{tail:g}", f"{100 - tail:g}"
+
+
+def interval_header() -> str:
+    """Return the header of a confidence-interval column: its two percentiles, e.g. 5 and 95."""
+    low, high = _percentiles()
+    return f"[{low}\\%, {high}\\%]"
+
+
+def confidence_note(ci_style: str) -> str:
+    """Return the table comment saying how the confidence intervals are written and computed."""
+    low, high = _percentiles()
+    notation = interval_header() if ci_style == "column" else f"value^{{{high}\\%}}_{{{low}\\%}}"
+    return (
+        f"{notation}: {100 * BOOTSTRAP_CONFIDENCE:.0f}% percentile bootstrap "
+        f"confidence interval, {BOOTSTRAP_RESAMPLES} resamples of the images"
+    )
+
+
+def latex_table(
+    rows: list[RunMetrics],
+    caption_note: str = "",
+    position_mm: bool = False,
+    ci_style: str | None = None,
+) -> str:
+    """Render the rows as the full tabular environment used in the report.
+
+    The metric position error [mm] is shown only when ``position_mm`` is set. The confidence
+    intervals of the errors are printed as ``ci_style`` says (see :func:`_cells_with_interval`);
+    the recall never shows one, although the CSV still carries it.
+    """
     body = []
     for row in rows:
-        cells = [
-            f"{row.recall_percent:.1f}\\%",
-            _cell(row.mean_error_px),
-            _cell(row.median_error_px),
-            _cell(row.rmse_px),
-            _cell(row.var_error_px),
-            _cell(row.position_mean_mm),
-            _cell(row.position_rmse_mm),
-            _cell(row.position_var_mm),
-            _cell(row.depth_mean_mm),
-            _cell(row.depth_rmse_mm),
-            _cell(row.depth_var_mm),
-        ]
+        cells = [_cell(row.recall_percent)]
+        cells += _cells_with_interval(row.median_error_px, row.median_px_ci, ci_style)
+        cells += _cells_with_interval(row.rmse_px, row.rmse_px_ci, ci_style)
+        if position_mm:
+            cells += _cells_with_interval(row.position_median_mm, row.position_median_ci, ci_style)
+            cells += _cells_with_interval(row.position_rmse_mm, row.position_rmse_ci, ci_style)
+        cells += _cells_with_interval(row.depth_median_mm, row.depth_median_ci, ci_style)
+        cells += _cells_with_interval(row.depth_rmse_mm, row.depth_rmse_ci, ci_style)
         body.append(
             "    {:<12} & {:<12} & ".format(row.segmentation, row.vlm)
-            + " & ".join(f"{cell:>7}" for cell in cells)
+            + " & ".join(f"{cell:>14}" for cell in cells)
             + " \\\\"
         )
+    error_groups = ["Position Error [px]"]
+    if position_mm:
+        error_groups.append("Position Error [mm]")
+    error_groups.append("Depth Error [mm]")
+    metrics = metric_headers("Median", ci_style) + metric_headers("RMSE", ci_style)
     header = [
-        "    \\begin{tabular}{llccccccccccc}",
+        f"    \\begin{{tabular}}{{ll{'c' * (1 + len(metrics) * len(error_groups))}}}",
         "    \\toprule",
-        "    \\multicolumn{2}{c}{Tools}           & Semantic Annotation "
-        "& \\multicolumn{4}{c}{Position Error [px]} & \\multicolumn{3}{c}{Position Error [mm]} "
-        "& \\multicolumn{3}{c}{Depth Error [mm]} \\\\",
-        "    Segmentation & Annotation   & Recall              "
-        "& Mean & Median & RMSE & Var & Mean & RMSE & Var & Mean & RMSE & Var \\\\",
+        f"    \\multicolumn{{2}}{{c}}{{{sc('Tools')}}} & {sc('Semantic Annotation')} & "
+        + " & ".join(
+            f"\\multicolumn{{{len(metrics)}}}{{c}}{{{sc(group)}}}" for group in error_groups
+        )
+        + " \\\\",
+        "    "
+        + " & ".join(sc(title) for title in ("Segmentation", "Annotation", "Recall [\\%]"))
+        + " & "
+        + " & ".join(" & ".join(metrics) for _ in error_groups)
+        + " \\\\",
         "    \\midrule",
     ]
     footer = ["    \\bottomrule", "    \\end{tabular}"]
-    notes = ["variances in px^2 and mm^2"]
-    if caption_note:
-        notes.insert(0, caption_note)
-    footer.append(f"    % {'; '.join(notes)}")
+    notes = [caption_note] if caption_note else []
+    if ci_style is not None:
+        notes.append(confidence_note(ci_style))
+    if notes:
+        footer.append(f"    % {'; '.join(notes)}")
     return "\n".join(header + body + footer)
+
+
+def interval_columns(name: str, interval: Interval) -> dict[str, float | None]:
+    """Return the ``<name>_ci_low`` and ``<name>_ci_high`` CSV columns of a confidence interval."""
+    low, high = interval if interval is not None else (None, None)
+    return {f"{name}_ci_low": low, f"{name}_ci_high": high}
+
+
+def add_confidence_interval_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the flags choosing whether, and how, the confidence intervals are printed."""
+    parser.add_argument(
+        "--confidence-intervals",
+        action="store_true",
+        help="print the confidence interval of every error, as [lower, upper] in a column after it",
+    )
+    parser.add_argument(
+        "--ci-maths",
+        action="store_true",
+        help=(
+            "print the confidence intervals as $value^{upper}_{lower}$ in the value's own cell "
+            "instead of in a column after it; implies --confidence-intervals"
+        ),
+    )
+
+
+def confidence_interval_style(args: argparse.Namespace) -> str | None:
+    """Return how the flags ask for the confidence intervals: None, ``"column"`` or ``"maths"``."""
+    if args.ci_maths:
+        return "maths"
+    return "column" if args.confidence_intervals else None
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -308,6 +501,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="depth association tool, mask-median or bbox-center (default: mask-median)",
     )
     parser.add_argument(
+        "--position-mm",
+        action="store_true",
+        help=(
+            "also show the metric position error [mm], the distance between the 3D point of "
+            "the depth association and the ArUco position"
+        ),
+    )
+    parser.add_argument(
         "--exclude-ignored-depth",
         action="store_true",
         help="drop the rows flagged 'ignored' in depth_evaluation.csv before aggregating",
@@ -317,6 +518,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="warn and continue instead of failing when a run has not been evaluated",
     )
+    add_confidence_interval_arguments(parser)
     parser.add_argument("--csv", type=Path, help="also write the numbers to this CSV file")
     args = parser.parse_args(argv)
     if bool(args.segmentation) != bool(args.vlm):
@@ -348,7 +550,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"warning: skipping {message}")
 
     note = f"depth={args.depth}, association={args.association}"
-    print(latex_table(rows, caption_note=note))
+    print(
+        latex_table(
+            rows,
+            caption_note=note,
+            position_mm=args.position_mm,
+            ci_style=confidence_interval_style(args),
+        )
+    )
     print()
     for row in rows:
         print(f"% {row.segmentation} + {row.vlm}: {row.directory.name}")
@@ -360,15 +569,26 @@ def main(argv: list[str] | None = None) -> int:
                     "segmentation": r.segmentation,
                     "annotation": r.vlm,
                     "recall_percent": r.recall_percent,
+                    **interval_columns("recall_percent", r.recall_ci),
                     "mean_error_px": r.mean_error_px,
+                    **interval_columns("mean_error_px", r.mean_px_ci),
                     "median_error_px": r.median_error_px,
+                    **interval_columns("median_error_px", r.median_px_ci),
                     "rmse_px": r.rmse_px,
+                    **interval_columns("rmse_px", r.rmse_px_ci),
                     "var_error_px": r.var_error_px,
                     "position_mean_mm": r.position_mean_mm,
+                    "position_median_mm": r.position_median_mm,
+                    **interval_columns("position_median_mm", r.position_median_ci),
                     "position_rmse_mm": r.position_rmse_mm,
+                    **interval_columns("position_rmse_mm", r.position_rmse_ci),
                     "position_var_mm": r.position_var_mm,
                     "depth_mean_mm": r.depth_mean_mm,
+                    **interval_columns("depth_mean_mm", r.depth_mean_ci),
+                    "depth_median_mm": r.depth_median_mm,
+                    **interval_columns("depth_median_mm", r.depth_median_ci),
                     "depth_rmse_mm": r.depth_rmse_mm,
+                    **interval_columns("depth_rmse_mm", r.depth_rmse_ci),
                     "depth_var_mm": r.depth_var_mm,
                     "directory": r.directory.name,
                 }
