@@ -910,6 +910,9 @@ numbered from `0`, unclustered/background pixels are `-1`, and planes start at `
 
 #### Point-cloud semantic segmentation
 
+For a step-by-step guide covering both this Open3D-ML route and the Pointcept PTv3 route,
+see [README_pointcloud_segmentation.md](README_pointcloud_segmentation.md).
+
 `segment_pcd.py` selects the Open3D-ML architecture from `model.name` in the
 configuration file. The same interface therefore works with either RandLA-Net
 or PointTransformer; no model-specific command-line flag is needed. Model files are not

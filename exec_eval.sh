@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-SEG_MODELS=("sam3") # This must correspond to the names in the segmentation/conf folder
-LLM_MODELS=("azure_gpt54-mini" "azure_gpt54-mini" "azure_gpt54-nano" "azure_claude-sonnet46") # This must correspond to the names in the LLM/conf folder
+SEG_MODELS=("fastsam-s" "sam21-l" "sam1-h") # This must correspond to the names in the segmentation/conf folder
+LLM_MODELS=("azure_gpt54") # This must correspond to the names in the LLM/conf folder
 DEPTH_METHODS=("sensor" "monocular") # These are the --depth-source values, `python3 depth_estimation.py --help`.
 DEPTH_ASSOCIATION_METHODS=("mask-median" "bbox-center") # These are the methods to associate the depth with the segmentation mask, `python3 depth_estimation.py --help`.
 
@@ -14,13 +14,6 @@ source .venv/bin/activate
 export PYTHONUNBUFFERED=1
 
 # Run a command, showing its output on the terminal and saving it to a log file.
-# Usage: run_logged <log-file> <command> [args...]
-# tee writes the console copy through the script's own stdout rather than reopening
-# /dev/stderr: a reopened stream has a file offset of its own, and when the script is
-# redirected to a file (e.g. on PBS) it overwrites the echo lines, or is overwritten
-# by them. The logger colours its level names with ANSI codes, which are stripped from
-# the log once the command ends, whether or not it succeeded. A failing command still
-# stops the script, through the status returned under `set -e`.
 run_logged() {
     local log_file="$1"
     shift
@@ -31,8 +24,6 @@ run_logged() {
     return "${status}"
 }
 
-# One line per timed step, printed together when the script exits. A trap rather than
-# a final echo, so the summary also appears when a step fails and `set -e` stops the run.
 TIMINGS=()
 print_timings() {
     if [ "${#TIMINGS[@]}" -gt 0 ]; then
@@ -43,9 +34,7 @@ print_timings() {
 trap print_timings EXIT
 
 # Like run_logged, and also measure the wall-clock time of the step, which includes
-# interpreter start-up and model loading. The time goes to the terminal and to the end
-# of the step's log, and is recorded even when the step fails.
-# Usage: run_timed <step-name> <log-file> <command> [args...]
+# interpreter start-up and model loading. 
 run_timed() {
     local step="$1"
     local log_file="$2"
@@ -80,7 +69,7 @@ run_logged output_aruco/aruco_detector.log \
 # Then segment the RGB images
 for SEG_MODEL in "${SEG_MODELS[@]}"; do
     echo "Running segmentation with model: ${SEG_MODEL}"
-    SEG_DIR=results/output_segmentation_${SEG_MODEL}
+    SEG_DIR=results_seg/output_segmentation_${SEG_MODEL}
     run_timed "segmentation ${SEG_MODEL}" ${SEG_DIR}/segmentation.log \
         python3 segmentation.py \
             --segmenter-config segmentation/conf/${SEG_MODEL}.yaml \
@@ -99,7 +88,7 @@ for SEG_MODEL in "${SEG_MODELS[@]}"; do
         run_timed "annotation ${SEG_MODEL} ${LLM_MODEL}" ${ANNOTATION_DIR}/annotation.log \
             python3 annotation.py \
                 --llm-config LLM/conf/${LLM_MODEL}.yaml \
-                --input-dir results/output_segmentation_${SEG_MODEL}/output_segmentation \
+                --input-dir results_seg/output_segmentation_${SEG_MODEL}/output_segmentation \
                 --output-dir ${ANNOTATION_DIR}
 
         for DEPTH_METHOD in "${DEPTH_METHODS[@]}"; do
