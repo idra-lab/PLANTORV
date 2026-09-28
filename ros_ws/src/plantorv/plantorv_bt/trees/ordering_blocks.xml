@@ -1,15 +1,12 @@
 <?xml version="1.0"?>
 <!--
-  Move the tool to points given in the camera or world frame.
+  Move the tool to one point given in the camera's frame.
 
   The three numbers are metres in camera_color_optical_frame: x right across
   the image, y down it, z out along the lens. That is the frame a perception
   result comes out in, and it is not the frame the planner works in, so
-  MoveToPoint transforms the point through TF before the goal is sent. A point
-  that already has frame="world" is passed to the planner unchanged. Use that
-  attribute when pasting `object_point_world_m`; the example values below are
-  still camera-frame values. The planner itself only ever sees a pose in
-  `world`.
+  MoveToPoint transforms the point through TF before the goal is sent. The
+  planner itself only ever sees a pose in `world`.
 
   The transform has to exist, which means the recorded transforms have to be
   running. They come up with plantorv.launch.py by default. Without them the
@@ -53,15 +50,39 @@
 
   <BehaviorTree ID="MainTree">
     <Sequence name="move_to_camera_point">
-      <Log message="Transforming the camera-frame point into world"/>
-      <MoveToPoint x="0.06752832488509933" y="0.11149110993345825" z="0.7541801147460937"/>
-      <Log message="The tool is at the point the camera named"/>
-      <CloseGripper/>
-      <Log message="The gripper has locked"/>
-      <MoveToPoint x="0.298420614477212" y="0.10868130976555156" z="0.7418381958007813"/>
-      <Log message="The block is over the blue tray"/>      
+      <Log message="Moving to center red block"/>
+      <MoveToPoint x="0.02033399840705077" y="0.4574704382514782" z="0.759512257706999" frame="world" offset_z="0.18"/>
+      <Log message="Closing gripper"/>
+      <CloseGripper/> 
+      <Log message="Moving to red tray rear"/>
+      <MoveToPoint x="-0.19746931873722795" y="0.4324978563841302" z="0.759937105885836" frame="world" offset_z="0.18"/>
+      <Log message="Opening the gripper"/>      
       <OpenGripper/>
-      <Log message="The gripper has been opened"/>
+      <Log message="Moving to rightmost blue block"/>
+      <MoveToPoint x="-0.3725815085993399" y="0.24576015192790816" z="0.7654603264352434" frame="world" offset_z="0.18"/>
+      <Log message="Closing gripper"/>
+      <CloseGripper/>
+      <Log message="Moving to blue tray"/>
+      <MoveToPoint x="0.2573728022370138" y="0.43392432694114964" z="0.767640625" frame="world" offset_z="0.18"/>
+      <Log message="Opening the gripper"/>      
+      <OpenGripper/>
+      <Log message="Moving to red block on blue tray"/>
+      <MoveToPoint x="0.20961698801083135" y="0.3665197919273634" z="0.7642535518390613" frame="world" offset_z="0.18"/>
+      <Log message="Closing gripper"/>
+      <CloseGripper/> 
+       <Log message="Moving to red tray"/>
+      <MoveToPoint x="-0.19746931873722795" y="0.3324978563841302" z="0.769937105885836" frame="world" offset_z="0.17"/>
+      <Log message="Opening the gripper"/>      
+      <OpenGripper/>
+      <Log message="Moving to blue block in the center"/>
+      <MoveToPoint x="0.02033399840705077" y="0.32859343569868759" z="0.76613720703125" frame="world" offset_z="0.18"/>
+      <Log message="Closing gripper"/>
+      <CloseGripper/>
+      <Log message="Moving to blue tray"/>
+      <MoveToPoint x="0.1573728022370138" y="0.43392432694114964" z="0.767640625" frame="world" offset_z="0.18"/>
+      <Log message="Opening the gripper"/>      
+      <OpenGripper/>
+      <Log message="Going home"/>
       <Home/>
     </Sequence>
   </BehaviorTree>
@@ -69,6 +90,5 @@
 </root>
 
 
-            <!-- 0.4184147024131195,
-            0.04073342794642653,
-            0.9720914916992187 -->
+
+      <!-- UNREACHABLE POSITION <MoveToPoint x="-0.3133068790930763" y="0.11265059579623038" z="0.6431995239257813"/> -->

@@ -4,7 +4,8 @@ PROVIDER: "huggingface"
 # Local checkout under models/ (git-ignored), not a Hub id: the weights are read from
 # disk, so CACHE_DIR plays no part and no download happens at load time. Relative to the
 # repository root, like the dataset paths the pipeline stages take.
-MODEL_NAME: "models/huggingface/Qwen3-VL-4B-Instruct"
+MODEL_NAME: "Qwen/Qwen3-VL-4B-Instruct"
+CACHE_DIR: "/scracth/models/hugging_face"
 DISABLE_SYSTEM: false
 DEVICE: "cuda"
 # 4.44B parameters: ~4.9 GB of weights at 8 bits, which leaves room for the vision

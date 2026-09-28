@@ -30,6 +30,7 @@ setup(
             "aruco_tf_publisher = plantorv_ros.aruco_tf_publisher:main",
             "save_marker_transforms = plantorv_ros.save_marker_transforms:main",
             "static_marker_publisher = plantorv_ros.static_marker_publisher:main",
+            "save_camera_world_transform = plantorv_ros.save_camera_world_transform:main",
         ],
     },
 )

@@ -51,35 +51,35 @@
   <BehaviorTree ID="MainTree">
     <Sequence name="move_to_camera_point">
       <Log message="Moving to yellow block"/>
-      <MoveToPoint x="-0.05680193173542208" y="0.12080083231295946" z="0.6704393920898438"/>
+      <MoveToPoint x="-0.05680193173542208" y="0.12080083231295946" z="0.6704393920898438" offset_z="0.17"/>
       <Log message="Closing gripper"/>
       <CloseGripper/> 
       <Log message="Moving to red tray rear"/>
-      <MoveToPoint x="0.3084147024131195" y="0.0700428468463554" z="0.8220914916992187"/>
+      <MoveToPoint x="0.3084147024131195" y="0.0700428468463554" z="0.8220914916992187" offset_z="0.17"/>
       <Log message="Opening the gripper"/>      
       <OpenGripper/>
       <Log message="Moving to red block"/>
-      <MoveToPoint x="0.13814244873209375" y="0.15233378564405825" z="0.6412078857421875"/>
+      <MoveToPoint x="0.13814244873209375" y="0.15233378564405825" z="0.6412078857421875" offset_z="0.17"/>
       <Log message="Closing gripper"/>
       <CloseGripper/>
       <Log message="Moving to blue tray"/>
-      <MoveToPoint x="-0.05680193173542208" y="0.14080083231295946" z="0.5704393920898438"/>
+      <MoveToPoint x="-0.05680193173542208" y="0.14080083231295946" z="0.5704393920898438" offset_z="0.17"/>
       <Log message="Opening the gripper"/>      
       <OpenGripper/>
       <Log message="Moving to blue block"/>
-      <MoveToPoint x="0.4184147024131195" y="0.04073342794642653" z="0.9720914916992187"/>
+      <MoveToPoint x="0.4184147024131195" y="0.04073342794642653" z="0.9720914916992187" offset_z="0.17"/>
       <Log message="Closing gripper"/>
       <CloseGripper/> 
        <Log message="Moving to old yellow block position on blue tray"/>
-      <MoveToPoint x="-0.05680193173542208" y="0.12080083231295946" z="0.6704393920898438"/>
+      <MoveToPoint x="-0.05680193173542208" y="0.12080083231295946" z="0.6704393920898438" offset_z="0.17"/>
       <Log message="Opening the gripper"/>      
       <OpenGripper/>
       <Log message="Moving to orange block"/>
-      <MoveToPoint x="0.086946388537661" y="0.11056255532122838" z="0.7481854248046875"/>
+      <MoveToPoint x="0.086946388537661" y="0.11056255532122838" z="0.7481854248046875" offset_z="0.17"/>
       <Log message="Closing gripper"/>
       <CloseGripper/>
       <Log message="Moving to red tray"/>
-      <MoveToPoint x="0.33622896975386307" y="0.1200428468463554" z="0.7314507446289062"/>
+      <MoveToPoint x="0.33622896975386307" y="0.1200428468463554" z="0.7314507446289062" offset_z="0.17"/>
       <Log message="Opening the gripper"/>      
       <OpenGripper/>
       <Log message="Going home"/>

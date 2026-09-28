@@ -640,6 +640,7 @@ image_dict = main_coords(image, depth_path, image_dict)
 # image_dict["mask_0"]["object_depth_mm"]       == depth_mm
 # image_dict["mask_0"]["depth_association"]     == "bbox-center"
 # image_dict["mask_0"]["object_point_camera_m"] == [x, y, z]   # metres, camera frame
+# image_dict["mask_0"]["object_point_world_m"]  == [x, y, z]   # metres, world frame (when recorded)
 # image_dict["mask_0"]["object_point_pixel"]    == [u, v]
 ```
 
@@ -673,6 +674,23 @@ frame**: x to the right of the image, y down it, z along the optical axis, origi
 colour sensor. It is obtained by undistorting one pixel to normalised coordinates through the
 colour intrinsics and scaling by the depth, so `z` is the same number `object_depth_mm`
 carries, in metres. `object_point_pixel` is the `[u, v]` it was back-projected through.
+
+### World-frame coordinates
+
+Run this once after the camera and robot have been brought up, and again whenever either one
+moves:
+
+```bash
+ros2 launch plantorv_ros save_camera_world_transform.launch.py
+```
+
+The one-shot node waits for TF's `world <- static_camera_color_optical_frame` transform and
+saves it as `plantorv_bringup/config/camera_to_world_transform.yaml`. The mapping pipeline
+then adds `object_point_world_m` for every object with a valid camera point. It is `None` until
+that file exists. Set `PLANTORV_CAMERA_TO_WORLD_TRANSFORM` or pass
+`camera_to_world_file=...` to `main_coords` / `attach_object_depths` to use a different file.
+The stored transform maps the camera point as `world_point = R * camera_point + t`; it must
+therefore be captured from the same physical camera and robot placement as the image.
 
 The intrinsics are looked up by frame size from `rgb_calibration_for_size`, which reads the
 same hardcoded colour calibration the reprojection uses. This works for either
