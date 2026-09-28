@@ -725,6 +725,22 @@ image_dict = attach_object_depths(
 )
 ```
 
+## PLANTOR integration
+
+PLANTOR's web GUI can drive this pipeline directly: its first workflow step takes
+one picture of the workspace, runs segmentation, annotation and depth over it,
+and plans against the objects that come back. The bridge is the scene service in
+`ros_ws/src/plantorv/plantorv_ros/plantorv_ros/scene_service.py`, an HTTP server
+that runs one capture per request in this environment:
+
+```shell
+ros2 run plantorv_ros scene_service --port 8010
+```
+
+It starts no camera unless a request asks it to and stops none, so it can be used
+while an experiment is running. See [INTEGRATION.md](../INTEGRATION.md) for the
+whole flow, the defaults it captures with, and its HTTP reference.
+
 ## Useful Commands
 
 ### Main pipelines

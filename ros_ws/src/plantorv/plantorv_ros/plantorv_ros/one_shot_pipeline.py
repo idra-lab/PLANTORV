@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
+from rclpy.exceptions import ParameterUninitializedException
 from rclpy.executors import ExternalShutdownException
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
@@ -99,6 +100,24 @@ class OneShotPipelineNode(Node):
             "/tmp/samgpt_ros_run",
         )
 
+        # Appended to the pipeline command as they are, so the models
+        # of a run are chosen the same way as on samgpt.py's own
+        # command line: ["--annotator", "gpt", "--llm-config",
+        # "LLM/conf/azure_gpt54.yaml"]. The stage flags are samgpt.py's
+        # and are not repeated here, so a caller picking a segmenter or
+        # an annotator needs no change to this node.
+        #
+        # An empty string is skipped: an empty array has no type ROS can
+        # infer, so [""] is what an "unset" list looks like.
+        self.declare_parameter("pipeline_arguments", [""])
+
+        # False stops after the frames are on disk, leaving the run
+        # directory ready for the pipeline to be run over it later. That
+        # is what a preview is: the picture is worth showing before
+        # minutes of segmentation are spent on it, and the frames are
+        # what the decision is made on.
+        self.declare_parameter("run_pipeline", True)
+
         self.rgb_topic = self.get_parameter("rgb_topic").value
         self.depth_topic = self.get_parameter("depth_topic").value
         self.pointcloud_topic = self.get_parameter(
@@ -111,6 +130,27 @@ class OneShotPipelineNode(Node):
 
         self.output_dir = Path(
             self.get_parameter("output_dir").value
+        )
+
+        # A parameter file carrying an empty array leaves the parameter
+        # uninitialized rather than empty -- ROS has no type to give it -- and
+        # reading it then raises. That is the same thing as no arguments.
+        try:
+            declared_arguments = (
+                self.get_parameter("pipeline_arguments").value
+                or []
+            )
+        except ParameterUninitializedException:
+            declared_arguments = []
+
+        self.pipeline_arguments = [
+            str(value)
+            for value in declared_arguments
+            if str(value)
+        ]
+
+        self.should_run_pipeline = bool(
+            self.get_parameter("run_pipeline").value
         )
 
         sync_slop = float(
@@ -691,6 +731,14 @@ class OneShotPipelineNode(Node):
                     f"Could not save point cloud: {exc}"
                 )
 
+        if not self.should_run_pipeline:
+            self.get_logger().info(
+                "Frames captured, pipeline not run "
+                f"(run_pipeline is false): {self.output_dir}"
+            )
+            self.finished = True
+            return
+
         try:
             self.run_pipeline()
 
@@ -897,9 +945,14 @@ class OneShotPipelineNode(Node):
             str(self.output_dir),
         ]
 
+        # Last, so a caller overriding one of the flags above wins:
+        # argparse keeps the last occurrence of an option.
+        command.extend(self.pipeline_arguments)
+
         self.get_logger().info(
             "Running segmentation -> annotation "
-            "-> depth pipeline..."
+            "-> depth pipeline:\n"
+            f"  {' '.join(command)}"
         )
 
         subprocess.run(

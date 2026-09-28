@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'rgbd_capturer = plantorv_ros.rgbd_capturer:main', 
             'one_shot_pipeline = plantorv_ros.one_shot_pipeline:main',
+            'scene_service = plantorv_ros.scene_service:main',
             'charuco_tf_publisher = plantorv_ros.charuco_tf_publisher:main',
             'aruco_tf_publisher = plantorv_ros.aruco_tf_publisher:main',
             'save_marker_transforms = plantorv_ros.save_marker_transforms:main',
