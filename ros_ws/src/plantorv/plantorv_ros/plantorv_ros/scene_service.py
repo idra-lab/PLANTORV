@@ -40,13 +40,13 @@ Every field of a request body is optional apart from ``run_id`` in ``/process``
 and ``/discard``::
 
     {
-      "run_id":            "kitchen-3",
-      "segmenter_config":  "segmentation/conf/sam3.yaml",
-      "llm_config":        "LLM/conf/azure_gpt54.yaml",
-      "depth_association": "mask-median",
-      "start_camera":      false,
-      "timeout":           900,
-      "extra_arguments":   ["--view-masks"]
+        "run_id": "kitchen-3",
+        "segmenter_config": "segmentation/conf/sam3.yaml",
+        "llm_config": "LLM/conf/azure_gpt54.yaml",
+        "depth_association": "mask-median",
+        "start_camera": false,
+        "timeout": 900,
+        "extra_arguments": ["--view-masks"],
     }
 """
 
@@ -252,7 +252,9 @@ class SceneCapturer:
             If the name holds nothing usable once everything that could climb
             out of ``runs_dir`` is removed from it.
         """
-        safe = "".join(character for character in run_id if character.isalnum() or character in "-_")
+        safe = "".join(
+            character for character in run_id if character.isalnum() or character in "-_"
+        )
 
         if not safe:
             raise CaptureError("'run_id' holds no usable character", status=400)
@@ -336,9 +338,7 @@ class SceneCapturer:
         segmenter = self.resolve_under_root(
             str(options.get("segmenter_config") or DEFAULT_SEGMENTER_CONFIG)
         )
-        llm_config = self.resolve_under_root(
-            str(options.get("llm_config") or DEFAULT_LLM_CONFIG)
-        )
+        llm_config = self.resolve_under_root(str(options.get("llm_config") or DEFAULT_LLM_CONFIG))
         association = str(options.get("depth_association") or DEFAULT_DEPTH_ASSOCIATION)
 
         for path, what in (
@@ -418,7 +418,9 @@ class SceneCapturer:
                     "'camera_launch_arguments' must be a list of strings", status=400
                 )
             # Never empty: an empty array has no type ROS can infer.
-            overrides["camera_launch_arguments"] = [str(entry) for entry in launch_arguments] or [""]
+            overrides["camera_launch_arguments"] = [str(entry) for entry in launch_arguments] or [
+                ""
+            ]
 
         return overrides
 
@@ -727,8 +729,7 @@ class SceneCapturer:
 
         if not (output_dir / RGB_FRAME).is_file():
             raise CaptureError(
-                "The capture finished but wrote no RGB frame "
-                f"(no {RGB_FRAME} in {output_dir})",
+                f"The capture finished but wrote no RGB frame (no {RGB_FRAME} in {output_dir})",
                 {"log_file": str(log_path)},
             )
 
@@ -991,11 +992,7 @@ def _last_complaint(*outputs: Optional[str]) -> str:
         command said nothing.
     """
     lines = [
-        line.strip()
-        for output in outputs
-        if output
-        for line in output.splitlines()
-        if line.strip()
+        line.strip() for output in outputs if output for line in output.splitlines() if line.strip()
     ]
 
     if not lines:
@@ -1134,7 +1131,9 @@ def parse_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
         default="0.0.0.0",
         help="Address to listen on. 0.0.0.0 is what a container reaches (default: %(default)s)",
     )
-    parser.add_argument("--port", type=int, default=8010, help="Port to listen on (default: %(default)s)")
+    parser.add_argument(
+        "--port", type=int, default=8010, help="Port to listen on (default: %(default)s)"
+    )
     parser.add_argument(
         "--plantorv-root",
         help="The plantorv checkout holding samgpt.py. Found from this file when unset",

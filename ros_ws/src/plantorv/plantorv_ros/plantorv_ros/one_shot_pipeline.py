@@ -12,9 +12,9 @@ import cv2
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
+from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.exceptions import ParameterUninitializedException
 from rclpy.executors import ExternalShutdownException
-from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image, PointCloud2
@@ -23,10 +23,7 @@ from sensor_msgs_py import point_cloud2
 
 def stamp_ns(msg) -> int:
     """Return a ROS message header timestamp in nanoseconds."""
-    return (
-        msg.header.stamp.sec * 1_000_000_000
-        + msg.header.stamp.nanosec
-    )
+    return msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
 
 
 class OneShotPipelineNode(Node):
@@ -120,67 +117,40 @@ class OneShotPipelineNode(Node):
 
         self.rgb_topic = self.get_parameter("rgb_topic").value
         self.depth_topic = self.get_parameter("depth_topic").value
-        self.pointcloud_topic = self.get_parameter(
-            "pointcloud_topic"
-        ).value
+        self.pointcloud_topic = self.get_parameter("pointcloud_topic").value
 
-        self.pipeline_script = Path(
-            self.get_parameter("pipeline_script").value
-        )
+        self.pipeline_script = Path(self.get_parameter("pipeline_script").value)
 
-        self.output_dir = Path(
-            self.get_parameter("output_dir").value
-        )
+        self.output_dir = Path(self.get_parameter("output_dir").value)
 
         # A parameter file carrying an empty array leaves the parameter
         # uninitialized rather than empty -- ROS has no type to give it -- and
         # reading it then raises. That is the same thing as no arguments.
         try:
-            declared_arguments = (
-                self.get_parameter("pipeline_arguments").value
-                or []
-            )
+            declared_arguments = self.get_parameter("pipeline_arguments").value or []
         except ParameterUninitializedException:
             declared_arguments = []
 
-        self.pipeline_arguments = [
-            str(value)
-            for value in declared_arguments
-            if str(value)
-        ]
+        self.pipeline_arguments = [str(value) for value in declared_arguments if str(value)]
 
-        self.should_run_pipeline = bool(
-            self.get_parameter("run_pipeline").value
-        )
+        self.should_run_pipeline = bool(self.get_parameter("run_pipeline").value)
 
-        sync_slop = float(
-            self.get_parameter("sync_slop").value
-        )
+        sync_slop = float(self.get_parameter("sync_slop").value)
 
-        self.pointcloud_timeout = float(
-            self.get_parameter("pointcloud_timeout").value
-        )
+        self.pointcloud_timeout = float(self.get_parameter("pointcloud_timeout").value)
 
-        self.rgb_size = tuple(
-            int(value) for value in self.get_parameter("rgb_size").value
-        )
-        self.depth_size = tuple(
-            int(value) for value in self.get_parameter("depth_size").value
-        )
+        self.rgb_size = tuple(int(value) for value in self.get_parameter("rgb_size").value)
+        self.depth_size = tuple(int(value) for value in self.get_parameter("depth_size").value)
 
         # Input directories given to the existing pipeline.
         self.rgb_dir = self.output_dir / "input" / "rgb"
         self.depth_dir = self.output_dir / "input" / "depth"
-        self.pointcloud_dir = (
-            self.output_dir / "input" / "pointcloud"
-        )
+        self.pointcloud_dir = self.output_dir / "input" / "pointcloud"
 
         # Human-viewable copy of the depth frame, kept out of
         # depth_dir so it doesn't interfere with the pipeline's
         # one-file-per-frame indexing.
-        self.depth_preview_dir = (
-            self.output_dir / "input" / "depth_preview"
-        )
+        self.depth_preview_dir = self.output_dir / "input" / "depth_preview"
 
         self.rgb_dir.mkdir(parents=True, exist_ok=True)
         self.depth_dir.mkdir(parents=True, exist_ok=True)
@@ -221,10 +191,7 @@ class OneShotPipelineNode(Node):
             else:
                 self.camera = self.start_camera()
 
-        self.camera_deadline = (
-            time.monotonic()
-            + float(self.get_parameter("camera_timeout").value)
-        )
+        self.camera_deadline = time.monotonic() + float(self.get_parameter("camera_timeout").value)
 
         # ----------------------------------------------------------
         # RGB + depth synchronization
@@ -291,9 +258,7 @@ class OneShotPipelineNode(Node):
         dead launch, while the frames arrive from the first driver all
         along and hide it.
         """
-        deadline = time.monotonic() + float(
-            self.get_parameter("camera_discovery_time").value
-        )
+        deadline = time.monotonic() + float(self.get_parameter("camera_discovery_time").value)
 
         # Publishers are not known the instant a node starts. Spinning
         # briefly is what gives discovery time to answer.
@@ -343,8 +308,7 @@ class OneShotPipelineNode(Node):
                 arguments[name] = setting
             else:
                 self.get_logger().warn(
-                    f"ignoring camera launch argument '{text}': "
-                    "it is not name:=value"
+                    f"ignoring camera launch argument '{text}': it is not name:=value"
                 )
 
         command = [
@@ -410,8 +374,7 @@ class OneShotPipelineNode(Node):
 
         if self.camera is not None and self.camera.poll() is not None:
             self.fail(
-                f"the camera exited with code {self.camera.returncode} "
-                "before a frame arrived"
+                f"the camera exited with code {self.camera.returncode} before a frame arrived"
             )
             return
 
@@ -496,9 +459,7 @@ class OneShotPipelineNode(Node):
         try:
             self.save_rgbd(rgb_msg, depth_msg)
         except Exception as exc:
-            self.get_logger().error(
-                f"Failed to save RGB-D pair: {exc}"
-            )
+            self.get_logger().error(f"Failed to save RGB-D pair: {exc}")
             self.finish_without_pipeline()
             return
 
@@ -524,9 +485,7 @@ class OneShotPipelineNode(Node):
         depth_path = self.depth_dir / "img_0.png"
 
         if not cv2.imwrite(str(rgb_path), rgb):
-            raise RuntimeError(
-                f"Could not write {rgb_path}"
-            )
+            raise RuntimeError(f"Could not write {rgb_path}")
 
         # Typical ROS depth representations:
         #
@@ -552,9 +511,7 @@ class OneShotPipelineNode(Node):
             depth = depth.astype(np.uint16)
 
         if not cv2.imwrite(str(depth_path), depth):
-            raise RuntimeError(
-                f"Could not write {depth_path}"
-            )
+            raise RuntimeError(f"Could not write {depth_path}")
 
         # Raw depth values only span a small fraction of the
         # uint16 range, so the file above looks solid black in a
@@ -565,9 +522,7 @@ class OneShotPipelineNode(Node):
             str(preview_path),
             self.colorize_depth(depth),
         ):
-            raise RuntimeError(
-                f"Could not write {preview_path}"
-            )
+            raise RuntimeError(f"Could not write {preview_path}")
 
         self.get_logger().info(
             f"Saved RGB:           {rgb_path}\n"
@@ -623,11 +578,7 @@ class OneShotPipelineNode(Node):
 
     def try_select_pointcloud(self) -> None:
         """Select a cloud once its stream has crossed target time."""
-        if (
-            self.finished
-            or self.target_stamp_ns is None
-            or not self.cloud_buffer
-        ):
+        if self.finished or self.target_stamp_ns is None or not self.cloud_buffer:
             return
 
         newest_stamp = stamp_ns(self.cloud_buffer[-1])
@@ -641,25 +592,16 @@ class OneShotPipelineNode(Node):
 
         cloud = min(
             self.cloud_buffer,
-            key=lambda msg: abs(
-                stamp_ns(msg) - self.target_stamp_ns
-            ),
+            key=lambda msg: abs(stamp_ns(msg) - self.target_stamp_ns),
         )
 
         self.process_capture(cloud)
 
     def check_pointcloud_timeout(self) -> None:
-        if (
-            self.finished
-            or not self.capture_started
-            or self.capture_start_time is None
-        ):
+        if self.finished or not self.capture_started or self.capture_start_time is None:
             return
 
-        elapsed = (
-            time.monotonic()
-            - self.capture_start_time
-        )
+        elapsed = time.monotonic() - self.capture_start_time
 
         if elapsed < self.pointcloud_timeout:
             return
@@ -667,22 +609,16 @@ class OneShotPipelineNode(Node):
         if self.cloud_buffer:
             cloud = min(
                 self.cloud_buffer,
-                key=lambda msg: abs(
-                    stamp_ns(msg) - self.target_stamp_ns
-                ),
+                key=lambda msg: abs(stamp_ns(msg) - self.target_stamp_ns),
             )
 
-            self.get_logger().warning(
-                "Point-cloud timeout reached. "
-                "Using closest buffered cloud."
-            )
+            self.get_logger().warning("Point-cloud timeout reached. Using closest buffered cloud.")
 
             self.process_capture(cloud)
 
         else:
             self.get_logger().error(
-                "Point-cloud timeout reached, but no "
-                "PointCloud2 messages were received."
+                "Point-cloud timeout reached, but no PointCloud2 messages were received."
             )
 
             # The RGB-D pipeline can still run.
@@ -706,9 +642,7 @@ class OneShotPipelineNode(Node):
         if cloud_msg is not None:
             cloud_ns = stamp_ns(cloud_msg)
 
-            delta_ms = abs(
-                cloud_ns - self.target_stamp_ns
-            ) / 1e6
+            delta_ms = abs(cloud_ns - self.target_stamp_ns) / 1e6
 
             self.get_logger().info(
                 "Selected point cloud:\n"
@@ -716,10 +650,7 @@ class OneShotPipelineNode(Node):
                 f"  delta = {delta_ms:.3f} ms"
             )
 
-            ply_path = (
-                self.pointcloud_dir
-                / "pointcloud0.ply"
-            )
+            ply_path = self.pointcloud_dir / "pointcloud0.ply"
 
             try:
                 self.save_pointcloud_ply(
@@ -727,14 +658,11 @@ class OneShotPipelineNode(Node):
                     ply_path,
                 )
             except Exception as exc:
-                self.get_logger().error(
-                    f"Could not save point cloud: {exc}"
-                )
+                self.get_logger().error(f"Could not save point cloud: {exc}")
 
         if not self.should_run_pipeline:
             self.get_logger().info(
-                "Frames captured, pipeline not run "
-                f"(run_pipeline is false): {self.output_dir}"
+                f"Frames captured, pipeline not run (run_pipeline is false): {self.output_dir}"
             )
             self.finished = True
             return
@@ -742,14 +670,10 @@ class OneShotPipelineNode(Node):
         try:
             self.run_pipeline()
 
-            self.get_logger().info(
-                f"Pipeline complete: {self.output_dir}"
-            )
+            self.get_logger().info(f"Pipeline complete: {self.output_dir}")
 
         except Exception as exc:
-            self.get_logger().error(
-                f"Pipeline failed: {exc}"
-            )
+            self.get_logger().error(f"Pipeline failed: {exc}")
             self.failed = True
 
         finally:
@@ -774,9 +698,7 @@ class OneShotPipelineNode(Node):
         If the PointCloud2 contains a conventional packed `rgb`
         or `rgba` field, RGB colors are saved as well.
         """
-        available_fields = {
-            field.name for field in cloud.fields
-        }
+        available_fields = {field.name for field in cloud.fields}
 
         required = {"x", "y", "z"}
 
@@ -806,18 +728,12 @@ class OneShotPipelineNode(Node):
         )
 
         # Drop invalid XYZ points.
-        valid = (
-            np.isfinite(points["x"])
-            & np.isfinite(points["y"])
-            & np.isfinite(points["z"])
-        )
+        valid = np.isfinite(points["x"]) & np.isfinite(points["y"]) & np.isfinite(points["z"])
 
         points = points[valid]
 
         if len(points) == 0:
-            raise ValueError(
-                "Point cloud contains no finite XYZ points."
-            )
+            raise ValueError("Point cloud contains no finite XYZ points.")
 
         has_color = color_field is not None
 
@@ -828,15 +744,9 @@ class OneShotPipelineNode(Node):
             # Others expose it directly as an integer.
             if packed.dtype.kind == "f":
                 if packed.dtype.itemsize != 4:
-                    raise ValueError(
-                        f"Unsupported {color_field} type: "
-                        f"{packed.dtype}"
-                    )
+                    raise ValueError(f"Unsupported {color_field} type: {packed.dtype}")
 
-                packed = (
-                    packed.astype(np.float32, copy=False)
-                    .view(np.uint32)
-                )
+                packed = packed.astype(np.float32, copy=False).view(np.uint32)
 
             else:
                 packed = packed.astype(
@@ -844,33 +754,31 @@ class OneShotPipelineNode(Node):
                     copy=False,
                 )
 
-            red = (
-                (packed >> 16) & 0xFF
-            ).astype(np.uint8)
+            red = ((packed >> 16) & 0xFF).astype(np.uint8)
 
-            green = (
-                (packed >> 8) & 0xFF
-            ).astype(np.uint8)
+            green = ((packed >> 8) & 0xFF).astype(np.uint8)
 
-            blue = (
-                packed & 0xFF
-            ).astype(np.uint8)
+            blue = (packed & 0xFF).astype(np.uint8)
 
-            ply_dtype = np.dtype([
-                ("x", "<f4"),
-                ("y", "<f4"),
-                ("z", "<f4"),
-                ("red", "u1"),
-                ("green", "u1"),
-                ("blue", "u1"),
-            ])
+            ply_dtype = np.dtype(
+                [
+                    ("x", "<f4"),
+                    ("y", "<f4"),
+                    ("z", "<f4"),
+                    ("red", "u1"),
+                    ("green", "u1"),
+                    ("blue", "u1"),
+                ]
+            )
 
         else:
-            ply_dtype = np.dtype([
-                ("x", "<f4"),
-                ("y", "<f4"),
-                ("z", "<f4"),
-            ])
+            ply_dtype = np.dtype(
+                [
+                    ("x", "<f4"),
+                    ("y", "<f4"),
+                    ("z", "<f4"),
+                ]
+            )
 
         ply_points = np.empty(
             len(points),
@@ -910,18 +818,11 @@ class OneShotPipelineNode(Node):
         )
 
         with open(path, "wb") as file:
-            file.write(
-                ("\n".join(header) + "\n").encode("ascii")
-            )
+            file.write(("\n".join(header) + "\n").encode("ascii"))
 
-            file.write(
-                ply_points.tobytes()
-            )
+            file.write(ply_points.tobytes())
 
-        self.get_logger().info(
-            f"Saved {len(ply_points)} points "
-            f"to {path}"
-        )
+        self.get_logger().info(f"Saved {len(ply_points)} points to {path}")
 
     # ------------------------------------------------------------------
     # Existing pipeline
@@ -931,16 +832,12 @@ class OneShotPipelineNode(Node):
         command = [
             sys.executable,
             str(self.pipeline_script),
-
             "--input-dir",
             str(self.rgb_dir),
-
             "--depth-dir",
             str(self.depth_dir),
-
             "--depth-source",
             "sensor",
-
             "--output-dir",
             str(self.output_dir),
         ]
@@ -950,9 +847,7 @@ class OneShotPipelineNode(Node):
         command.extend(self.pipeline_arguments)
 
         self.get_logger().info(
-            "Running segmentation -> annotation "
-            "-> depth pipeline:\n"
-            f"  {' '.join(command)}"
+            f"Running segmentation -> annotation -> depth pipeline:\n  {' '.join(command)}"
         )
 
         subprocess.run(
