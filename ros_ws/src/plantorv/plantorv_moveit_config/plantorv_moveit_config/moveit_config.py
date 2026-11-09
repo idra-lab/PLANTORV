@@ -26,7 +26,12 @@ different robot than move_group. They call this instead.
 from moveit_configs_utils import MoveItConfigsBuilder
 
 
-def build(sim_gazebo: str = "true", use_fake_hardware: str = "false", ur_type: str = "ur3"):
+def build(
+    sim_gazebo: str = "true",
+    use_fake_hardware: str = "false",
+    ur_type: str = "ur3",
+    attach_gripper: str = "true",
+):
     """Return the MoveIt configuration for the UR3 workcell.
 
     Parameters
@@ -40,6 +45,17 @@ def build(sim_gazebo: str = "true", use_fake_hardware: str = "false", ur_type: s
         Which UR the description is built for. Everything here is dimensioned
         for the UR3; the argument exists so the same configuration can be
         pointed at a larger arm without editing.
+    attach_gripper : str
+        ``"true"`` to build the description with the Robotiq 2f85 on tool0.
+        Has to match whatever the launch file that started
+        robot_state_publisher passed, or move_group and RViz plan against a
+        different robot than the one being published, which is the failure
+        this module exists to prevent.
+
+        Note that MoveIt then has finger_joint in its model and will not plan
+        until something publishes a state for it. Both plantorv_sim launch
+        files arrange that; see the note beside attach_gripper in
+        ur3_workcell.urdf.xacro.
     """
     return (
         MoveItConfigsBuilder("ur3_workcell", package_name="plantorv_moveit_config")
@@ -48,6 +64,7 @@ def build(sim_gazebo: str = "true", use_fake_hardware: str = "false", ur_type: s
                 "ur_type": ur_type,
                 "sim_gazebo": sim_gazebo,
                 "use_fake_hardware": use_fake_hardware,
+                "attach_gripper": attach_gripper,
             }
         )
         .robot_description_semantic(file_path="config/ur3_workcell.srdf")

@@ -34,6 +34,7 @@ def _setup(context, *args, **kwargs):
         sim_gazebo=LaunchConfiguration("sim_gazebo").perform(context),
         use_fake_hardware=LaunchConfiguration("use_fake_hardware").perform(context),
         ur_type=LaunchConfiguration("ur_type").perform(context),
+        attach_gripper=LaunchConfiguration("attach_gripper").perform(context),
     )
     use_sim_time = LaunchConfiguration("use_sim_time").perform(context).lower() == "true"
     rviz_config = os.path.join(
@@ -65,6 +66,12 @@ def generate_launch_description():
             DeclareLaunchArgument("sim_gazebo", default_value="true"),
             DeclareLaunchArgument("use_fake_hardware", default_value="false"),
             DeclareLaunchArgument("ur_type", default_value="ur3"),
+            DeclareLaunchArgument(
+                "attach_gripper",
+                default_value="true",
+                description="Build the description with the Robotiq 2f85 on tool0. "
+                "Must match what plantorv_sim was launched with.",
+            ),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             OpaqueFunction(function=_setup),
         ]

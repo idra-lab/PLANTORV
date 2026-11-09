@@ -114,6 +114,13 @@ def generate_launch_description():
             default_value="true",
             description="Run world_model, which answers object poses from scene.yaml",
         ),
+        DeclareLaunchArgument(
+            "attach_gripper",
+            default_value="true",
+            description="Put the Robotiq 2f85 on tool0 in the robot description. "
+            "Distinct from plantorv_planner's use_gripper, which decides whether "
+            "the planner calls the gripper service.",
+        ),
     ]
 
     robot_description = Command(
@@ -132,6 +139,8 @@ def generate_launch_description():
             LaunchConfiguration("robot_ip"),
             " headless_mode:=",
             LaunchConfiguration("headless_mode"),
+            " attach_gripper:=",
+            LaunchConfiguration("attach_gripper"),
         ]
     )
     description_param = {
@@ -219,6 +228,10 @@ def generate_launch_description():
     # drives the gripper over Modbus on the far side. So it is a plain node,
     # started alongside the driver, and it needs the same robot_ip.
     #
+    # It also polls the gripper's position register and publishes finger_joint
+    # on /joint_states, which is what moves the fingers in RViz, and what stops
+    # move_group waiting forever for a joint nothing reports.
+    #
     # It needs socat on the PATH and the RS485 URCap running on the pendant.
     # Neither can be checked from here; if the URCap is not running the node
     # fails to open the serial device and exits.
@@ -246,6 +259,30 @@ def generate_launch_description():
         ),
     )
 
+    # With the gripper in the description but no gripper to read, finger_joint
+    # would have no publisher, and move_group would not plan at all. This
+    # stands in whenever the real driver is not running, which in practice
+    # means use_fake_hardware, and answers the same service.
+    mock_gripper = Node(
+        package="gripper_robotiq_2f85",
+        executable="mock_robotiq_2f85",
+        name="robotiq_2f85",
+        output="screen",
+        condition=IfCondition(
+            PythonExpression(
+                [
+                    "'true' if ('",
+                    LaunchConfiguration("attach_gripper"),
+                    "' == 'true' and not ('",
+                    LaunchConfiguration("gripper"),
+                    "' == 'true' and '",
+                    LaunchConfiguration("use_fake_hardware"),
+                    "' != 'true')) else 'false'",
+                ]
+            )
+        ),
+    )
+
     world_model = Node(
         package="plantorv_sim",
         executable="world_model",
@@ -256,6 +293,13 @@ def generate_launch_description():
 
     return LaunchDescription(
         arguments
-        + [robot_state_publisher, control_node, joint_state_broadcaster, world_model, gripper]
+        + [
+            robot_state_publisher,
+            control_node,
+            joint_state_broadcaster,
+            world_model,
+            gripper,
+            mock_gripper,
+        ]
         + chain
     )

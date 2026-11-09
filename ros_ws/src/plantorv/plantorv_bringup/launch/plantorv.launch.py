@@ -148,6 +148,15 @@ def generate_launch_description():
             description="Start the Robotiq 2f85 driver alongside the arm.",
         ),
         DeclareLaunchArgument(
+            "attach_gripper",
+            default_value="true",
+            description="Put the Robotiq 2f85 on tool0 in the robot description, so "
+            "it is drawn in RViz and collision checked. Three separate switches "
+            "name the gripper and they do different things: this one models it, "
+            "`gripper` starts the driver that talks to it, and the planner's own "
+            "use_gripper decides whether anything calls the service.",
+        ),
+        DeclareLaunchArgument(
             "use_scaled_controller",
             default_value="false",
             description="Use ur_controllers/ScaledJointTrajectoryController on the real "
@@ -275,7 +284,11 @@ def generate_launch_description():
     simulation = _include(
         "plantorv_sim",
         "simulation.launch.py",
-        {"gui": LaunchConfiguration("gui"), "ur_type": LaunchConfiguration("ur_type")},
+        {
+            "gui": LaunchConfiguration("gui"),
+            "ur_type": LaunchConfiguration("ur_type"),
+            "attach_gripper": LaunchConfiguration("attach_gripper"),
+        },
         condition=UnlessCondition(real),
     )
 
@@ -289,6 +302,7 @@ def generate_launch_description():
             "headless_mode": LaunchConfiguration("headless_mode"),
             "use_scaled_controller": LaunchConfiguration("use_scaled_controller"),
             "gripper": LaunchConfiguration("gripper"),
+            "attach_gripper": LaunchConfiguration("attach_gripper"),
         },
         condition=IfCondition(real),
     )
@@ -307,13 +321,18 @@ def generate_launch_description():
                     ),
                     "use_fake_hardware": LaunchConfiguration("use_fake_hardware"),
                     "trajectory_controller": trajectory_controller,
+                    "attach_gripper": LaunchConfiguration("attach_gripper"),
                 },
                 condition=IfCondition(LaunchConfiguration("use_moveit")),
             ),
             _include(
                 "plantorv_moveit_config",
                 "moveit_rviz.launch.py",
-                {"ur_type": LaunchConfiguration("ur_type"), "use_sim_time": use_sim_time},
+                {
+                    "ur_type": LaunchConfiguration("ur_type"),
+                    "use_sim_time": use_sim_time,
+                    "attach_gripper": LaunchConfiguration("attach_gripper"),
+                },
                 condition=IfCondition(
                     PythonExpression(
                         [

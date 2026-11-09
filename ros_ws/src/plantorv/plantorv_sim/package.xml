@@ -19,6 +19,8 @@
   <exec_depend>gazebo_ros</exec_depend>
   <exec_depend>gazebo_ros2_control</exec_depend>
   <exec_depend>ur_description</exec_depend>
+  <exec_depend>gripper_robotiq_2f85_description</exec_depend>
+  <exec_depend>gripper_robotiq_2f85</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>controller_manager</exec_depend>

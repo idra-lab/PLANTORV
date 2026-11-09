@@ -51,4 +51,86 @@
   <disable_collisions link1="stand_link" link2="shoulder_link" reason="Never"/>
   <disable_collisions link1="table_link" link2="base_link_inertia" reason="Never"/>
 
+  <!-- The Robotiq 2F-85 on tool0, present whenever the description is built with
+       attach_gripper on, which is the default.
+
+       Every pair below was computed rather than guessed. The gripper is rigid
+       apart from finger_joint, and its five other revolute joints mimic that
+       one, so the relative pose of any two of these links is a function of a
+       single number. Sweeping it across the full travel, from open to closed,
+       and intersecting the collision meshes decides every pair outright. No
+       pair collided over only part of the range, so "Never" below is a property
+       of the mechanism rather than a sample that happened to miss.
+
+       What is deliberately still checked is the gripper against the rest of the
+       arm, the desk and the stand. That is the collision awareness worth having,
+       now that the tool reaches 16 cm past tool0.
+
+       With attach_gripper off, these pairs name links the URDF does not have,
+       and srdfdom says so once each, at warning level:
+
+         Link 'left_inner_finger' is not known to URDF. Cannot disable/enable
+         collisons.
+
+       It skips them and carries on, so the configuration still loads. Nine such
+       warnings on startup mean the description was built without the gripper,
+       not that anything is wrong here. -->
+
+  <!-- Bolted together, and so always in contact. -->
+  <disable_collisions link1="left_inner_finger" link2="left_inner_knuckle" reason="Adjacent"/>
+  <disable_collisions link1="left_inner_knuckle" link2="robotiq_85_base_link" reason="Adjacent"/>
+  <disable_collisions link1="left_outer_finger" link2="left_outer_knuckle" reason="Adjacent"/>
+  <disable_collisions link1="left_outer_knuckle" link2="robotiq_85_base_link" reason="Adjacent"/>
+  <disable_collisions link1="right_inner_finger" link2="right_inner_knuckle" reason="Adjacent"/>
+  <disable_collisions link1="right_inner_knuckle" link2="robotiq_85_base_link" reason="Adjacent"/>
+  <disable_collisions link1="right_outer_finger" link2="right_outer_knuckle" reason="Adjacent"/>
+  <disable_collisions link1="right_outer_knuckle" link2="robotiq_85_base_link" reason="Adjacent"/>
+
+  <!-- The gripper base overlaps the wrist it hangs from. There is no coupling
+       plate between the flange and robotiq_85_base_link in this model, so the
+       two meshes interpenetrate slightly where they meet. -->
+  <disable_collisions link1="robotiq_85_base_link" link2="wrist_3_link" reason="Adjacent"/>
+
+  <!-- The closing four bar. Each outer finger rides on its inner finger, so the
+       pair is in contact throughout the travel, and they are not parent and
+       child only because a URDF cannot state a closed loop. -->
+  <disable_collisions link1="left_inner_finger" link2="left_outer_finger" reason="Default"/>
+  <disable_collisions link1="right_inner_finger" link2="right_outer_finger" reason="Default"/>
+
+  <!-- Cannot meet at any opening. -->
+  <disable_collisions link1="left_inner_finger" link2="left_outer_knuckle" reason="Never"/>
+  <disable_collisions link1="left_inner_finger" link2="right_inner_finger" reason="Never"/>
+  <disable_collisions link1="left_inner_finger" link2="right_inner_knuckle" reason="Never"/>
+  <disable_collisions link1="left_inner_finger" link2="right_outer_finger" reason="Never"/>
+  <disable_collisions link1="left_inner_finger" link2="right_outer_knuckle" reason="Never"/>
+  <disable_collisions link1="left_inner_finger" link2="robotiq_85_base_link" reason="Never"/>
+  <disable_collisions link1="left_inner_finger" link2="wrist_3_link" reason="Never"/>
+  <disable_collisions link1="left_inner_knuckle" link2="left_outer_finger" reason="Never"/>
+  <disable_collisions link1="left_inner_knuckle" link2="left_outer_knuckle" reason="Never"/>
+  <disable_collisions link1="left_inner_knuckle" link2="right_inner_finger" reason="Never"/>
+  <disable_collisions link1="left_inner_knuckle" link2="right_inner_knuckle" reason="Never"/>
+  <disable_collisions link1="left_inner_knuckle" link2="right_outer_finger" reason="Never"/>
+  <disable_collisions link1="left_inner_knuckle" link2="right_outer_knuckle" reason="Never"/>
+  <disable_collisions link1="left_inner_knuckle" link2="wrist_3_link" reason="Never"/>
+  <disable_collisions link1="left_outer_finger" link2="right_inner_finger" reason="Never"/>
+  <disable_collisions link1="left_outer_finger" link2="right_inner_knuckle" reason="Never"/>
+  <disable_collisions link1="left_outer_finger" link2="right_outer_finger" reason="Never"/>
+  <disable_collisions link1="left_outer_finger" link2="right_outer_knuckle" reason="Never"/>
+  <disable_collisions link1="left_outer_finger" link2="robotiq_85_base_link" reason="Never"/>
+  <disable_collisions link1="left_outer_finger" link2="wrist_3_link" reason="Never"/>
+  <disable_collisions link1="left_outer_knuckle" link2="right_inner_finger" reason="Never"/>
+  <disable_collisions link1="left_outer_knuckle" link2="right_inner_knuckle" reason="Never"/>
+  <disable_collisions link1="left_outer_knuckle" link2="right_outer_finger" reason="Never"/>
+  <disable_collisions link1="left_outer_knuckle" link2="right_outer_knuckle" reason="Never"/>
+  <disable_collisions link1="left_outer_knuckle" link2="wrist_3_link" reason="Never"/>
+  <disable_collisions link1="right_inner_finger" link2="right_outer_knuckle" reason="Never"/>
+  <disable_collisions link1="right_inner_finger" link2="robotiq_85_base_link" reason="Never"/>
+  <disable_collisions link1="right_inner_finger" link2="wrist_3_link" reason="Never"/>
+  <disable_collisions link1="right_inner_knuckle" link2="right_outer_finger" reason="Never"/>
+  <disable_collisions link1="right_inner_knuckle" link2="right_outer_knuckle" reason="Never"/>
+  <disable_collisions link1="right_inner_knuckle" link2="wrist_3_link" reason="Never"/>
+  <disable_collisions link1="right_outer_finger" link2="robotiq_85_base_link" reason="Never"/>
+  <disable_collisions link1="right_outer_finger" link2="wrist_3_link" reason="Never"/>
+  <disable_collisions link1="right_outer_knuckle" link2="wrist_3_link" reason="Never"/>
+
 </robot>

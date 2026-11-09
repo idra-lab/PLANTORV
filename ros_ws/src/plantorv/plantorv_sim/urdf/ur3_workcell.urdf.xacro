@@ -56,6 +56,24 @@
   <xacro:arg name="use_fake_hardware" default="false"/>
   <xacro:arg name="robot_ip" default="0.0.0.0"/>
 
+  <!-- Bolt the Robotiq 2F-85 onto tool0. On by default, because the cell has
+       one fitted and a description without it understates how far the arm
+       reaches and what it can hit.
+
+       Named attach_gripper rather than use_gripper because plantorv_planner
+       already has a use_gripper, and it means something else. That one decides
+       whether the planner calls the gripper service; this one decides whether
+       the gripper is in the robot description at all. The two are independent.
+
+       Turning it off is not free of consequences either way, so both are worth
+       stating. With it on, MoveIt gains finger_joint and will not plan until
+       something publishes a state for it; hardware.launch.py's driver does
+       that from the gripper itself, and simulation.launch.py runs
+       mock_robotiq_2f85 for the same reason. With it off, those nodes are
+       publishing a joint the description does not have, which
+       robot_state_publisher merely warns about. -->
+  <xacro:arg name="attach_gripper" default="true"/>
+
   <!-- The three files the UR hardware interface reads at configure time. The
        ur_robot macro defaults them to the literal string
        'to_be_filled_by_ur_robot_driver', which is not a path, and the driver
@@ -200,7 +218,25 @@
   </xacro:ur_robot>
 
   <!-- Reported by the planner and used as the grasp frame. tool0 is where the
-       gripper would bolt on; the fake grasp attaches objects to it. -->
+       gripper bolts on; the fake grasp attaches objects to it.
+
+       The grasp frame is deliberately still tool0 and not the gripper's own
+       robotiq_85_tcp, 15.6 cm further out. Every taught pose in scene.yaml and
+       every offset in planner.yaml was measured against tool0, so moving the
+       grasp frame would silently shift all of them by the length of the
+       gripper. Changing it is a calibration decision, not a modelling one.
+
+       The mount is identity. The model starts at robotiq_85_base_link, with no
+       coupling plate between it and the flange, so if the real cell has one
+       fitted this is short by its thickness. -->
+  <xacro:if value="$(arg attach_gripper)">
+    <xacro:include
+      filename="$(find gripper_robotiq_2f85_description)/urdf/robotiq_2f85_macro.xacro"/>
+    <xacro:robotiq_2f85 prefix="$(arg tf_prefix)" parent="$(arg tf_prefix)tool0">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:robotiq_2f85>
+  </xacro:if>
+
 
   <!-- Loads controller_manager inside Gazebo and hands it the controller yaml.
        Without this the model spawns and the <ros2_control> block is parsed, but

@@ -61,6 +61,13 @@ def generate_launch_description():
             default_value="true",
             description="Run scene_manager and world_model alongside the simulator",
         ),
+        DeclareLaunchArgument(
+            "attach_gripper",
+            default_value="true",
+            description="Put the Robotiq 2f85 on tool0 in the robot description. "
+            "Distinct from plantorv_planner's use_gripper, which decides whether "
+            "the planner calls the gripper service.",
+        ),
     ]
 
     robot_description = Command(
@@ -73,6 +80,8 @@ def generate_launch_description():
             " ur_type:=",
             LaunchConfiguration("ur_type"),
             " sim_gazebo:=true",
+            " attach_gripper:=",
+            LaunchConfiguration("attach_gripper"),
         ]
     )
 
@@ -193,9 +202,29 @@ def generate_launch_description():
         for executable in ("world_model", "scene_manager")
     ]
 
+    # There is no gripper to talk to here, but finger_joint still has to be
+    # published, and for two separate reasons. move_group refuses to plan until
+    # every joint in the robot description has a state, so without this the
+    # simulated arm stops moving the moment the gripper is in the description.
+    # And watching the fingers close is most of the point of modelling them.
+    #
+    # It answers the same r2f85_gripper service as the real driver, so the
+    # behaviour tree does not have to know which one it is talking to.
+    #
+    # The fingers move in RViz and for MoveIt, not in Gazebo, which ignores the
+    # <mimic> tags the linkage is built from.
+    mock_gripper = Node(
+        package="gripper_robotiq_2f85",
+        executable="mock_robotiq_2f85",
+        name="robotiq_2f85",
+        output="screen",
+        parameters=[{"use_sim_time": True}],
+        condition=IfCondition(LaunchConfiguration("attach_gripper")),
+    )
+
     return LaunchDescription(
         arguments
-        + [gzserver, gzclient, robot_state_publisher, spawn_robot]
+        + [gzserver, gzclient, robot_state_publisher, spawn_robot, mock_gripper]
         + controllers
         + scene_nodes
     )

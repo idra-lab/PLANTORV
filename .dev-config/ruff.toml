@@ -9,6 +9,7 @@ extend-exclude = [
     "dataset",
     "final_fast_segmentation",
     "segmentation/checkpoints",
+    "ros_ws",
 ]
 
 [format]

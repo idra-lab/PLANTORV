@@ -121,12 +121,35 @@ single asymptotically optimal search, which spends its whole time budget every
 time. The descent onto an object and the retreat from it are Cartesian, not
 free-space, so the tool comes down on a cube rather than swinging into it.
 
-Grasping is faked, deliberately: there is no gripper. `pick` deletes the cube's
-Gazebo model and attaches it to `tool0` in the planning scene, so the arm
-carries it and keeps planning around it; `place` respawns it above the tray and
-lets it drop. That gets the pick-and-place logic right before any gripper
-dynamics are involved. The two gripper drivers already in this workspace
-(`gripper_robotiq_2f85`, `gripper_soft_mgrip_p2`) are what replace it.
+Grasping is faked, deliberately. `pick` deletes the cube's Gazebo model and
+attaches it to `tool0` in the planning scene, so the arm carries it and keeps
+planning around it; `place` respawns it above the tray and lets it drop. That
+gets the pick-and-place logic right before any gripper dynamics are involved.
+The two gripper drivers already in this workspace (`gripper_robotiq_2f85`,
+`gripper_soft_mgrip_p2`) are what replace it.
+
+The Robotiq 2F-85 is now in the robot description, on `tool0`, under
+`attach_gripper`, which defaults on. It is drawn in RViz, collision checked
+against the arm and the desk, and its fingers follow the `r2f85_gripper`
+service, whether that is answered by the real driver reading the gripper's
+position register or by `mock_robotiq_2f85` in simulation. Three switches
+mention the gripper and they are not the same one:
+
+| switch | what it decides |
+| --- | --- |
+| `attach_gripper` | whether the gripper is in the robot description |
+| `gripper` | whether the driver that talks to the hardware is started |
+| `use_gripper` (planner) | whether anything calls the gripper service |
+
+What has not changed is the grasp frame. The planner still works to `tool0`,
+not to the gripper's own `robotiq_85_tcp` 15.6 cm further out, because every
+taught pose was measured against `tool0`. Moving it is a calibration job.
+
+Two limits worth knowing. Gazebo ignores URDF `<mimic>` tags, so the fingers
+move in RViz and for MoveIt but not in the simulator, and the fake grasp above
+is still what picks things up there. And with `attach_gripper` on, MoveIt has
+`finger_joint` in its model and will not plan until something publishes a state
+for it, which is why both `plantorv_sim` launch files start a gripper node.
 
 ## The behaviour tree
 
