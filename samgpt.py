@@ -160,6 +160,8 @@ def parse_arguments() -> argparse.Namespace:
 
     return args
 
+    images = ["dataset/rgb/rgb_dataset_1.png"]
+    depth_path = ["dataset/depth/depth_dataset_1.png"]
 
 if __name__ == "__main__":
     start_all = time.time()
