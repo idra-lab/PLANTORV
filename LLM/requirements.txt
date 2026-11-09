@@ -1,0 +1,10 @@
+pyyaml
+dotenv
+pillow
+-r LLMAnthropic/requirements.txt
+-r LLMAzureOpenAI/requirements.txt
+-r LLMGemini/requirements.txt
+-r LLMGLM/requirements.txt
+-r LLMHuggingFace/requirements.txt
+-r LLMOpenAI/requirements.txt
+# -r LLMVLLM/requirements.txt

@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+
+  <BehaviorTree ID="MainTree">
+    <Sequence name="move_to_camera_point">
+      <Log message="Moving to yellow block"/>
+      <MoveToPoint x="-0.18237907859024536" y="0.4243560144607676" z="0.7887327857777712" frame="world" offset_z="0.18"/>
+      <Log message="Closing gripper"/>
+      <CloseGripper/>
+      <Log message="Moving to blue tray"/>
+      <MoveToPoint x="0.2462019866682284" y="0.45410899889295925" z="0.7500795557700103" frame="world" offset_z="0.22"/>
+      <Log message="Opening the gripper"/>
+      <OpenGripper/>
+      <Log message="Moving to red block"/>
+      <MoveToPoint x="0.03506451522016453" y="0.4594069650334083" z="0.7677319031395435" frame="world" offset_z="0.18"/>
+      <Log message="Closing gripper"/>
+      <CloseGripper/>
+      <Log message="Moving to blue tray above"/>
+      <MoveToPoint x="0.2462019866682284" y="0.45410899889295925" z="0.7500795557700103" frame="world" offset_z="0.27"/>
+      <Log message="Opening the gripper"/>
+      <OpenGripper/>
+      <Log message="Moving to orange block"/>
+      <MoveToPoint x="-0.14478929105510086" y="0.3090937647146074" z="0.7853631257106304" frame="world" offset_z="0.17"/>
+      <Log message="Closing gripper"/>
+      <CloseGripper/> 
+       <Log message="Moving to old red block position"/>
+      <MoveToPoint x="0.03506451522016453" y="0.4594069650334083" z="0.7677319031395435" frame="world" offset_z="0.18"/>
+      <Log message="Opening the gripper"/>
+      <OpenGripper/>
+      <Log message="Going home"/>
+      <Home/>
+    </Sequence>
+  </BehaviorTree>
+
+</root>

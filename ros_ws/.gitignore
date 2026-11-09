@@ -1,0 +1,16 @@
+# colcon's output is ignored by the repository's top-level .gitignore, along
+# with the rest of the ROS artefacts. This file exists for the other half of
+# the problem: that .gitignore is written for a Python project, and three of
+# its patterns would drop files this workspace needs.
+
+# `*.txt` (kept for requirements.txt only) would drop every package manifest.
+!**/CMakeLists.txt
+
+# `tests/` and `test*` would drop the test directories and every test file.
+!**/test/
+!**/test/**
+!**/test_*.py
+
+# ...but not the caches pytest leaves behind in them.
+**/__pycache__/
+*.py[cod]

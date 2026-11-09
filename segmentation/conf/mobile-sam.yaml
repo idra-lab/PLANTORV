@@ -1,0 +1,6 @@
+# The small encoder, so that a local annotator such as DAM-3B fits on the same card.
+MODEL: "sam"
+CHECKPOINT: "models/sam/mobile_sam.pt"
+
+SEGMENTATION_CONFIG:
+  points_stride: 12

@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!--
+  One joint-space move to the taught home configuration, and nothing else.
+
+  This is the tree to run on the real arm. It is the safest motion available
+  here, and for a concrete reason: `home` is the only action that does not go
+  through cartesian_motion_controller. It asks MoveIt for a joint-space plan,
+  and MoveIt collision-checks that plan against the table, the pedestal and the
+  trays, all of which are in the robot description. Every other action streams
+  Cartesian targets to a controller that checks nothing, and the planner's own
+  workspace guard only watches where tool0 goes, not where the elbow goes to
+  put it there.
+
+  The path is still not fixed. OMPL is a sampling planner, so two runs from the
+  same place differ; the planner asks for six plans and keeps the shortest,
+  which removes the worst of it but not all. Keep the pendant slider low and
+  watch it.
+
+  The destination is the configuration in
+  plantorv_sim/config/initial_positions.yaml, the SRDF and planner.yaml:
+  90.37, -107.23, -85.97, -80.84, 90.11, 2.16 degrees, which puts tool0 at
+  world (0.110, 0.360, 1.223) pointing down, 0.47 m clear of the table.
+-->
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+
+  <BehaviorTree ID="MainTree">
+    <Sequence name="just_go_home">
+      <Log message="joint-space move to the taught home configuration"/>
+      <Home/>
+    </Sequence>
+  </BehaviorTree>
+
+</root>

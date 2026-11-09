@@ -1,0 +1,61 @@
+# Few-shot pairs for the stage 1 scene inventory prompt.
+#
+# Stage 1 asks a VLM for the list of noun phrases stage 2 is prompted with, where
+# stage 2 is SAM 3 driven through `SAM3SemanticPredictor`. SAM 3 returns *every*
+# region matching a phrase, so a phrase has to settle two things at once:
+#
+# - *what* the thing is, by appearance alone. Anything that singles out one
+#   instance - a position, an ordinal, a count, a relative clause - has nothing to
+#   ground against, and narrows a phrase that was meant to cover all of them.
+# - *what counts as one* of them. This is the one that bites. "lego block" matches
+#   a single brick, a stack of two bricks, and the whole tower they are built
+#   into, and nothing in the phrase says which level was meant, so SAM 3 returns
+#   all of them: overlapping, nested, and impossible to deduplicate afterwards
+#   because a part inside a whole has a low IoU with it.
+#
+# Naming the assembly instead of the pieces fixes the second problem, which is
+# why the good phrases below are more specific than a category name, not less.
+#
+# The specific, relational language is not lost, it just moves: it is what the
+# annotator produces later from the crop plus the full scene, in
+# `scene_understanding/gpt_annotator.py`.
+#
+# Schema
+# ------
+# pairs:
+#   - good: the phrase to emit
+#     bad:  a plausible phrasing of the same thing that does not work
+#     why:  one line on what makes `bad` fail, shown to the model alongside it
+
+pairs:
+  - good: "tall green tower"
+    bad: "lego block"
+    why: "one brick, a stack of two, and the whole tower all match it; nothing says which was meant"
+
+  - good: "red structure"
+    bad: "red bricks"
+    why: "names the pieces instead of the thing they are assembled into"
+
+  - good: "long blue object"
+    bad: "the long blue object on the left"
+    why: "position singles out one instance; every match is returned anyway"
+
+  - good: "metallic wrench"
+    bad: "a wrench lying next to the red box"
+    why: "a relation to another object cannot be seen in the wrench itself"
+
+  - good: "orange box"
+    bad: "orange box with its lid open"
+    why: "a passing state rather than what the thing is"
+
+  - good: "black bottle"
+    bad: "the two black bottles"
+    why: "counting is the segmenter's job, not the phrase's"
+
+  - good: "yellow structure"
+    bad: "yellow structure, red structure"
+    why: "one thing per phrase, list the second one separately"
+
+  - good: "robotic arm"
+    bad: "the arm the task needs first"
+    why: "names a role in the task instead of something visible"

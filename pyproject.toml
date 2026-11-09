@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plantorv"
+version = "0.1.0"
+description = "Object segmentation, VLM tagging, and depth estimation pipeline."
+
+requires-python = ">=3.10,<3.13"
+
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "pyright",
+    "pre-commit",
+    "pandas-stubs",
+    "sphinx",
+    "furo",
+    "myst-parser",
+    "sphinx-autobuild",
+]
+
+depth-anything = [
+    "transformers>=5.16",
+]
+
+[tool.setuptools]
+packages = ["segmentation", "scene_understanding", "mapping", "aruco", "evaluation", "utility", "pipeline", "LLM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# segment_pcd.py is a top-level script, not part of an installed package, so the
+# repo root has to be importable for tests that exercise it.
+pythonpath = ["."]
+
+# Linter/type-checker settings live in .dev-config/ to keep this file focused on packaging. 
+[tool.ruff]
+extend = ".dev-config/ruff.toml"
+
+[tool.pyright]
+extends = ".dev-config/pyrightconfig.json"

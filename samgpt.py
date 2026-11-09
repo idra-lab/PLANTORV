@@ -1,1221 +1,174 @@
-"""Legacy combined RGB segmentation, depth mapping, and GPT tagging pipeline."""
+"""Run the three pipeline stages back to back over a dataset.
 
-import base64
-import json
-import mimetypes
-import os
+This is the whole pipeline in one command, kept for the runs where nothing is
+being swapped: it segments every frame, annotates the objects and measures their
+depth, into a single ``--output-dir``.
+
+The work itself lives in the three stage scripts, and they are the ones to reach
+for while a model is being tried out, since each reads what the previous one left
+on disk::
+
+    python3 segmentation.py     --input-dir dataset/rgb --output-dir run
+    python3 annotation.py       --input-dir run/output_segmentation --output-dir run
+    python3 depth_estimation.py --input-dir run/output_segmentation --output-dir run
+
+Segmenting is the expensive step and nothing but ``segmentation.py`` does it, so
+trying a second annotator, or a second depth backend, costs one run of that stage
+alone. Both write to ``<output-dir>/output_img<frame-id>.json``, each filling its
+own fields, which is the file ``evaluation/run_evaluation.py`` reads.
+
+Examples
+--------
+Run everything over the dataset with the default models::
+
+    python3 samgpt.py --input-dir dataset/rgb --output-dir output
+
+Run everything with Describe Anything and estimated depth::
+
+    python3 samgpt.py --annotator dam --depth-source monocular --output-dir output_dam
+
+Each stage writes what it was configured with next to what it produced, as
+``segmentation_config.yaml``, ``annotation_config.yaml`` and ``depth_config.yaml``.
+"""
+
+import argparse
+import importlib.util
+import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from types import ModuleType
 
-import cv2
-import dotenv
-import numpy as np
-import torch
-from openai import AzureOpenAI
-from PIL import Image
-from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
-from skimage import measure
-from skimage.morphology import dilation, disk, erosion, remove_small_objects
+from pipeline import artifacts, cli
+from utility.utility import logger
 
 
-class SAMModel:
-    """Segment objects with SAM and prepare crops for downstream tagging."""
+def load_stage(name: str) -> ModuleType:
+    """Import a stage script by its file name.
 
-    def __init__(
-        self,
-        sam_checkpoint: str,
-        model_type: str,
-        device: Optional[str] = "cuda",
-        points_per_side: Optional[int] = 36,
-    ):
-        """Initialize the SAM mask generator.
+    ``segmentation.py`` sits next to the ``segmentation/`` package, and a plain
+    ``import segmentation`` resolves to the package, so the stages are loaded from
+    their paths rather than by name.
 
-        Parameters
-        ----------
-        sam_checkpoint : str
-            Path to the SAM checkpoint.
-        model_type : str
-            SAM model type. Expected values are ``"vit_b"``, ``"vit_l"``, or
-            ``"vit_h"``.
-        device : str, optional
-            Device used for inference.
-        points_per_side : int, optional
-            Number of prompt points sampled per image side by the automatic
-            mask generator.
-        """
-        self.sam_checkpoint = sam_checkpoint
-        self.model_type = model_type
-        self.device = device
-        self.sam = sam_model_registry[model_type](sam_checkpoint)
-        self.sam.to(device=device)
-        self.mask_generator = SamAutomaticMaskGenerator(self.sam, points_per_side=points_per_side)
+    Parameters
+    ----------
+    name : str
+        The stage file, without its extension.
 
-    def sam_mask_to_pil(self, mask_bool) -> Image.Image:
-        """Convert a SAM boolean mask to a grayscale PIL image.
+    Returns
+    -------
+    ModuleType
+        The imported module.
+    """
+    path = Path(__file__).resolve().parent / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"stage_{name}", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load the stage {path}")
 
-        Parameters
-        ----------
-        mask_bool : numpy.ndarray
-            Two-dimensional boolean SAM mask with shape ``(H, W)``.
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
 
-        Returns
-        -------
-        PIL.Image.Image
-            Grayscale mask image with pixel values ``0`` and ``255``.
-        """
-        mask_uint8 = (mask_bool.astype(np.uint8)) * 255
-        return Image.fromarray(mask_uint8)
+    return module
 
-    def preprocess_mask(self, mask, rgb, f) -> np.ndarray:
-        """Clean and invert a coarse mask before the second SAM pass.
 
-        Parameters
-        ----------
-        mask : numpy.ndarray
-            Coarse binary mask to clean, with shape ``(H, W)``.
-        rgb : numpy.ndarray or PIL.Image.Image
-            RGB image to multiply by the cleaned mask.
-        f : int
-            Image index used when saving visualizations.
+def main(args: argparse.Namespace) -> None:
+    """Run segmentation, annotation and depth estimation in that order.
 
-        Returns
-        -------
-        masked_rgb : numpy.ndarray
-            RGB image after applying the inverted keep-mask, with shape
-            ``(H, W, 3)``.
-        mask_bin : numpy.ndarray
-            Inverted binary keep-mask with shape ``(H, W, 1)`` and values
-            ``0`` and ``1``.
-        """
-        mask = mask.astype(np.uint8) * 255
-        mask_bin = (mask > 0).astype(np.uint8)
-        mask_blur = cv2.GaussianBlur(mask_bin * 255, (7, 7), 4)
-        mask_blur = (mask_blur > 0).astype(np.uint8)
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments.
+    """
+    cli.setup(args)
 
-        label_image = measure.label(mask_blur)
+    output_dir = Path(args.output_dir)
+    segmentation_dir = output_dir / artifacts.SEGMENTATION_SUBDIR
 
-        label_image = remove_small_objects(label_image, min_size=3500)
+    # The frames were just segmented from --input-dir, so the paths recorded for
+    # them are current and the later stages need no override.
+    args.images_dir = None
 
-        label_image = erosion(label_image, disk(9))
-        label_image = dilation(label_image, disk(3))
+    stages = [
+        ("segmentation", args.input_dir),
+        ("annotation", segmentation_dir),
+        ("depth_estimation", segmentation_dir),
+    ]
 
-        label_image = measure.label(label_image)
-        mask_clean = (label_image > 0).astype(np.uint8) * 255
-        mask_bin = (mask_clean > 0).astype(np.uint8)[..., None]
-        mask_bin = 1 - mask_bin
-        masked_rgb = rgb * mask_bin
-        ref_img = Image.fromarray(masked_rgb.astype("uint8"))
-        # ref_img.save(f"masked_rgb{f}.png")
-        return masked_rgb, mask_bin
-
-    def cropping_mask(self, masks, rgb, alpha=1.4, beta=25):
-        """Crop a mask and matching RGB region, then upscale and sharpen it.
-
-        Parameters
-        ----------
-        masks : numpy.ndarray or PIL.Image.Image
-            Binary mask used to find the crop bounds.
-        rgb : numpy.ndarray or PIL.Image.Image
-            RGB image from which the matching crop is extracted.
-        alpha : float, optional
-            Contrast multiplier passed to ``cv2.convertScaleAbs``.
-        beta : float, optional
-            Brightness offset passed to ``cv2.convertScaleAbs``.
-
-        Returns
-        -------
-        mask_crop : numpy.ndarray
-            Cropped and upscaled binary mask with values ``0`` and ``255``.
-        rgb_crop : numpy.ndarray
-            Cropped, upscaled, contrast-adjusted, and sharpened RGB image.
-        """
-        masks = np.array(masks)
-        rgb = np.array(rgb)
-        ys, xs = np.where(masks > 0)
-        top_y = ys.min()
-        bot_y = ys.max() + 1
-        left_x = xs.min()
-        right_x = xs.max() + 1
-
-        mask_crop = masks[top_y:bot_y, left_x:right_x]
-        mask_crop = cv2.resize(mask_crop, None, fx=2, fy=2, interpolation=cv2.INTER_LANCZOS4)
-        mask_crop = (mask_crop > 0).astype(np.uint8) * 255  # for being binary
-        mask_rgb = rgb[top_y:bot_y, left_x:right_x, :]
-        rgb_crop = cv2.convertScaleAbs(mask_rgb, alpha=alpha, beta=beta)
-        KERNEL = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-        rgb_crop = cv2.resize(rgb_crop, None, fx=2, fy=2, interpolation=cv2.INTER_LANCZOS4)
-        rgb_crop = cv2.filter2D(rgb_crop, -1, KERNEL)
-
-        return mask_crop, rgb_crop
-
-    def remove_bg(self, image, idx):
-        """Remove the coarse SAM background region from an RGB image.
-
-        Parameters
-        ----------
-        image : str
-            Path to the RGB image.
-        idx : int
-            Image index used when saving visualizations.
-
-        Returns
-        -------
-        masked_rgb : numpy.ndarray
-            RGB image after applying the inverted keep-mask, with shape
-            ``(H, W, 3)``.
-        mask_bin : numpy.ndarray
-            Inverted binary keep-mask with shape ``(H, W, 1)`` and values
-            ``0`` and ``1``.
-        """
+    for name, stage_input in stages:
+        logger.info(f"Running {name}")
         start = time.time()
-        image_read = Image.open(image)
-        image_np = np.array(image_read)
-        H, W, D = image_np.shape
-        masks_sam = self.mask_generator.generate(image_np)
-        all_masks = []
-        all_bboxes = []
-        del_id = []
-        for m in masks_sam:
-            all_masks.append(m["segmentation"])
-            all_bboxes.append(m["bbox"])
-
-        for i, mask in enumerate(all_masks):
-            masked = self.sam_mask_to_pil(mask)
-            masked = masked.resize((W, H))
-            masked_np = np.array(masked)
-            num_pixels = np.sum(masked_np > 0)
-            area_mask = num_pixels * 100 / (H * W)
-            print(f"mask_{i}:{area_mask}")
-            if area_mask < 15:
-                print("delete")
-                del_id.append(i)
-        masks = np.delete(all_masks, del_id, axis=0)
-        h, w = masks[0].shape
-        union_mask = np.zeros((h, w), dtype=np.uint8)
-
-        for m in masks:
-            union_mask |= m
-
-        masked_rgb, mask_bin = self.preprocess_mask(union_mask, image_read, idx)
-        end = time.time()
-        print(f"BG mask obtained in {end - start}s")
-
-        return masked_rgb, mask_bin
-
-    def individual_mask(self, mask_bin, mask_rgb, rgb, idx):
-        """Generate and filter individual object masks inside the kept region.
-
-        Parameters
-        ----------
-        mask_bin : numpy.ndarray
-            Inverted binary keep-mask with shape ``(H, W, 1)``.
-        mask_rgb : numpy.ndarray
-            RGB image produced by :meth:`remove_bg`, with shape ``(H, W, 3)``.
-        rgb : str
-            Path to the original RGB image.
-        idx : int
-            Image index used in saved crop names.
-
-        Returns
-        -------
-        rgb_masks : list[numpy.ndarray]
-            Cropped RGB images for accepted object masks.
-        bboxes : numpy.ndarray
-            Bounding boxes for accepted masks. Each row is
-            ``[x_min, y_min, width, height]``.
-        masks_path : list[str]
-            Paths where accepted cropped object images were saved.
-        """
-        start = time.time()
-        H, W = mask_rgb.shape[:2]
-        masks_sam = self.mask_generator.generate(mask_rgb)
-        all_masks = []
-        all_bboxes = []
-        rgb_masks = []
-        masks_path = []
-        del_id = []
-        rgb = Image.open(rgb)
-        mask_bin = mask_bin[..., 0]
-        for m in masks_sam:
-            all_masks.append(m["segmentation"])
-            all_bboxes.append(m["bbox"])
-
-        for i, masked in enumerate(all_masks):
-            masked = self.sam_mask_to_pil(masked)
-            masked = masked.resize((W, H))
-
-            intersection = np.logical_and(masked, mask_bin)
-            union = np.logical_or(masked, mask_bin)
-            iou = np.sum(intersection) / np.sum(union) if np.sum(union) > 0 else 0
-
-            num_pixels = np.sum(intersection > 0)
-            # Image.fromarray(intersection).save(f"intersection_{idx}_{i}.png")
-            area_mask = num_pixels * 100 / (H * W)
-            print(f"mask_{i}:{np.round(area_mask, 5)}%, iou: {np.round(iou, 5)}")
-            if area_mask < 0.3 or area_mask > 2 or iou < 0.065:
-                del_id.append(i)
-                print("delete")
-            else:
-                save_path = f"final_fast_segmentation/mask{idx}_samrgbcrop_{i}.png"
-                masks_path.append(save_path)
-                mask_crop, rgb_crop = self.cropping_mask(masked, rgb)
-                rgb_masks.append(rgb_crop)
-                Image.fromarray(rgb_crop).save(save_path)
-
-        bboxes = np.delete(all_bboxes, del_id, axis=0)
-        end = time.time()
-        print(f"Individual masks obtained in {end - start}s")
-
-        # save_masks(mask_crop,idx,W,H)
-
-        return rgb_masks, bboxes, masks_path
+        load_stage(name).run(stage_input, output_dir, args)
+        logger.info(f"{name} done in {time.time() - start}s")
 
 
-@dataclass(frozen=True)
-class Intrinsics:
-    """Camera intrinsic parameters.
-
-    Attributes
-    ----------
-    cx, cy : float
-        Principal point coordinates in pixels.
-    fx, fy : float
-        Focal lengths in pixels.
-    width, height : int
-        Image size associated with the intrinsics.
-    """
-
-    cx: float
-    cy: float
-    fx: float
-    fy: float
-    width: int
-    height: int
-
-
-@dataclass(frozen=True)
-class Distortion:
-    """Camera distortion parameters.
-
-    Attributes
-    ----------
-    k1, k2, k3, k4, k5, k6 : float
-        Radial distortion coefficients.
-    p1, p2 : float
-        Tangential distortion coefficients.
-    """
-
-    k1: float
-    k2: float
-    k3: float
-    k4: float
-    k5: float
-    k6: float
-    p1: float
-    p2: float
-
-
-@dataclass(frozen=True)
-class CalibrationSet:
-    """Calibration parameters for one depth/RGB resolution pair.
-
-    Attributes
-    ----------
-    depth_distortion, rgb_distortion : Distortion
-        Distortion parameters for the depth and RGB cameras.
-    depth_intrinsic, rgb_intrinsic : Intrinsics
-        Intrinsic parameters for the depth and RGB cameras.
-    rot : numpy.ndarray
-        Rotation matrix from depth coordinates to RGB coordinates, with shape
-        ``(3, 3)``.
-    trans : numpy.ndarray
-        Translation vector from depth coordinates to RGB coordinates, with
-        shape ``(3,)``.
-    """
-
-    depth_distortion: Distortion
-    depth_intrinsic: Intrinsics
-    rgb_distortion: Distortion
-    rgb_intrinsic: Intrinsics
-    rot: np.ndarray  # 3x3
-    trans: np.ndarray  # 3,
-
-
-@dataclass(frozen=True)
-class AlignProfile:
-    """Resolution-specific depth/RGB alignment profile.
-
-    Attributes
-    ----------
-    align_type : int
-        Alignment profile type.
-    color_width, color_height : int
-        RGB resolution.
-    depth_width, depth_height : int
-        Depth resolution.
-    param_index : int
-        Index into the hardcoded calibration table.
-    align_left, align_top, align_right, align_bottom : int
-        Alignment crop or offset metadata from the camera profile.
-    depth_scale : float
-        Profile depth scaling value.
-    """
-
-    align_type: int
-    color_width: int
-    color_height: int
-    depth_width: int
-    depth_height: int
-    param_index: int
-    align_left: int
-    align_top: int
-    align_right: int
-    align_bottom: int
-    depth_scale: float
-
-
-_ROT = np.asarray(
-    [
-        [0.994558, -0.00445435, 0.00197944],
-        [0.00422393, 0.99455, 0.104173],
-        [-0.00243268, -0.104163, 0.994557],
-    ],
-    dtype=np.float64,
-)
-_TRANS = np.asarray([-32.6072, -0.835282, 1.99768], dtype=np.float64)
-
-_DEPTH_DIST = Distortion(
-    k1=20.449,
-    k2=9.65474,
-    k3=0.311488,
-    k4=20.7575,
-    k5=16.556,
-    k6=2.11015,
-    p1=5.12616e-05,
-    p2=-8.77438e-06,
-)
-
-_RGB_DIST = Distortion(
-    k1=0.0767264,
-    k2=-0.104236,
-    k3=0.0419684,
-    k4=0.0,
-    k5=0.0,
-    k6=0.0,
-    p1=0.000112286,
-    p2=-6.58385e-05,
-)
-
-_HARDCODED_CALIBRATIONS: List[CalibrationSet] = [
-    CalibrationSet(
-        depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(
-            cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024
-        ),
-        rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(
-            cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360
-        ),
-        rot=_ROT,
-        trans=_TRANS,
-    ),
-    CalibrationSet(
-        depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(
-            cx=516.94, cy=519.187, fx=504.676, fy=504.768, width=1024, height=1024
-        ),
-        rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(
-            cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480
-        ),
-        rot=_ROT,
-        trans=_TRANS,
-    ),
-    CalibrationSet(
-        depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(
-            cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576
-        ),
-        rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(
-            cx=320.734, cy=176.424, fx=373.497, fy=373.414, width=640, height=360
-        ),
-        rot=_ROT,
-        trans=_TRANS,
-    ),
-    CalibrationSet(
-        depth_distortion=_DEPTH_DIST,
-        depth_intrinsic=Intrinsics(
-            cx=324.94, cy=339.187, fx=504.676, fy=504.768, width=640, height=576
-        ),
-        rgb_distortion=_RGB_DIST,
-        rgb_intrinsic=Intrinsics(
-            cx=320.978, cy=235.232, fx=497.996, fy=497.886, width=640, height=480
-        ),
-        rot=_ROT,
-        trans=_TRANS,
-    ),
-]
-
-_HARDCODED_PROFILES: List[AlignProfile] = [
-    AlignProfile(1, 3840, 2160, 1024, 1024, 0, 0, 0, 0, -1680, 3.75),
-    AlignProfile(1, 2560, 1440, 1024, 1024, 0, 0, 0, 0, -1120, 2.5),
-    AlignProfile(1, 1920, 1080, 1024, 1024, 0, 0, 0, 0, -840, 1.875),
-    AlignProfile(1, 1280, 720, 1024, 1024, 0, 0, 0, 0, -560, 1.25),
-    AlignProfile(1, 3840, 2160, 512, 512, 0, 0, 0, 0, -1680, 7.5),
-    AlignProfile(1, 2560, 1440, 512, 512, 0, 0, 0, 0, -1120, 5.0),
-    AlignProfile(1, 1920, 1080, 512, 512, 0, 0, 0, 0, -840, 3.75),
-    AlignProfile(1, 1280, 720, 512, 512, 0, 0, 0, 0, -560, 2.5),
-    AlignProfile(1, 3840, 2160, 640, 576, 2, 0, 0, 0, -1296, 6.0),
-    AlignProfile(1, 2560, 1440, 640, 576, 2, 0, 0, 0, -864, 4.0),
-    AlignProfile(1, 1920, 1080, 640, 576, 2, 0, 0, 0, -648, 3.0),
-    AlignProfile(1, 1280, 720, 640, 576, 2, 0, 0, 0, -432, 2.0),
-    AlignProfile(1, 3840, 2160, 320, 288, 2, 0, 0, 0, -1296, 12.0),
-    AlignProfile(1, 2560, 1440, 320, 288, 2, 0, 0, 0, -864, 8.0),
-    AlignProfile(1, 1920, 1080, 320, 288, 2, 0, 0, 0, -648, 6.0),
-    AlignProfile(1, 1280, 720, 320, 288, 2, 0, 0, 0, -432, 4.0),
-    AlignProfile(1, 1280, 960, 1024, 1024, 1, 0, 0, 0, -320, 1.25),
-    AlignProfile(1, 1280, 960, 512, 512, 1, 0, 0, 0, -320, 2.5),
-    AlignProfile(1, 1280, 960, 640, 576, 3, 0, 0, 0, -192, 2.0),
-    AlignProfile(1, 1280, 960, 320, 288, 3, 0, 0, 0, -192, 4.0),
-    AlignProfile(2, 3840, 2160, 1024, 1024, 0, 0, 0, 0, 0, 6.0),
-]
-
-
-def _distort_normalized(
-    x: np.ndarray, y: np.ndarray, d: Distortion
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Apply radial and tangential distortion to normalized points.
-
-    Parameters
-    ----------
-    x, y : numpy.ndarray
-        Undistorted normalized coordinates.
-    d : Distortion
-        Distortion coefficients.
+def parse_arguments() -> argparse.Namespace:
+    """Parse command-line arguments.
 
     Returns
     -------
-    x_distorted, y_distorted : tuple[numpy.ndarray, numpy.ndarray]
-        Distorted normalized coordinates.
+    argparse.Namespace
+        Parsed command-line arguments.
     """
-    r2 = x * x + y * y
-    r4 = r2 * r2
-    r6 = r4 * r2
-    num = 1.0 + d.k1 * r2 + d.k2 * r4 + d.k3 * r6
-    den = 1.0 + d.k4 * r2 + d.k5 * r4 + d.k6 * r6
-    radial = num / den
-    x_tan = 2.0 * d.p1 * x * y + d.p2 * (r2 + 2.0 * x * x)
-    y_tan = d.p1 * (r2 + 2.0 * y * y) + 2.0 * d.p2 * x * y
-    return x * radial + x_tan, y * radial + y_tan
-
-
-def _undistort_pixels_to_normalized(
-    u: np.ndarray,
-    v: np.ndarray,
-    intr: Intrinsics,
-    dist: Distortion,
-    iters: int = 8,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Convert distorted pixels to undistorted normalized coordinates.
-
-    Parameters
-    ----------
-    u, v : numpy.ndarray
-        Distorted pixel coordinates.
-    intr : Intrinsics
-        Camera intrinsic parameters.
-    dist : Distortion
-        Camera distortion parameters.
-    iters : int, optional
-        Number of fixed-point refinement iterations.
-
-    Returns
-    -------
-    x, y : tuple[numpy.ndarray, numpy.ndarray]
-        Undistorted normalized coordinates.
-    """
-    xd = (u - intr.cx) / intr.fx
-    yd = (v - intr.cy) / intr.fy
-
-    # Fixed-point refinement for inverse distortion.
-    xu = xd.copy()
-    yu = yd.copy()
-    for _ in range(iters):
-        x_est, y_est = _distort_normalized(xu, yu, dist)
-        xu += xd - x_est
-        yu += yd - y_est
-    return xu, yu
-
-
-def _project_to_pixels(
-    x: np.ndarray,
-    y: np.ndarray,
-    intr: Intrinsics,
-    dist: Distortion,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Project normalized coordinates to distorted image pixels.
-
-    Parameters
-    ----------
-    x, y : numpy.ndarray
-        Undistorted normalized coordinates.
-    intr : Intrinsics
-        Camera intrinsic parameters.
-    dist : Distortion
-        Camera distortion parameters.
-
-    Returns
-    -------
-    u, v : tuple[numpy.ndarray, numpy.ndarray]
-        Distorted pixel coordinates.
-    """
-    xd, yd = _distort_normalized(x, y, dist)
-    u = intr.fx * xd + intr.cx
-    v = intr.fy * yd + intr.cy
-    return u, v
-
-
-class DepthRgbMapper:
-    """Map depth pixels into the RGB camera frame."""
-
-    def __init__(self, calibration: CalibrationSet, profile: Optional[AlignProfile] = None):
-        """Initialize a depth/RGB mapper.
-
-        Parameters
-        ----------
-        calibration : CalibrationSet
-            Calibration parameters used for projection.
-        profile : AlignProfile, optional
-            Resolution-specific alignment profile.
-        """
-        self.calibration = calibration
-        self.profile = profile
-
-    @classmethod
-    def from_hardcoded(
-        cls,
-        color_size: Tuple[int, int],
-        depth_size: Tuple[int, int],
-        align_type_preference: Sequence[int] = (1, 2),
-    ) -> "DepthRgbMapper":
-        """Create a mapper from the built-in calibration tables.
-
-        Parameters
-        ----------
-        color_size : tuple[int, int]
-            RGB image size as ``(width, height)``.
-        depth_size : tuple[int, int]
-            Depth image size as ``(width, height)``.
-        align_type_preference : sequence[int], optional
-            Preferred alignment profile types, checked in order.
-
-        Returns
-        -------
-        DepthRgbMapper
-            Mapper configured for the requested resolution pair.
-
-        Raises
-        ------
-        ValueError
-            If no built-in calibration or profile matches the requested sizes.
-        """
-        calibrations = _HARDCODED_CALIBRATIONS
-        profiles = _HARDCODED_PROFILES
-        cw, ch = color_size
-        dw, dh = depth_size
-
-        matched_profile: Optional[AlignProfile] = None
-        for pref in align_type_preference:
-            for p in profiles:
-                if (
-                    p.align_type == pref
-                    and p.color_width == cw
-                    and p.color_height == ch
-                    and p.depth_width == dw
-                    and p.depth_height == dh
-                ):
-                    matched_profile = p
-                    break
-            if matched_profile is not None:
-                break
-
-        if matched_profile is not None:
-            idx = matched_profile.param_index
-            if idx < 0 or idx >= len(calibrations):
-                raise ValueError(f"Profile paramIndex={idx} out of range for calibration list")
-            return cls(calibrations[idx], matched_profile)
-
-        for c in calibrations:
-            if (
-                c.rgb_intrinsic.width == cw
-                and c.rgb_intrinsic.height == ch
-                and c.depth_intrinsic.width == dw
-                and c.depth_intrinsic.height == dh
-            ):
-                return cls(c, None)
-
-        raise ValueError(
-            "No matching hardcoded calibration/profile found for requested color/depth resolution pair"
-        )
-
-    def align_depth_to_color_with_correspondence(
-        self,
-        depth_image: np.ndarray,
-        depth_unit_scale: float = 1.0,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Project a raw depth image into the RGB camera plane.
-
-        Parameters
-        ----------
-        depth_image : numpy.ndarray
-            Two-dimensional depth image from the depth sensor.
-        depth_unit_scale : float, optional
-            Scale that converts depth image units to millimeters. Use ``1.0``
-            when the image is already in millimeters.
-
-        Returns
-        -------
-        aligned_depth_mm : numpy.ndarray
-            RGB-aligned depth image in millimeters, with shape
-            ``(color_height, color_width)`` and dtype ``float32``.
-        src_u_map : numpy.ndarray
-            Source depth-column map for each RGB pixel, with ``-1`` where no
-            source pixel is valid.
-        src_v_map : numpy.ndarray
-            Source depth-row map for each RGB pixel, with ``-1`` where no
-            source pixel is valid.
-
-        Raises
-        ------
-        ValueError
-            If ``depth_image`` is not a 2D image or its shape does not match
-            the selected calibration.
-        """
-        c = self.calibration
-        if depth_image.ndim != 2:
-            raise ValueError("depth_image must be a 2D array")
-
-        h, w = depth_image.shape
-        if w != c.depth_intrinsic.width or h != c.depth_intrinsic.height:
-            raise ValueError(
-                f"depth_image shape {w}x{h} does not match calibration depth size "
-                f"{c.depth_intrinsic.width}x{c.depth_intrinsic.height}"
-            )
-
-        v_grid, u_grid = np.indices((h, w), dtype=np.float64)
-        z_mm = depth_image.astype(np.float64) * float(depth_unit_scale)
-        valid = z_mm > 0.0
-        if not np.any(valid):
-            out_shape = (c.rgb_intrinsic.height, c.rgb_intrinsic.width)
-            return (
-                np.zeros(out_shape, dtype=np.float32),
-                np.full(out_shape, -1, dtype=np.int32),
-                np.full(out_shape, -1, dtype=np.int32),
-            )
-
-        u = u_grid[valid]
-        v = v_grid[valid]
-        z = z_mm[valid]
-
-        x_d, y_d = _undistort_pixels_to_normalized(u, v, c.depth_intrinsic, c.depth_distortion)
-
-        xyz_d = np.vstack((x_d * z, y_d * z, z))
-        xyz_c = (c.rot @ xyz_d) + c.trans.reshape(3, 1)
-
-        zc = xyz_c[2]
-        positive = zc > 1e-6
-        if not np.any(positive):
-            out_shape = (c.rgb_intrinsic.height, c.rgb_intrinsic.width)
-            return (
-                np.zeros(out_shape, dtype=np.float32),
-                np.full(out_shape, -1, dtype=np.int32),
-                np.full(out_shape, -1, dtype=np.int32),
-            )
-
-        x_c = xyz_c[0, positive] / zc[positive]
-        y_c = xyz_c[1, positive] / zc[positive]
-        z_c_mm = zc[positive]
-        u_src = u[positive].astype(np.int64)
-        v_src = v[positive].astype(np.int64)
-
-        u_c, v_c = _project_to_pixels(x_c, y_c, c.rgb_intrinsic, c.rgb_distortion)
-        u_i = np.rint(u_c).astype(np.int64)
-        v_i = np.rint(v_c).astype(np.int64)
-
-        in_bounds = (
-            (u_i >= 0) & (u_i < c.rgb_intrinsic.width) & (v_i >= 0) & (v_i < c.rgb_intrinsic.height)
-        )
-        if not np.any(in_bounds):
-            out_shape = (c.rgb_intrinsic.height, c.rgb_intrinsic.width)
-            return (
-                np.zeros(out_shape, dtype=np.float32),
-                np.full(out_shape, -1, dtype=np.int32),
-                np.full(out_shape, -1, dtype=np.int32),
-            )
-
-        u_i = u_i[in_bounds]
-        v_i = v_i[in_bounds]
-        z_c_mm = z_c_mm[in_bounds]
-        u_src = u_src[in_bounds]
-        v_src = v_src[in_bounds]
-
-        out_h = c.rgb_intrinsic.height
-        out_w = c.rgb_intrinsic.width
-        zbuf = np.full(out_h * out_w, np.inf, dtype=np.float64)
-        src_u_flat = np.full(out_h * out_w, -1, dtype=np.int32)
-        src_v_flat = np.full(out_h * out_w, -1, dtype=np.int32)
-        lin = v_i * out_w + u_i
-
-        # Keep the nearest depth sample per RGB pixel and remember source depth pixel.
-        for idx in range(lin.size):
-            li = int(lin[idx])
-            z_val = float(z_c_mm[idx])
-            if z_val < zbuf[li]:
-                zbuf[li] = z_val
-                src_u_flat[li] = int(u_src[idx])
-                src_v_flat[li] = int(v_src[idx])
-
-        aligned = zbuf.reshape(out_h, out_w)
-        aligned[np.isinf(aligned)] = 0.0
-        src_u_map = src_u_flat.reshape(out_h, out_w)
-        src_v_map = src_v_flat.reshape(out_h, out_w)
-        return aligned.astype(np.float32), src_u_map, src_v_map
-
-    def align_depth_to_color(
-        self,
-        depth_image: np.ndarray,
-        depth_unit_scale: float = 1.0,
-    ) -> np.ndarray:
-        """Project a raw depth image into the RGB camera plane.
-
-        Parameters
-        ----------
-        depth_image : numpy.ndarray
-            Two-dimensional depth image from the depth sensor.
-        depth_unit_scale : float, optional
-            Scale that converts depth image units to millimeters.
-
-        Returns
-        -------
-        numpy.ndarray
-            RGB-aligned depth image in millimeters, with shape
-            ``(color_height, color_width)`` and dtype ``float32``.
-        """
-        aligned, _, _ = self.align_depth_to_color_with_correspondence(
-            depth_image,
-            depth_unit_scale=depth_unit_scale,
-        )
-        return aligned
-
-    def get_depth_at_rgb(
-        self,
-        depth_image: np.ndarray,
-        rgb_u: int,
-        rgb_v: int,
-        depth_unit_scale: float = 1.0,
-        neighborhood: int = 1,
-    ) -> Optional[float]:
-        """Return the depth at an RGB pixel after depth-to-color projection.
-
-        Parameters
-        ----------
-        depth_image : numpy.ndarray
-            Two-dimensional depth image from the depth sensor.
-        rgb_u, rgb_v : int
-            RGB pixel coordinates.
-        depth_unit_scale : float, optional
-            Scale that converts depth image units to millimeters.
-        neighborhood : int, optional
-            Radius of the square neighborhood searched when the exact RGB pixel
-            has no valid depth.
-
-        Returns
-        -------
-        float or None
-            Depth in millimeters, or ``None`` when no valid depth is found.
-        """
-        aligned = self.align_depth_to_color(depth_image, depth_unit_scale=depth_unit_scale)
-
-        h, w = aligned.shape
-        if rgb_u < 0 or rgb_u >= w or rgb_v < 0 or rgb_v >= h:
-            return None
-
-        d = float(aligned[rgb_v, rgb_u])
-        if d > 0.0:
-            return d
-
-        if neighborhood <= 0:
-            return None
-
-        u0 = max(0, rgb_u - neighborhood)
-        u1 = min(w - 1, rgb_u + neighborhood)
-        v0 = max(0, rgb_v - neighborhood)
-        v1 = min(h - 1, rgb_v + neighborhood)
-
-        patch = aligned[v0 : v1 + 1, u0 : u1 + 1]
-        nonzero = patch[patch > 0.0]
-        if nonzero.size == 0:
-            return None
-        return float(np.min(nonzero))
-
-
-def _find_depth_and_source(
-    aligned_depth_mm: np.ndarray,
-    src_u_map: np.ndarray,
-    src_v_map: np.ndarray,
-    rgb_u: int,
-    rgb_v: int,
-    neighborhood: int,
-) -> Tuple[Optional[float], Optional[Tuple[int, int]]]:
-    """Find depth and source depth pixel for an RGB coordinate.
-
-    Parameters
-    ----------
-    aligned_depth_mm : numpy.ndarray
-        RGB-aligned depth image in millimeters.
-    src_u_map, src_v_map : numpy.ndarray
-        Source depth pixel maps returned by
-        :meth:`DepthRgbMapper.align_depth_to_color_with_correspondence`.
-    rgb_u, rgb_v : int
-        RGB pixel coordinates.
-    neighborhood : int
-        Radius of the square neighborhood searched when the exact RGB pixel has
-        no valid depth.
-
-    Returns
-    -------
-    depth_mm : float or None
-        Depth in millimeters, or ``None`` when no valid depth is found.
-    source_uv : tuple[int, int] or None
-        Source depth pixel coordinates, or ``None`` when no valid depth is
-        found.
-    """
-    h, w = aligned_depth_mm.shape
-    if rgb_u < 0 or rgb_u >= w or rgb_v < 0 or rgb_v >= h:
-        return None, None
-
-    d = float(aligned_depth_mm[rgb_v, rgb_u])
-    su = int(src_u_map[rgb_v, rgb_u])
-    sv = int(src_v_map[rgb_v, rgb_u])
-    if d > 0.0 and su >= 0 and sv >= 0:
-        return d, (su, sv)
-
-    if neighborhood <= 0:
-        return None, None
-
-    u0 = max(0, rgb_u - neighborhood)
-    u1 = min(w - 1, rgb_u + neighborhood)
-    v0 = max(0, rgb_v - neighborhood)
-    v1 = min(h - 1, rgb_v + neighborhood)
-
-    best_d = None
-    best_uv = None
-    for vv in range(v0, v1 + 1):
-        for uu in range(u0, u1 + 1):
-            d_val = float(aligned_depth_mm[vv, uu])
-            if d_val <= 0.0:
-                continue
-            su = int(src_u_map[vv, uu])
-            sv = int(src_v_map[vv, uu])
-            if su < 0 or sv < 0:
-                continue
-            if best_d is None or d_val < best_d:
-                best_d = d_val
-                best_uv = (su, sv)
-
-    return best_d, best_uv
-
-
-def _depth_to_colormap(depth_image: np.ndarray) -> np.ndarray:
-    """Convert a depth image to a JET colormap visualization.
-
-    Parameters
-    ----------
-    depth_image : numpy.ndarray
-        Two-dimensional depth image.
-
-    Returns
-    -------
-    numpy.ndarray
-        Three-channel BGR colormap image.
-
-    Raises
-    ------
-    ValueError
-        If ``depth_image`` is not two-dimensional.
-    """
-    if depth_image.ndim != 2:
-        raise ValueError("Depth image for visualization must be single-channel")
-
-    depth_f = depth_image.astype(np.float32)
-    valid = depth_f > 0
-    vis = np.zeros_like(depth_f, dtype=np.uint8)
-    if np.any(valid):
-        vals = depth_f[valid]
-        lo = float(np.percentile(vals, 2.0))
-        hi = float(np.percentile(vals, 98.0))
-        if hi <= lo:
-            hi = lo + 1.0
-        scaled = np.clip((depth_f - lo) * (255.0 / (hi - lo)), 0, 255)
-        vis = scaled.astype(np.uint8)
-    return cv2.applyColorMap(vis, cv2.COLORMAP_JET)
-
-
-def main_coords(rgb_path, depth_path, dict_objects):
-    """Attach center-pixel coordinates and depth to detected objects.
-
-    Parameters
-    ----------
-    rgb_path : str
-        Path to the RGB image.
-    depth_path : str
-        Path to the depth image.
-    dict_objects : dict
-        Object dictionary keyed by mask ID. Each object must contain a
-        ``"bbox"`` entry in ``[x_min, y_min, width, height]`` format.
-
-    Returns
-    -------
-    dict
-        Input object dictionary with ``"coord_center&depth"`` added to each
-        object.
-    """
-    rgb = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
-    depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)  # si es PNG de depth visual
-
-    color_size = (rgb.shape[1], rgb.shape[0])
-    depth_size = (depth.shape[1], depth.shape[0])
-
-    mapper = DepthRgbMapper.from_hardcoded(color_size=color_size, depth_size=depth_size)
-    aligned_depth_mm, src_u_map, src_v_map = mapper.align_depth_to_color_with_correspondence(
-        depth,
-        depth_unit_scale=1,  # Scale from depth pixel units to milimeters
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--input-dir",
+        "--images-dir",
+        dest="input_dir",
+        type=str,
+        default="dataset/rgb",
+        help="Directory holding the RGB frames (default: %(default)s)",
     )
-
-    rgb_h, rgb_w = rgb.shape[:2]
-    if aligned_depth_mm.shape[1] != rgb_w or aligned_depth_mm.shape[0] != rgb_h:
-        aligned_depth_mm = cv2.resize(
-            aligned_depth_mm, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST
-        )
-        src_u_map = cv2.resize(src_u_map, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
-        src_v_map = cv2.resize(src_v_map, (rgb_w, rgb_h), interpolation=cv2.INTER_NEAREST)
-
-    for mask_id in dict_objects.keys():
-        coords = dict_objects[mask_id]["bbox"]
-        ix, iy, delta_x, delta_y = coords
-        fin_x = ix + delta_x
-        fin_y = iy + delta_y
-        cx = (ix + fin_x) // 2
-        cy = (iy + fin_y) // 2
-
-        depth_mm, src_uv = _find_depth_and_source(
-            aligned_depth_mm,
-            src_u_map,
-            src_v_map,
-            cx,
-            cy,
-            max(0, 1),
-        )
-        dict_objects[mask_id]["coord_center&depth"] = [cx, cy, depth_mm]
-
-    return dict_objects
-
-
-class GPTModel:
-    """Tag and describe cropped objects with Azure OpenAI."""
-
-    def __init__(self, endpoint, model_name, deployment, subscription_key, api_version):
-        """Initialize the Azure OpenAI client.
-
-        Parameters
-        ----------
-        endpoint : str
-            Azure OpenAI endpoint URL.
-        model_name : str
-            Model name associated with the deployment. This parameter is kept
-            for caller compatibility.
-        deployment : str
-            Azure OpenAI deployment name used for chat completions.
-        subscription_key : str
-            Azure OpenAI API key.
-        api_version : str
-            Azure OpenAI API version.
-        """
-        self.client = AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=subscription_key,
-        )
-        self.deployment = deployment
-
-    def encode_image_data_url(self, image_path) -> str:
-        """Encode an image file as a data URL.
-
-        Parameters
-        ----------
-        image_path : pathlib.Path
-            Path to the image file.
-
-        Returns
-        -------
-        str
-            Data URL containing the image MIME type and base64-encoded bytes.
-
-        Raises
-        ------
-        FileNotFoundError
-            If ``image_path`` does not exist.
-        """
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image file not found: {image_path}")
-
-        mime_type, _ = mimetypes.guess_type(str(image_path))
-        if mime_type is None:
-            mime_type = "application/octet-stream"
-
-        image_bytes = image_path.read_bytes()
-        encoded = base64.b64encode(image_bytes).decode("ascii")
-        return f"data:{mime_type};base64,{encoded}"
-
-    def main_gpt(self, image, mask_path, masks, bboxes):
-        """Tag and describe segmented objects with GPT.
-
-        Parameters
-        ----------
-        image : str
-            Path to the original RGB image.
-        mask_path : list[str]
-            Paths to cropped object images produced by SAM.
-        masks : list[numpy.ndarray] or None
-            Binary object masks. This parameter is currently unused but kept for
-            caller compatibility.
-        bboxes : list[list[int]] or numpy.ndarray
-            SAM bounding boxes for the cropped objects. Each box is
-            ``[x_min, y_min, width, height]``.
-
-        Returns
-        -------
-        dict
-            Object metadata keyed by ``"mask_{i}"``. Each value contains the
-            GPT ``"tag"``, ``"description"``, ``"full_object"`` flag, saved
-            ``"mask"`` path, and ``"bbox"``.
-        """
-        image_path = Path(image)
-        image_data_url = self.encode_image_data_url(image_path)
-        dict_outputs = {}
-        question_2 = """You will receive:
-        1) Two images of the same scene. The first image shows the whole scene, and the second image is a cropped region of the image. 
-        The second image shows the object and the first one gives the context of the image.
-        Your task:
-        - Describe the object from the SECOND image, using the first one to consider the context of the workspace. Tell me the relative positions with respect the other objects that are seen in the first image, for example, specifying if they are on the left, on the rigth or next to another object.
-        - The tagging should be ultra-specific. For example, instead of saying "lego block", say "blue lego block with 4 studs". Add the colour in the tag.
-        - Express me if the cropped image shows the full object or not.
-        {
-        "tag": "string",
-        "description": "string",
-        "full_object:"boolean"
-        }"""
-        for p in range(len(mask_path)):
-            crop_url = self.encode_image_data_url(Path(mask_path[p]))
-            response = self.client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant.",
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": question_2},
-                            {"type": "text", "text": "Full image:"},
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": image_data_url},
-                                "detail": "auto",
-                            },
-                            {"type": "text", "text": "Cropped image:"},
-                            {"type": "image_url", "image_url": {"url": crop_url}, "detail": "auto"},
-                        ],
-                    },
-                ],
-                max_completion_tokens=16384,
-                model=self.deployment,
-            )
-            raw = response.choices[0].message.content
-            try:
-                dict_outputs[f"mask_{p}"] = json.loads(raw)
-            except json.JSONDecodeError:
-                print(f"Error decoding JSON for mask_{p}: {raw}")
-                dict_outputs[f"mask_{p}"] = {
-                    "tag": "unknown",
-                    "description": "unknown",
-                    "full_object": False,
-                }
-            dict_outputs[f"mask_{p}"]["mask"] = mask_path[p]
-            dict_outputs[f"mask_{p}"]["bbox"] = bboxes[p]
-
-        return dict_outputs
-
-
-def main(images, depth_path):
-    """Process RGB/depth image pairs through the legacy combined pipeline.
-
-    Parameters
-    ----------
-    images : list[str]
-        Paths to RGB images.
-    depth_path : list[str]
-        Paths to depth images aligned by index with ``images``.
-    """
-    dotenv.load_dotenv()
-
-    azure_endpoint = os.getenv("AZURE_ENDPOINT")
-    azure_key = os.getenv("AZURE_KEY")
-
-    masks_dic = {}
-    bboxes_dic = {}
-    full_dict = {}
-
-    sam = SAMModel(
-        "segmentation/checkpoints/sam/sam_vit_b_01ec64.pth", model_type="vit_b", device="cuda"
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="output",
+        help="Run directory all three stages write to (default: %(default)s)",
     )
+    cli.add_common_arguments(parser)
+    cli.add_segmentation_arguments(parser)
+    cli.add_annotation_arguments(parser)
+    cli.add_depth_arguments(parser)
 
-    endpoint = azure_endpoint
-    model_name = "gpt-5.2-chat"
-    deployment = "gpt-5.2-chat"
+    args = parser.parse_args()
 
-    subscription_key = azure_key
-    api_version = "2024-12-01-preview"
+    cli.require_dir(args.input_dir, "Images directory")
 
-    gpt = GPTModel(endpoint, model_name, deployment, subscription_key, api_version)
+    cli.require_file(args.segmenter_config, "Segmentation configuration file")
 
-    for f, image in enumerate(images):
-        masked_rgb, mask_bin = sam.remove_bg(image, f)
-        masks, bboxes, masks_path = sam.individual_mask(mask_bin, masked_rgb, image, f)
-        start_gpt = time.time()
-        full_dict[f"Image_{f}"] = gpt.main_gpt(image, masks_path, masks, bboxes)
-        end_gpt = time.time()
-        print(f"GPT tagging and description for image {f + 1} obtained in {end_gpt - start_gpt}s")
-        start_coords = time.time()
-        full_dict[f"Image_{f}"] = main_coords(image, depth_path[f], full_dict[f"Image_{f}"])
-        end_coords = time.time()
-        print(f"Coordinates and depth for image {f + 1} obtained in {end_coords - start_coords}s")
+    if args.annotator == "gpt":
+        cli.require_file(args.llm_config, "LLM configuration file")
+    else:
+        from scene_understanding.dam_annotator import looks_like_repo_id
 
-        print(f"Image {f + 1}: {full_dict[f'Image_{f}']}")
+        if not looks_like_repo_id(args.dam_model) and not Path(args.dam_model).exists():
+            logger.error(
+                f"DAM checkpoint does not exist: {args.dam_model}. Download it with "
+                "`python3 scripts/install_models.py dam_3b`."
+            )
+            sys.exit(1)
+        if "<image>" not in args.dam_query:
+            logger.error(
+                "--dam-query must contain the <image> token DAM substitutes the region into."
+            )
+            sys.exit(1)
 
+    # Only checked for the sensor backend: the estimators never read --depth-dir, so
+    # requiring it would force a depth dataset to exist for a run that ignores it.
+    if args.depth_source == "sensor":
+        cli.require_dir(args.depth_dir, "Depth images directory")
 
-if __name__ == "__main__":
-    start_all = time.time()
-    os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
-    torch.cuda.empty_cache()
+    cli.validate_device(args.device)
+
+    return args
 
     images = ["dataset/rgb/rgb_dataset_1.png"]
     depth_path = ["dataset/depth/depth_dataset_1.png"]
 
-    main(images, depth_path)
-    end_all = time.time()
+if __name__ == "__main__":
+    start_all = time.time()
+    try:
+        main(parse_arguments())
+    except (FileNotFoundError, ValueError) as error:
+        logger.error(str(error))
+        sys.exit(1)
 
-    print(f"Total time image process: {end_all - start_all}s")
+    logger.info(f"Total time image process: {time.time() - start_all}s")

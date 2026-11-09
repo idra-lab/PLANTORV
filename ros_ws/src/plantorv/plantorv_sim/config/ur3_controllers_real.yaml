@@ -1,0 +1,165 @@
+# ros2_control controllers for the real UR3.
+#
+# The simulated counterpart is ur3_controllers.yaml, which gazebo_ros2_control
+# loads from inside Gazebo. This one is handed to a ros2_control_node that runs
+# as an ordinary process, so the update rate here is that node's own loop rate,
+# and it must be 500 Hz -- the UR's primary interface runs at 500 and the
+# driver's read/write is paced by it.
+#
+# Two differences from the simulated file matter:
+#
+#   the trajectory controller is ur_controllers/ScaledJointTrajectoryController
+#   rather than the plain one. It reads the speed_scaling state interface off
+#   the hardware and stretches the trajectory when the pendant's slider is
+#   below 100%, which is what makes the slider a working speed limit during
+#   commissioning instead of a source of following errors;
+#
+#   there is no use_sim_time anywhere. There is no /clock.
+#
+# The controller name has to match trajectory_controller in
+# plantorv_planner/config/planner.yaml and the controller_names list in
+# plantorv_moveit_config/config/moveit_controllers.yaml.
+controller_manager:
+  ros__parameters:
+    update_rate: 500  # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    io_and_status_controller:
+      type: ur_controllers/GPIOController
+
+    speed_scaling_state_broadcaster:
+      type: ur_controllers/SpeedScalingStateBroadcaster
+
+    force_torque_sensor_broadcaster:
+      type: ur_controllers/ForceTorqueStateBroadcaster
+
+    scaled_joint_trajectory_controller:
+      type: ur_controllers/ScaledJointTrajectoryController
+
+    # The plain controller as well, for mock hardware only.
+    #
+    # ScaledJointTrajectoryController reads the UR's speed_scaling state
+    # interface straight off the hardware. mock_components/GenericSystem does
+    # not provide it and the controller does not check before using it, so the
+    # first trajectory sent to it segfaults ros2_control_node:
+    #
+    #   #0 ur_controllers::ScaledJointTrajectoryController::update(...)
+    #   Segmentation fault (Address not mapped to object [(nil)])
+    #
+    # So use_fake_hardware:=true spawns this one instead. Only one of the two
+    # is ever spawned; see hardware.launch.py.
+    joint_trajectory_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    # Same story as in the simulated cell: wants the same command interfaces as
+    # the trajectory controller, so only one of the two runs at a time and the
+    # planner switches. Spawned inactive.
+    cartesian_motion_controller:
+      type: cartesian_motion_controller/CartesianMotionController
+
+io_and_status_controller:
+  ros__parameters:
+    tf_prefix: ""
+
+speed_scaling_state_broadcaster:
+  ros__parameters:
+    state_publish_rate: 100.0
+    tf_prefix: ""
+
+force_torque_sensor_broadcaster:
+  ros__parameters:
+    sensor_name: tcp_fts_sensor
+    state_interface_names:
+      - force.x
+      - force.y
+      - force.z
+      - torque.x
+      - torque.y
+      - torque.z
+    frame_id: tool0
+    topic_name: ft_data
+    tf_prefix: ""
+
+# Both trajectory controllers take the same settings. Written out twice rather
+# than anchored, because a ROS parameter file is read by rcl and not by a YAML
+# library that would expand an anchor for it.
+scaled_joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false
+    constraints:
+      stopped_velocity_tolerance: 0.2
+      # Left open for the same reason as in simulation: MoveIt
+      # time-parameterises the whole trajectory, and a scaled controller may
+      # take longer than the plan says when the pendant slider is down.
+      goal_time: 0.0
+
+joint_trajectory_controller:
+  ros__parameters:
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    state_publish_rate: 100.0
+    action_monitor_rate: 20.0
+    allow_partial_joints_goal: false
+    constraints:
+      stopped_velocity_tolerance: 0.2
+      # Left open for the same reason as in simulation: MoveIt
+      # time-parameterises the whole trajectory, and a scaled controller may
+      # take longer than the plan says when the pendant slider is down.
+      goal_time: 0.0
+
+# See the note in ur3_controllers.yaml. robot_description is missing on purpose;
+# the launch file resolves the xacro and hands it to the spawner.
+cartesian_motion_controller:
+  ros__parameters:
+    robot_base_link: world
+    end_effector_link: tool0
+
+    joints:
+      - shoulder_pan_joint
+      - shoulder_lift_joint
+      - elbow_joint
+      - wrist_1_joint
+      - wrist_2_joint
+      - wrist_3_joint
+
+    command_interfaces:
+      - position
+
+    solver:
+      error_scale: 3.0
+      iterations: 10
+      publish_state_feedback: true
+
+    pd_gains:
+      trans_x: {p: 1.0, d: 0.0}
+      trans_y: {p: 1.0, d: 0.0}
+      trans_z: {p: 1.0, d: 0.0}
+      rot_x: {p: 0.5, d: 0.0}
+      rot_y: {p: 0.5, d: 0.0}
+      rot_z: {p: 0.5, d: 0.0}

@@ -1,0 +1,13 @@
+MODEL: "sam"
+CHECKPOINT: "models/sam/sam_l.pt"
+
+SEGMENTATION_CONFIG:
+  points_stride: 32
+
+FILTERS:
+  background_min_area_pct: 15.0
+  object_min_area_pct: 0.35
+  object_max_area_pct: 6.5
+  object_large_area_pct: 10.0
+  object_min_bg_iou: 0.02
+  overlap_iou_threshold: 0.01

@@ -1,0 +1,8 @@
+
+
+LLM_VERSION : "glm-4.7"
+API_KEY_NAME : "GLM_API_KEY"
+BASE_URL : "https://open.bigmodel.cn/api/paas/v4/"
+LLM_CONFIG:
+  max_tokens: 8192
+  temperature: 0.0
