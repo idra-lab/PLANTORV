@@ -21,6 +21,11 @@ Pipeline for segmenting tabletop RGB-D scenes (Femto Mega camera), labeling dete
 objects with either a remote vision LLM or local Describe Anything model, projecting depth
 coordinates, and evaluating results against ArUco marker annotations.
 
+PLANTORV is the vision component of [PLANTOR](https://github.com/icosac/plantor_tp)
+([paper](https://arxiv.org/abs/2502.19135)), a framework that turns natural-language task
+descriptions into executable multi-robot plans. PLANTORV supplies the objects in the scene
+that PLANTOR plans against; see [PLANTOR integration](#plantor-integration).
+
 The pipeline is four stages, each with its own section below:
 
 | stage | what it does | section |
@@ -61,12 +66,18 @@ the remote scene annotator uses the same layer.
   - [Remote vision LLM](#remote-vision-llm)
   - [Local Describe Anything](#local-describe-anything)
 - [Depth estimation](#depth-estimation)
+  - [The 3D point](#the-3d-point)
+  - [World-frame coordinates](#world-frame-coordinates)
+- [PLANTOR integration](#plantor-integration)
 - [Useful Commands](#useful-commands)
   - [Main pipelines](#main-pipelines)
   - [Depth utilities](#depth-utilities)
     - [Monocular Depth Anything 3](#monocular-depth-anything-3)
   - [Point-cloud utilities](#point-cloud-utilities)
     - [Point-cloud semantic segmentation](#point-cloud-semantic-segmentation)
+- [Citing](#citing)
+  - [BibTeX](#bibtex)
+  - [APA](#apa)
 - [Development](#development)
   - [Tool configuration](#tool-configuration)
 
@@ -745,9 +756,9 @@ image_dict = attach_object_depths(
 
 ## PLANTOR integration
 
-PLANTOR's web GUI can drive this pipeline directly: its first workflow step takes
-one picture of the workspace, runs segmentation, annotation and depth over it,
-and plans against the objects that come back. The bridge is the scene service in
+[PLANTOR](https://github.com/icosac/plantor_tp)'s web GUI can drive this pipeline
+directly: its first workflow step takes one picture of the workspace, runs
+segmentation, annotation and depth over it, and plans against the objects that come back. The bridge is the scene service in
 `ros_ws/src/plantorv/plantorv_ros/plantorv_ros/scene_service.py`, an HTTP server
 that runs one capture per request in this environment:
 
@@ -1016,6 +1027,51 @@ Clean generated outputs if you want a fresh run:
 ```bash
 make clean_output
 ```
+
+## Citing
+
+This repository accompanies the paper
+[*VLMs Can Describe, But Not Measure: Object-Centric Scene Understanding for Robotic Manipulation*](https://arxiv.org/abs/2609.28184).
+If you use PLANTORV, its code, or its results in your research, please cite it.
+
+PLANTORV is the vision component of the PLANTOR planning framework
+([code](https://github.com/icosac/plantor_tp), [paper](https://arxiv.org/abs/2502.19135)).
+If you also use PLANTOR to plan from the detected scene, please cite the PLANTOR paper as well.
+
+### BibTeX
+
+```bibtex
+@misc{plantorv,
+  title         = {{VLMs} Can Describe, But Not Measure: Object-Centric Scene Understanding for Robotic Manipulation},
+  author        = {Saccon, Enrico and Faraci, Tommaso and De La Ossa Zarzuelo, I{\~n}igo and Palopoli, Luigi and Roveri, Marco and Saveriano, Matteo},
+  year          = {2026},
+  eprint        = {2609.28184},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.RO},
+  doi           = {10.48550/arXiv.2609.28184},
+  url           = {https://arxiv.org/abs/2609.28184},
+}
+
+@misc{plantor,
+  title         = {Combining Large Language Models and Symbolic Reasoning for Multi-Robot Temporal Planning through Explainable Knowledge Bases},
+  author        = {Saccon, Enrico and Saveriano, Matteo and Lamon, Edoardo and Palopoli, Luigi and Roveri, Marco},
+  year          = {2025},
+  eprint        = {2502.19135},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.AI},
+  doi           = {10.48550/arXiv.2502.19135},
+  url           = {https://arxiv.org/abs/2502.19135},
+}
+```
+
+### APA
+
+- Saccon, E., Faraci, T., De La Ossa Zarzuelo, I., Palopoli, L., Roveri, M., & Saveriano, M.
+  (2026). *VLMs can describe, but not measure: Object-centric scene understanding for robotic
+  manipulation* (arXiv:2609.28184). arXiv. <https://doi.org/10.48550/arXiv.2609.28184>
+- Saccon, E., Saveriano, M., Lamon, E., Palopoli, L., & Roveri, M. (2025). *Combining large
+  language models and symbolic reasoning for multi-robot temporal planning through explainable
+  knowledge bases* (arXiv:2502.19135). arXiv. <https://doi.org/10.48550/arXiv.2502.19135>
 
 ## Development
 
