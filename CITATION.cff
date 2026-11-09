@@ -1,0 +1,72 @@
+cff-version: 1.2.0
+message: >-
+  If you use PLANTORV, please cite the paper below. PLANTORV is the vision
+  component of the PLANTOR planning framework; if you also use PLANTOR,
+  please cite the PLANTOR paper listed under references as well.
+title: >-
+  PLANTORV: PLanning with Natural language for Task-Oriented Robots with Vision
+type: software
+authors:
+  - family-names: Saccon
+    given-names: Enrico
+  - family-names: Faraci
+    given-names: Tommaso
+  - family-names: De La Ossa Zarzuelo
+    given-names: Iñigo
+  - family-names: Palopoli
+    given-names: Luigi
+  - family-names: Roveri
+    given-names: Marco
+  - family-names: Saveriano
+    given-names: Matteo
+repository-code: "https://github.com/idra-lab/PLANTORV"
+version: 0.1.0
+keywords:
+  - robotics
+  - scene understanding
+  - vision-language models
+  - segmentation
+  - robotic manipulation
+preferred-citation:
+  type: article
+  title: >-
+    VLMs Can Describe, But Not Measure: Object-Centric Scene Understanding
+    for Robotic Manipulation
+  authors:
+    - family-names: Saccon
+      given-names: Enrico
+    - family-names: Faraci
+      given-names: Tommaso
+    - family-names: De La Ossa Zarzuelo
+      given-names: Iñigo
+    - family-names: Palopoli
+      given-names: Luigi
+    - family-names: Roveri
+      given-names: Marco
+    - family-names: Saveriano
+      given-names: Matteo
+  year: 2026
+  journal: arXiv preprint
+  doi: 10.48550/arXiv.2609.28184
+  url: "https://arxiv.org/abs/2609.28184"
+references:
+  - type: article
+    title: >-
+      Combining Large Language Models and Symbolic Reasoning for Multi-Robot
+      Temporal Planning through Explainable Knowledge Bases
+    authors:
+      - family-names: Saccon
+        given-names: Enrico
+      - family-names: Saveriano
+        given-names: Matteo
+      - family-names: Lamon
+        given-names: Edoardo
+      - family-names: Palopoli
+        given-names: Luigi
+      - family-names: Roveri
+        given-names: Marco
+    year: 2025
+    journal: arXiv preprint
+    doi: 10.48550/arXiv.2502.19135
+    url: "https://arxiv.org/abs/2502.19135"
+    repository-code: "https://github.com/icosac/plantor_tp"
