@@ -1,0 +1,230 @@
+"""
+Copyright 2025 Enrico Saccon
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+"""
+
+__maintainers__ = ["Enrico Saccon", "Tommaso Faraci"]
+
+"""Gazebo, the UR3 on its stand, its controllers, and the scene nodes.
+
+This brings up the world and the robot but not MoveIt: the planner needs a
+move_group whether or not there is a simulator, so that lives in
+plantorv_moveit_config and the two are composed in plantorv_bringup.
+"""
+
+import os
+import tempfile
+
+import yaml
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+    RegisterEventHandler,
+)
+from launch.conditions import IfCondition
+from launch.event_handlers import OnProcessExit
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import Command, FindExecutable, LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    sim_share = get_package_share_directory("plantorv_sim")
+    gazebo_share = get_package_share_directory("gazebo_ros")
+
+    arguments = [
+        DeclareLaunchArgument("gui", default_value="true", description="Run gzclient"),
+        DeclareLaunchArgument(
+            "world",
+            default_value=os.path.join(sim_share, "worlds", "plantorv_table.world"),
+            description="Gazebo world; regenerate it with scripts/generate_world.py",
+        ),
+        DeclareLaunchArgument("ur_type", default_value="ur3"),
+        DeclareLaunchArgument(
+            "spawn_scene",
+            default_value="true",
+            description="Run scene_manager and world_model alongside the simulator",
+        ),
+        DeclareLaunchArgument(
+            "attach_gripper",
+            default_value="true",
+            description="Put the Robotiq 2f85 on tool0 in the robot description. "
+            "Distinct from plantorv_planner's use_gripper, which decides whether "
+            "the planner calls the gripper service.",
+        ),
+    ]
+
+    robot_description = Command(
+        [
+            PathJoinSubstitution([FindExecutable(name="xacro")]),
+            " ",
+            PathJoinSubstitution(
+                [FindPackageShare("plantorv_sim"), "urdf", "ur3_workcell.urdf.xacro"]
+            ),
+            " ur_type:=",
+            LaunchConfiguration("ur_type"),
+            " sim_gazebo:=true",
+            " attach_gripper:=",
+            LaunchConfiguration("attach_gripper"),
+        ]
+    )
+
+    gzserver = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(gazebo_share, "launch", "gzserver.launch.py")),
+        launch_arguments={"world": LaunchConfiguration("world"), "verbose": "true"}.items(),
+    )
+    gzclient = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(gazebo_share, "launch", "gzclient.launch.py")),
+        condition=IfCondition(LaunchConfiguration("gui")),
+    )
+
+    robot_state_publisher = Node(
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        output="screen",
+        parameters=[
+            # The xacro output has to be declared a string. Left bare, launch_ros
+            # tries to parse the URDF as YAML to infer the parameter type, and
+            # the first colon in the XML makes that fail.
+            {
+                "robot_description": ParameterValue(robot_description, value_type=str),
+                "use_sim_time": True,
+            },
+        ],
+    )
+
+    # The description already places base_link on top of the stand, and the
+    # stand on the table, so the model goes in at the world origin.
+    spawn_robot = Node(
+        package="gazebo_ros",
+        executable="spawn_entity.py",
+        output="screen",
+        arguments=[
+            "-topic",
+            "robot_description",
+            "-entity",
+            "ur3_workcell",
+            "-x",
+            "0.0",
+            "-y",
+            "0.0",
+            "-z",
+            "0.0",
+        ],
+    )
+
+    def spawner(controller, extra=None):
+        return Node(
+            package="controller_manager",
+            executable="spawner",
+            output="screen",
+            arguments=[controller, "--controller-manager", "/controller_manager"]
+            + (extra or []),
+        )
+
+    def spawn_cartesian_controller(context, *args, **kwargs):
+        """Spawn cartesian_motion_controller, inactive, with the URDF attached.
+
+        On Humble a controller reads ``robot_description`` from a parameter on
+        its own node -- Jazzy added a way to take it from the controller
+        manager, and this package still supports both -- so the URDF cannot sit
+        in ur3_controllers.yaml, which gazebo_ros2_control reads off disk. The
+        spawner loads a params file into a controller before configuring it,
+        which is the hook that is left, so the xacro is resolved here and
+        written to one.
+
+        Inactive, because it wants the same command interfaces as the
+        trajectory controller and the planner decides which of the two runs.
+        """
+        urdf = robot_description.perform(context)
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix="cartesian_motion_controller_",
+            suffix=".yaml",
+            delete=False,
+        )
+        yaml.safe_dump(
+            {"cartesian_motion_controller": {"ros__parameters": {"robot_description": urdf}}},
+            handle,
+        )
+        handle.close()
+        return [
+            spawner(
+                "cartesian_motion_controller",
+                extra=["--inactive", "--param-file", handle.name],
+            )
+        ]
+
+    joint_state_broadcaster = spawner("joint_state_broadcaster")
+    trajectory_controller = spawner("joint_trajectory_controller")
+    cartesian_controller = OpaqueFunction(function=spawn_cartesian_controller)
+
+    # gazebo_ros2_control only exists once the model is in the world, and the
+    # trajectory controller wants joint states before it starts, so the
+    # spawners are chained rather than raced.
+    controllers = [
+        RegisterEventHandler(
+            OnProcessExit(target_action=spawn_robot, on_exit=[joint_state_broadcaster])
+        ),
+        RegisterEventHandler(
+            OnProcessExit(target_action=joint_state_broadcaster, on_exit=[trajectory_controller])
+        ),
+        RegisterEventHandler(
+            OnProcessExit(target_action=trajectory_controller, on_exit=[cartesian_controller])
+        ),
+    ]
+
+    scene_nodes = [
+        Node(
+            package="plantorv_sim",
+            executable=executable,
+            name=executable,
+            output="screen",
+            parameters=[{"use_sim_time": True}],
+            condition=IfCondition(LaunchConfiguration("spawn_scene")),
+        )
+        for executable in ("world_model", "scene_manager")
+    ]
+
+    # There is no gripper to talk to here, but finger_joint still has to be
+    # published, and for two separate reasons. move_group refuses to plan until
+    # every joint in the robot description has a state, so without this the
+    # simulated arm stops moving the moment the gripper is in the description.
+    # And watching the fingers close is most of the point of modelling them.
+    #
+    # It answers the same r2f85_gripper service as the real driver, so the
+    # behaviour tree does not have to know which one it is talking to.
+    #
+    # The fingers move in RViz and for MoveIt, not in Gazebo, which ignores the
+    # <mimic> tags the linkage is built from.
+    mock_gripper = Node(
+        package="gripper_robotiq_2f85",
+        executable="mock_robotiq_2f85",
+        name="robotiq_2f85",
+        output="screen",
+        parameters=[{"use_sim_time": True}],
+        condition=IfCondition(LaunchConfiguration("attach_gripper")),
+    )
+
+    return LaunchDescription(
+        arguments
+        + [gzserver, gzclient, robot_state_publisher, spawn_robot, mock_gripper]
+        + controllers
+        + scene_nodes
+    )

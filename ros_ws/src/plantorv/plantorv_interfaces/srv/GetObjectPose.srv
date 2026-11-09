@@ -1,0 +1,11 @@
+# Ground-truth pose of one scene object, from the simulator.
+
+string name
+---
+bool found
+geometry_msgs/PoseStamped pose
+# Full extents of the object's bounding box, in metres.
+geometry_msgs/Vector3 dimensions
+# cube, tray or furniture.
+string type
+string color

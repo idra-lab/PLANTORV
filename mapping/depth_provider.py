@@ -40,6 +40,26 @@ class DepthResult:
             raise ValueError("valid depth pixels must be finite and positive")
 
 
+class DepthAligner(Protocol):
+    """Minimal surface of :class:`~mapping.rgbd_mapper.RGBDMapper` used here.
+
+    Typing the collaborator structurally lets tests inject a lightweight stub
+    instead of a fully calibrated mapper.
+    """
+
+    calibration: Any
+
+    def align_depth_to_color(
+        self,
+        depth_image: np.ndarray,
+        /,
+        *,
+        depth_unit_scale: float,
+    ) -> np.ndarray:
+        """Project a raw depth frame into the RGB image plane."""
+        ...
+
+
 class DepthProvider(Protocol):
     """Interface implemented by RGB-aligned metric-depth backends."""
 
@@ -61,7 +81,7 @@ class SensorDepthProvider:
         depth_size: tuple[int, int],
         *,
         depth_unit_scale: float = 1.0,
-        mapper: RGBDMapper | None = None,
+        mapper: DepthAligner | None = None,
     ) -> None:
         if depth_unit_scale <= 0.0:
             raise ValueError("depth_unit_scale must be positive")

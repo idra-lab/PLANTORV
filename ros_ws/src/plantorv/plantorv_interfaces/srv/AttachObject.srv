@@ -1,0 +1,14 @@
+# Fake grasp: bind a spawned scene object to a robot link, or release it.
+#
+# Attaching removes the object from Gazebo and adds it to the MoveIt planning
+# scene as an attached collision object, so the arm carries it and keeps
+# planning around it. Detaching does the reverse, respawning the object at the
+# pose it is released in.
+
+string object_id
+# Robot link to attach to. Empty means the planner's configured tool frame.
+string link_name
+bool attach
+---
+bool success
+string message

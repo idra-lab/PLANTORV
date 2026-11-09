@@ -19,7 +19,8 @@
     "../.venv",
     "../dataset",
     "../final_fast_segmentation",
-    "../segmentation/checkpoints"
+    "../segmentation/checkpoints",
+    "../ros_ws"
   ],
   // Same ../ caveat as above: venvPath is resolved against THIS file's
   // directory, so ".." is the project root and ".venv" names the dir inside it.

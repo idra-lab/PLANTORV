@@ -32,6 +32,10 @@ PROVIDER_ALIASES = {
     "azure-openai": "azure_openai",
     "azureopenai": "azure_openai",
     "openai_azure": "azure_openai",
+    "azure_responses": "azure_openai_responses",
+    "azure_openai_responses": "azure_openai_responses",
+    "azure-openai-responses": "azure_openai_responses",
+    "azureopenairesponses": "azure_openai_responses",
     "openai": "openai",
     "anthropic": "anthropic",
     "claude": "anthropic",
@@ -52,6 +56,7 @@ PROVIDER_ALIASES = {
 PROVIDER_MODULES = {
     "openai": ("LLMOpenAI", "LLMOpenAI"),
     "azure_openai": ("LLMAzureOpenAI", "LLMAzureOpenAI"),
+    "azure_openai_responses": ("LLMAzureOpenAIResponses", "LLMAzureOpenAIResponses"),
     "anthropic": ("LLMAnthropic", "LLMAnthropic"),
     "gemini": ("LLMGemini", "LLMGemini"),
     "glm": ("LLMGLM", "LLMGLM"),

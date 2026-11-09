@@ -1,3 +1,6 @@
+# ROS 2 code needs rclpy/launch, which .venv lacks; it is not linted from here.
+exclude: ^ros_ws/
+
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.0

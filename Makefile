@@ -6,18 +6,29 @@ PRE_COMMIT ?= pre-commit
 SPHINX_BUILD ?= sphinx-build
 SPHINX_APIDOC ?= sphinx-apidoc
 SPHINX_AUTOBUILD ?= sphinx-autobuild
+O3DML_VENV ?= .venv-o3dml
 
 # Packages the API documentation covers. sphinx-apidoc is run once per package: pointing
 # it at the project root instead would make the root itself a namespace package and
 # prefix every module with `plantorv.`, which is not an importable name.
-DOC_PACKAGES ?= segmentation scene_understanding mapping LLM utility aruco evaluation
+DOC_PACKAGES ?= segmentation scene_understanding mapping LLM utility aruco evaluation pipeline
 
-.PHONY: install install-dev format format-check lint typecheck check docs docs-api docs-serve
+.PHONY: install install-dev install-o3dml format format-check lint typecheck check docs docs-api docs-serve
 
 # Runtime dependencies only - this is what the PBS cluster jobs need.
 install:
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
+
+# The Open3D-ML environment, in a virtualenv of its own. Open3D 0.19 only loads its
+# PyTorch ops under torch 2.2.*, which the main environment left behind for SAM 3, so
+# the learned point-cloud models of segment_pcd.py live here instead. See
+# requirements-o3dml.txt.
+install-o3dml:
+	$(PYTHON) -m venv $(O3DML_VENV)
+	$(O3DML_VENV)/bin/pip install --upgrade pip
+	$(O3DML_VENV)/bin/pip install -r requirements-o3dml.txt
+	@echo "Run the learned point-cloud models with $(O3DML_VENV)/bin/python segment_pcd.py"
 
 # Runtime + dev tooling (ruff, pyright, pre-commit), plus the git hook.
 # pip has no way to pull an extra automatically, so `make install-dev` is the

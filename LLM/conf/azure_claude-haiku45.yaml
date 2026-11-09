@@ -7,6 +7,7 @@
 LLM_VERSION : "claude-haiku-4-5"
 API_KEY_NAME : "AZURE_CLAUDE_API_KEY"
 BASE_URL_ENV : "AZURE_CLAUDE_LLM_PLANNING_BASE_URL"
+# The anthropic SDK dropped the sampling parameters: temperature/top_p/top_k are no longer
+# arguments of messages.create() and raise a TypeError when forwarded.
 LLM_CONFIG:
   max_tokens: 8192
-  temperature: 0.0

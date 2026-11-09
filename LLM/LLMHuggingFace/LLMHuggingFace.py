@@ -7,7 +7,14 @@ from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import torch
 import yaml
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
+
+try:
+    # The loader for the image-text-to-text architectures. Present since transformers
+    # 4.45; a text-only deployment on an older release still works without it.
+    from transformers import AutoModelForImageTextToText
+except Exception:
+    AutoModelForImageTextToText = None
 
 try:
     from transformers import BitsAndBytesConfig
@@ -27,6 +34,36 @@ except Exception:
         from llm_base import BaseLLM, logger, normalize_messages
 
 NOT_SET = object()
+
+# Config markers of a checkpoint that takes images as well as text. `vision_config` is
+# what every multimodal architecture carries; the architecture suffix catches the ones
+# that nest it somewhere unexpected. Read from the model configuration rather than the
+# weights, so that whether a model accepts images is known before anything is loaded --
+# the annotators ask that question at construction time.
+VISION_CONFIG_KEYS = ("vision_config", "vision_tower_config", "image_token_id")
+VISION_ARCHITECTURE_SUFFIXES = ("ForConditionalGeneration", "ForImageTextToText")
+
+
+def _looks_multimodal(config: Any) -> bool:
+    """Return whether a model configuration describes an image-text-to-text model.
+
+    Parameters
+    ----------
+    config : Any
+        A ``transformers`` configuration object.
+
+    Returns
+    -------
+    bool
+        True when the configuration carries a vision tower or names an
+        image-text-to-text architecture.
+    """
+    if any(getattr(config, key, None) is not None for key in VISION_CONFIG_KEYS):
+        return True
+
+    architectures = getattr(config, "architectures", None) or []
+
+    return any(str(name).endswith(VISION_ARCHITECTURE_SUFFIXES) for name in architectures)
 
 
 class LLMHuggingFace(BaseLLM):
@@ -49,6 +86,10 @@ class LLMHuggingFace(BaseLLM):
     """
 
     PROVIDER = "huggingface"
+    # Overridden per instance in `_setup`: one class serves both the text-only
+    # checkpoints and the image-text-to-text ones, so the answer depends on the model
+    # rather than on the backend. False here is the answer for a model whose
+    # configuration could not be read.
     SUPPORTS_IMAGES = False
 
     DEFAULT_PARAMS = {"max_tokens": 4096, "temperature": 0.0}
@@ -196,6 +237,49 @@ class LLMHuggingFace(BaseLLM):
         default_cache_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "models"))
         self.cache_dir = resolved_cache_dir if resolved_cache_dir is not None else default_cache_dir
 
+        self.processor: Any = None
+        self.SUPPORTS_IMAGES = self._detect_image_support()
+
+    def _detect_image_support(self) -> bool:
+        """Return whether this model takes images, from its configuration alone.
+
+        The annotators refuse an image-less backend at construction, which happens long
+        before the weights are loaded, so the question is settled from the model
+        configuration -- a small file -- rather than by loading anything.
+
+        ``SUPPORTS_IMAGES`` in the YAML answers it outright, for a model whose
+        configuration cannot be reached or whose architecture this does not recognise.
+
+        Returns
+        -------
+        bool
+            True when the model accepts images.
+        """
+        configured = self.config.get("SUPPORTS_IMAGES")
+        if configured is not None:
+            resolved = _coerce_bool(configured, default=False)
+            logger.debug(f"SUPPORTS_IMAGES set to {resolved} by the configuration file.")
+            return bool(resolved)
+
+        try:
+            config = AutoConfig.from_pretrained(
+                self.model_name, cache_dir=self.cache_dir, trust_remote_code=False
+            )
+        except Exception as error:
+            # Offline, gated or unreachable: text-only is the safe answer, and
+            # SUPPORTS_IMAGES in the YAML is the way to override it.
+            logger.warning(
+                f"Could not read the configuration of {self.model_name} ({error}). "
+                "Assuming it does not take images; set SUPPORTS_IMAGES in the "
+                "configuration file to say otherwise."
+            )
+            return False
+
+        multimodal = _looks_multimodal(config)
+        logger.info(f"Model {self.model_name} {'takes' if multimodal else 'does not take'} images.")
+
+        return multimodal
+
     def _create_client(self) -> Any:
         """Load the tokenizer and the model.
 
@@ -211,7 +295,21 @@ class LLMHuggingFace(BaseLLM):
         """
         os.makedirs(self.cache_dir, exist_ok=True)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, cache_dir=self.cache_dir)
+        # A multimodal checkpoint needs its processor: the tokenizer alone cannot turn an
+        # image into the pixel values and image tokens the model expects. The processor
+        # carries the tokenizer, so the text paths keep working unchanged either way.
+        if self.SUPPORTS_IMAGES:
+            self.processor = AutoProcessor.from_pretrained(
+                self.model_name, cache_dir=self.cache_dir
+            )
+            self.tokenizer = getattr(self.processor, "tokenizer", None) or (
+                AutoTokenizer.from_pretrained(self.model_name, cache_dir=self.cache_dir)
+            )
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, cache_dir=self.cache_dir
+            )
+
         if self.tokenizer.pad_token is None and self.tokenizer.eos_token is not None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
@@ -241,14 +339,30 @@ class LLMHuggingFace(BaseLLM):
             model_kwargs["device_map"] = self.device_map
             model_kwargs["low_cpu_mem_usage"] = True
 
+        # AutoModelForCausalLM cannot instantiate an image-text-to-text architecture.
+        loader = AutoModelForCausalLM
+        if self.SUPPORTS_IMAGES:
+            if AutoModelForImageTextToText is None:
+                raise RuntimeError(
+                    f"{self.model_name} takes images, which needs "
+                    "transformers.AutoModelForImageTextToText (transformers >= 4.45). "
+                    "Upgrade transformers, or set SUPPORTS_IMAGES: false to run it as a "
+                    "text-only model."
+                )
+            loader = AutoModelForImageTextToText
+
         try:
             logger.debug("Loading model '%s' with kwargs: %s", self.model_name, model_kwargs)
-            model = AutoModelForCausalLM.from_pretrained(
+            model = loader.from_pretrained(
                 self.model_name, cache_dir=self.cache_dir, **model_kwargs
             )
         except Exception as error:
+            # torch.cuda.OutOfMemoryError, not torch.OutOfMemoryError: the latter only
+            # exists from torch 2.5, and reading it here raised AttributeError over the
+            # original error, which is exactly when this branch matters.
             is_oom = (
-                isinstance(error, torch.OutOfMemoryError) or "out of memory" in str(error).lower()
+                isinstance(error, torch.cuda.OutOfMemoryError)
+                or "out of memory" in str(error).lower()
             )
             can_fallback = (
                 _is_cuda_device(self.device)
@@ -273,7 +387,7 @@ class LLMHuggingFace(BaseLLM):
                     self.device_map if self.device_map is not None else "auto"
                 )
                 model_kwargs["dtype"] = torch.float16
-                model = AutoModelForCausalLM.from_pretrained(
+                model = loader.from_pretrained(
                     self.model_name,
                     cache_dir=self.cache_dir,
                     **model_kwargs,
@@ -437,10 +551,168 @@ class LLMHuggingFace(BaseLLM):
         model = self.connect()
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model_input_device)
 
-        generation_kwargs = {
+        generation_kwargs = self._generation_kwargs(max_new_tokens)
+
+        with torch.no_grad():
+            output = model.generate(**inputs, **generation_kwargs)
+
+        input_length = inputs["input_ids"].shape[-1]
+        generated_tokens = output[0][input_length:]
+        response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+        response = self._truncate_at_stop_sequences(response)
+        return response, int(generated_tokens.shape[-1])
+
+    def image_part(self, image: Any) -> Dict[str, Any]:
+        """Wrap an image as the content part the chat templates expect.
+
+        Where the remote backends encode the image into the request, here the image
+        travels as an object: the processor reads it when it renders the template, so
+        it is kept as a ``PIL`` image rather than base64.
+
+        Parameters
+        ----------
+        image : Any
+            A ``PIL.Image.Image``, or the path of an image file.
+
+        Returns
+        -------
+        Dict[str, Any]
+            An ``image`` content part holding the opened image.
+
+        Raises
+        ------
+        NotImplementedError
+            If this model does not take images.
+        """
+        if not self.SUPPORTS_IMAGES:
+            raise NotImplementedError(f"{self.model_name} does not support images.")
+
+        # Imported lazily: a text-only deployment does not need Pillow.
+        from PIL import Image
+
+        if isinstance(image, (str, Path)):
+            image = Image.open(image)
+
+        return {"type": "image", "image": image.convert("RGB")}
+
+    @staticmethod
+    def _carries_images(messages: List[Dict[str, Any]]) -> bool:
+        """Return whether any message holds an image part.
+
+        Parameters
+        ----------
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format.
+
+        Returns
+        -------
+        bool
+            True when at least one message content is a list holding an image part.
+        """
+        for message in messages:
+            content = message.get("content")
+            if isinstance(content, list) and any(
+                isinstance(part, dict) and part.get("type") == "image" for part in content
+            ):
+                return True
+
+        return False
+
+    def _generate_from_messages(
+        self, messages: List[Dict[str, Any]], max_new_tokens: int
+    ) -> Tuple[str, int, int]:
+        """Run generation over messages that carry images.
+
+        The text path flattens messages to a string, which drops everything that is not
+        text. Here the structure is handed to the processor instead, so that the image
+        tokens and the pixel values reach the model together.
+
+        Parameters
+        ----------
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format, with image parts.
+        max_new_tokens : int
+            Maximum number of new tokens to generate.
+
+        Returns
+        -------
+        Tuple[str, int, int]
+            Generated text, generated token count, and prompt token count.
+        """
+        model = self.connect()
+
+        template_kwargs: Dict[str, Any] = {}
+        if self.enable_thinking is not NOT_SET:
+            template_kwargs["enable_thinking"] = self.enable_thinking
+
+        inputs = self.processor.apply_chat_template(
+            self._as_template_messages(messages),
+            add_generation_prompt=True,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            **template_kwargs,
+        ).to(self.model_input_device)
+
+        generation_kwargs = self._generation_kwargs(max_new_tokens)
+
+        with torch.no_grad():
+            output = model.generate(**inputs, **generation_kwargs)
+
+        input_length = int(inputs["input_ids"].shape[-1])
+        generated_tokens = output[0][input_length:]
+        response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+
+        return (
+            self._truncate_at_stop_sequences(response),
+            int(generated_tokens.shape[-1]),
+            input_length,
+        )
+
+    @staticmethod
+    def _as_template_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Put every message content in the list-of-parts shape the templates expect.
+
+        Parameters
+        ----------
+        messages : List[Dict[str, Any]]
+            Messages in the shared chat format, where content is a string or a list.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            The same messages, with string contents wrapped as a single text part.
+        """
+        rendered = []
+        for message in messages:
+            content = message.get("content", "")
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+            rendered.append({"role": message.get("role", "user"), "content": content})
+
+        return rendered
+
+    def _generation_kwargs(self, max_new_tokens: int) -> Dict[str, Any]:
+        """Build the keyword arguments of ``model.generate``.
+
+        Shared by the text and the image paths so that a run answers to the same
+        ``LLM_CONFIG`` whichever one it takes.
+
+        Parameters
+        ----------
+        max_new_tokens : int
+            Maximum number of new tokens to generate.
+
+        Returns
+        -------
+        Dict[str, Any]
+            The generation arguments.
+        """
+        generation_kwargs: Dict[str, Any] = {
             "max_new_tokens": max_new_tokens,
             "pad_token_id": self.tokenizer.eos_token_id,
         }
+
         use_cache = self.param("use_cache")
         if use_cache is not None:
             generation_kwargs["use_cache"] = use_cache
@@ -455,14 +727,7 @@ class LLMHuggingFace(BaseLLM):
         else:
             generation_kwargs["do_sample"] = False
 
-        with torch.no_grad():
-            output = model.generate(**inputs, **generation_kwargs)
-
-        input_length = inputs["input_ids"].shape[-1]
-        generated_tokens = output[0][input_length:]
-        response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
-        response = self._truncate_at_stop_sequences(response)
-        return response, int(generated_tokens.shape[-1])
+        return generation_kwargs
 
     def _send(self, client: Any, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Generate a completion for the given messages.
@@ -479,6 +744,20 @@ class LLMHuggingFace(BaseLLM):
         Dict[str, Any]
             Response payload with text and token counts.
         """
+        max_new_tokens = self.param("max_tokens", 4096)
+
+        # Only the messages that actually carry an image take the processor path: a
+        # text-only exchange with a multimodal model keeps the behaviour it had.
+        if self._carries_images(messages):
+            response, completion_tokens, prompt_tokens = self._generate_from_messages(
+                messages, max_new_tokens=max_new_tokens
+            )
+            return {
+                "content": response,
+                "completion_tokens": completion_tokens,
+                "prompt_tokens": prompt_tokens,
+            }
+
         prompt = self._messages_to_prompt(messages)
         try:
             prompt_tokens = int(len(self.tokenizer.encode(prompt, add_special_tokens=False)))
@@ -486,7 +765,7 @@ class LLMHuggingFace(BaseLLM):
             prompt_tokens = 0
 
         response, completion_tokens = self._generate_from_prompt(
-            prompt, max_new_tokens=self.param("max_tokens", 4096)
+            prompt, max_new_tokens=max_new_tokens
         )
         return {
             "content": response,
