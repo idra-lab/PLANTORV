@@ -13,6 +13,7 @@ samgpt
 api/pipeline
 api/segmentation
 api/scene_understanding
+api/depth
 api/mapping
 ```
 

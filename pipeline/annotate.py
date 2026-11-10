@@ -1,9 +1,9 @@
 r"""Tag and describe the objects a segmentation run left on disk.
 
 Second of the three stages, and independent of the third. It reads the frame
-directories ``segmentation.py`` wrote and fills the ``tag`` and ``description`` of
+directories ``pipeline/segment.py`` wrote and fills the ``tag`` and ``description`` of
 every object in ``<output-dir>/output_img<frame-id>.json``, leaving the fields
-``depth_estimation.py`` owns untouched. Changing the annotation model therefore
+``pipeline/estimate_depth.py`` owns untouched. Changing the annotation model therefore
 costs one run of this script and nothing else.
 
 Two annotators are available. ``--annotator gpt`` sends the full frame and the
@@ -15,11 +15,11 @@ Examples
 --------
 Annotate a segmentation run with the model of the default configuration::
 
-    python3 annotation.py --input-dir output/output_segmentation --output-dir output
+    python3 -m pipeline.annotate --input-dir output/output_segmentation --output-dir output
 
 Annotate the same run with Claude, without segmenting again::
 
-    python3 annotation.py --input-dir output/output_segmentation --output-dir output \\
+    python3 -m pipeline.annotate --input-dir output/output_segmentation --output-dir output \\
         --llm-config LLM/conf/azure_claude-opus46.yaml
 """
 
@@ -27,7 +27,7 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Optional, Union
+from typing import Union
 
 from PIL import Image
 
@@ -35,45 +35,6 @@ from pipeline import artifacts, cli
 from pipeline.provenance import write_run_config
 from scene_understanding.annotator_factory import create_annotator, describe
 from utility.utility import logger
-
-
-def resolve_image(recorded: Path, fid: int, images_dir: Optional[str]) -> Path:
-    """Return the RGB frame to annotate.
-
-    Parameters
-    ----------
-    recorded : Path
-        The path segmentation recorded for this frame.
-    fid : int
-        The frame number.
-    images_dir : str or None
-        Value of ``--images-dir``, used when the dataset has moved since.
-
-    Returns
-    -------
-    Path
-        The frame to read.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the frame cannot be found.
-    """
-    if images_dir is None:
-        if not recorded.is_file():
-            raise FileNotFoundError(
-                f"Frame {fid} was segmented from {recorded}, which no longer exists. "
-                "Pass --images-dir to say where the frames are now."
-            )
-        return recorded
-
-    candidates = [
-        path for path in artifacts.list_images(images_dir) if artifacts.frame_id(path) == fid
-    ]
-    if not candidates:
-        raise FileNotFoundError(f"No frame {fid} in {images_dir}")
-
-    return candidates[0]
 
 
 def run(
@@ -84,7 +45,7 @@ def run(
     Parameters
     ----------
     input_dir : Union[str, Path]
-        The ``output_segmentation`` directory written by ``segmentation.py``.
+        The ``output_segmentation`` directory written by ``pipeline/segment.py``.
     output_dir : Union[str, Path]
         Run directory the per-frame result files are written to.
     args : argparse.Namespace
@@ -120,7 +81,7 @@ def run(
         logger.info(f"Annotating frame {position + 1}/{len(frame_ids)}: {fid}")
 
         frame = artifacts.read_frame(input_dir, fid)
-        image = Image.open(resolve_image(frame.image_path, fid, args.images_dir))
+        image = Image.open(artifacts.resolve_image(frame.image_path, fid, args.images_dir))
 
         start = time.time()
         # `masks` goes along whichever annotator is in use: the crop-based one
@@ -149,7 +110,7 @@ def parse_arguments() -> argparse.Namespace:
         "--input-dir",
         type=str,
         default=f"output/{artifacts.SEGMENTATION_SUBDIR}",
-        help="Segmentation directory written by segmentation.py (default: %(default)s)",
+        help="Segmentation directory written by pipeline/segment.py (default: %(default)s)",
     )
     parser.add_argument(
         "--output-dir",
@@ -174,22 +135,7 @@ def parse_arguments() -> argparse.Namespace:
     if args.images_dir is not None:
         cli.require_dir(args.images_dir, "Images directory")
 
-    if args.annotator == "gpt":
-        cli.require_file(args.llm_config, "LLM configuration file")
-    else:
-        from scene_understanding.dam_annotator import looks_like_repo_id
-
-        if not looks_like_repo_id(args.dam_model) and not Path(args.dam_model).exists():
-            logger.error(
-                f"DAM checkpoint does not exist: {args.dam_model}. Download it with "
-                "`python3 scripts/install_models.py dam_3b`."
-            )
-            sys.exit(1)
-        if "<image>" not in args.dam_query:
-            logger.error(
-                "--dam-query must contain the <image> token DAM substitutes the region into."
-            )
-            sys.exit(1)
+    cli.validate_annotation_arguments(args)
 
     cli.validate_device(args.device)
 

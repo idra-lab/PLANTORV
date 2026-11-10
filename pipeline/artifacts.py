@@ -1,6 +1,6 @@
 """The on-disk contract between the pipeline stages.
 
-``segmentation.py`` writes one directory per frame under
+``pipeline/segment.py`` writes one directory per frame under
 ``<output-dir>/output_segmentation``::
 
     output_segmentation/
@@ -9,7 +9,7 @@
             masks.npz           the object masks, stacked (N, H, W) and compressed
             crops/object_00.png the cropped objects, in the order of meta.json
 
-``annotation.py`` and ``depth_estimation.py`` both read that directory and both
+``pipeline/annotate.py`` and ``pipeline/estimate_depth.py`` both read that directory and both
 write ``<output-dir>/output_img<frame-id>.json``, the file
 ``evaluation/run_evaluation.py`` reads. Neither owns it: annotation fills the
 ``tag`` and ``description`` of every object, depth fills its coordinates and
@@ -32,7 +32,7 @@ from PIL import Image
 
 from utility.json_serialization import to_json_compatible as convert
 
-# Subdirectory of --output-dir that segmentation.py writes to, and that the other
+# Subdirectory of --output-dir that pipeline/segment.py writes to, and that the other
 # two stages read by default.
 SEGMENTATION_SUBDIR = "output_segmentation"
 
@@ -141,6 +141,43 @@ def index_by_frame(paths: Sequence[Path]) -> Dict[int, Path]:
         The frame number of each file mapped to the file.
     """
     return {frame_id(path): path for path in paths}
+
+
+def resolve_image(recorded: Path, fid: int, images_dir: Optional[str]) -> Path:
+    """Return the RGB frame a segmented frame was read from.
+
+    Parameters
+    ----------
+    recorded : Path
+        The path segmentation recorded for this frame.
+    fid : int
+        The frame number.
+    images_dir : str or None
+        Value of ``--images-dir``, used when the dataset has moved since.
+
+    Returns
+    -------
+    Path
+        The frame to read.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the frame cannot be found.
+    """
+    if images_dir is None:
+        if not recorded.is_file():
+            raise FileNotFoundError(
+                f"Frame {fid} was segmented from {recorded}, which no longer exists. "
+                "Pass --images-dir to say where the frames are now."
+            )
+        return recorded
+
+    candidates = [path for path in list_images(images_dir) if frame_id(path) == fid]
+    if not candidates:
+        raise FileNotFoundError(f"No frame {fid} in {images_dir}")
+
+    return candidates[0]
 
 
 def frame_dir(segmentation_dir: Union[str, Path], fid: int) -> Path:
@@ -264,14 +301,14 @@ def list_frame_ids(segmentation_dir: Union[str, Path]) -> List[int]:
     directory = Path(segmentation_dir)
     if not directory.is_dir():
         raise FileNotFoundError(
-            f"Segmentation directory not found: {directory}. Run segmentation.py first."
+            f"Segmentation directory not found: {directory}. Run pipeline/segment.py first."
         )
 
     ids = sorted(frame_id(p) for p in directory.glob("frame_*") if (p / "meta.json").is_file())
     if not ids:
         raise FileNotFoundError(
             f"No frame found in {directory}. It should hold one frame_<n>/ directory per "
-            "frame, as written by segmentation.py."
+            "frame, as written by pipeline/segment.py."
         )
 
     return ids

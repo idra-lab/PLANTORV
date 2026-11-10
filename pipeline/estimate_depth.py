@@ -1,10 +1,10 @@
 r"""Give every segmented object a position and a distance.
 
 Third of the three stages, and independent of the second. It reads the frame
-directories ``segmentation.py`` wrote and fills ``coord_center&depth``,
+directories ``pipeline/segment.py`` wrote and fills ``coord_center&depth``,
 ``object_depth_mm`` and ``depth_association`` for every object of
 ``<output-dir>/output_img<frame-id>.json``, leaving the ``tag`` and the
-``description`` ``annotation.py`` owns untouched. Depth needs the bounding boxes
+``description`` ``pipeline/annotate.py`` owns untouched. Depth needs the bounding boxes
 and the masks, never the annotations, so this can run before annotation, after
 it, or again on its own when the depth backend changes.
 
@@ -15,11 +15,11 @@ Examples
 --------
 Read the depth of a segmentation run from the dataset::
 
-    python3 depth_estimation.py --input-dir output/output_segmentation --output-dir output
+    python3 -m pipeline.estimate_depth --input-dir output/output_segmentation --output-dir output
 
 Estimate it from the RGB frames instead, taking one depth per object mask::
 
-    python3 depth_estimation.py --input-dir output/output_segmentation --output-dir output \\
+    python3 -m pipeline.estimate_depth --input-dir output/output_segmentation --output-dir output \\
         --depth-source monocular --depth-association mask-median
 """
 
@@ -80,45 +80,6 @@ def describe(provider: Optional[DepthProvider], args: argparse.Namespace) -> Dic
     return described
 
 
-def resolve_image(recorded: Path, fid: int, images_dir: Optional[str]) -> Path:
-    """Return the RGB frame the depth is registered to.
-
-    Parameters
-    ----------
-    recorded : Path
-        The path segmentation recorded for this frame.
-    fid : int
-        The frame number.
-    images_dir : str or None
-        Value of ``--images-dir``, used when the dataset has moved since.
-
-    Returns
-    -------
-    Path
-        The frame to read.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the frame cannot be found.
-    """
-    if images_dir is None:
-        if not recorded.is_file():
-            raise FileNotFoundError(
-                f"Frame {fid} was segmented from {recorded}, which no longer exists. "
-                "Pass --images-dir to say where the frames are now."
-            )
-        return recorded
-
-    candidates = [
-        path for path in artifacts.list_images(images_dir) if artifacts.frame_id(path) == fid
-    ]
-    if not candidates:
-        raise FileNotFoundError(f"No frame {fid} in {images_dir}")
-
-    return candidates[0]
-
-
 def run(
     input_dir: Union[str, Path], output_dir: Union[str, Path], args: argparse.Namespace
 ) -> None:
@@ -127,7 +88,7 @@ def run(
     Parameters
     ----------
     input_dir : Union[str, Path]
-        The ``output_segmentation`` directory written by ``segmentation.py``.
+        The ``output_segmentation`` directory written by ``pipeline/segment.py``.
     output_dir : Union[str, Path]
         Run directory the per-frame result files are written to.
     args : argparse.Namespace
@@ -160,7 +121,7 @@ def run(
 
         # The crops belong to the annotator; depth reads the boxes and the masks.
         frame = artifacts.read_frame(input_dir, fid, crops=False)
-        image_path = resolve_image(frame.image_path, fid, args.images_dir)
+        image_path = artifacts.resolve_image(frame.image_path, fid, args.images_dir)
 
         # The two mappers below add their fields to the objects they are given, so
         # the boxes segmentation kept are what the frame's objects are seeded with.
@@ -216,7 +177,7 @@ def parse_arguments() -> argparse.Namespace:
         "--input-dir",
         type=str,
         default=f"output/{artifacts.SEGMENTATION_SUBDIR}",
-        help="Segmentation directory written by segmentation.py (default: %(default)s)",
+        help="Segmentation directory written by pipeline/segment.py (default: %(default)s)",
     )
     parser.add_argument(
         "--output-dir",
@@ -241,10 +202,7 @@ def parse_arguments() -> argparse.Namespace:
     if args.images_dir is not None:
         cli.require_dir(args.images_dir, "Images directory")
 
-    # Only checked for the sensor backend: the estimators never read --depth-dir, so
-    # requiring it would force a depth dataset to exist for a run that ignores it.
-    if args.depth_source == "sensor":
-        cli.require_dir(args.depth_dir, "Depth images directory")
+    cli.validate_depth_arguments(args)
 
     cli.validate_device(args.device)
 

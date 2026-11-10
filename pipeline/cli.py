@@ -309,3 +309,44 @@ def setup(args: argparse.Namespace) -> None:
 
         os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
         torch.cuda.empty_cache()
+
+
+def validate_annotation_arguments(args: argparse.Namespace) -> None:
+    """Check the annotation options before any model is loaded, exiting on a bad one.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments, with the options of
+        :func:`add_annotation_arguments`.
+    """
+    if args.annotator == "gpt":
+        require_file(args.llm_config, "LLM configuration file")
+        return
+
+    from scene_understanding.dam_annotator import looks_like_repo_id
+
+    if not looks_like_repo_id(args.dam_model) and not Path(args.dam_model).exists():
+        logger.error(
+            f"DAM checkpoint does not exist: {args.dam_model}. Download it with "
+            "`python3 scripts/install_models.py dam_3b`."
+        )
+        sys.exit(1)
+    if "<image>" not in args.dam_query:
+        logger.error("--dam-query must contain the <image> token DAM substitutes the region into.")
+        sys.exit(1)
+
+
+def validate_depth_arguments(args: argparse.Namespace) -> None:
+    """Check the depth options, exiting on a bad one.
+
+    ``--depth-dir`` is only checked for the sensor backend: the estimators never read
+    it, so requiring it would force a depth dataset to exist for a run that ignores it.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments, with the options of :func:`add_depth_arguments`.
+    """
+    if args.depth_source == "sensor":
+        require_dir(args.depth_dir, "Depth images directory")

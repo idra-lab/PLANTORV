@@ -4,7 +4,7 @@ The counterpart of :mod:`LLM.llm_factory` for the segmentation side. A file in
 ``segmentation/conf`` carries everything that decides what a run produces -- the
 backend, its checkpoint, the arguments forwarded to it and the thresholds that
 decide which masks are kept -- so swapping model means pointing
-``segmentation.py --segmenter-config`` at another file.
+``pipeline/segment.py --segmenter-config`` at another file.
 
 Recognised keys::
 

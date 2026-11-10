@@ -6,7 +6,7 @@ object crops, their bounding boxes and their binary masks; see
 :mod:`pipeline.artifacts` for the layout.
 
 Nothing else in the pipeline segments, so this is the run that
-``annotation.py`` and ``depth_estimation.py`` reuse: pointed at the same
+``pipeline/annotate.py`` and ``pipeline/estimate_depth.py`` reuse: pointed at the same
 ``--output-dir``, either of them can be run again, in any order and as often as a
 model is swapped, without segmenting anything a second time.
 
@@ -14,11 +14,11 @@ Examples
 --------
 Segment the dataset into ``output/``::
 
-    python3 segmentation.py --input-dir dataset/rgb --output-dir output
+    python3 -m pipeline.segment --input-dir dataset/rgb --output-dir output
 
 Segment with SAM 3, whose concepts a VLM names::
 
-    python3 segmentation.py --segmenter-config segmentation/conf/sam3.yaml \\
+    python3 -m pipeline.segment --segmenter-config segmentation/conf/sam3.yaml \\
         --output-dir output_sam3
 """
 

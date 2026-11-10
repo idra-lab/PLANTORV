@@ -29,7 +29,7 @@
 # VLMs. The annotation stage only reads the segmentation artefacts from disk, so it runs
 # from this interpreter without touching the other stages:
 #
-#     .venv-o3dml/bin/python annotation.py --annotator dam ...
+#     .venv-o3dml/bin/python -m pipeline.annotate --annotator dam ...
 
 --extra-index-url https://download.pytorch.org/whl/cu121
 

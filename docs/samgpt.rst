@@ -1,12 +1,10 @@
 samgpt module
 =============
 
-Runs the three stage scripts -- ``segmentation.py``, ``annotation.py`` and
-``depth_estimation.py`` -- in a row. Hand-written rather than generated: ``sphinx-apidoc``
-only walks packages, and this is a top-level module, so it lives here instead of in the
-generated ``docs/api/``. The stage scripts themselves are not documented here: one of them
-shares a name with the ``segmentation`` package, which an ``automodule`` directive would
-resolve to instead. What they exchange is in :doc:`api/pipeline`.
+A thin wrapper around :mod:`pipeline.run`, kept at the repository root because the
+ROS nodes and the cluster jobs call it by path. It runs the three stages --
+:mod:`pipeline.segment`, :mod:`pipeline.annotate` and :mod:`pipeline.estimate_depth`
+-- in a row; they and what they exchange are documented in :doc:`api/pipeline`.
 
 .. automodule:: samgpt
    :members:
