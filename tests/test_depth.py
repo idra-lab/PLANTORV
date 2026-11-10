@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from mapping import camera_model as cm
+from mapping import depth_provider as dp
 from mapping import rgbd_mapper as rm
 
 
@@ -128,7 +129,7 @@ class TestMainCoords(unittest.TestCase):
         cv2.imwrite(depth_path, np.full((1024, 1024), 1000, np.uint16))
 
         dict_objects = {"mask_0": {"bbox": [300, 160, 40, 40]}}
-        out = rm.main_coords(rgb_path, depth_path, dict_objects)
+        out = dp.main_coords(rgb_path, depth_path, dict_objects)
 
         self.assertIn("coord_center&depth", out["mask_0"])
         cx, cy, depth_mm = out["mask_0"]["coord_center&depth"]

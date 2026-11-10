@@ -38,8 +38,8 @@ from mapping.depth_anything import (
     DepthAnythingV2Provider,
     DepthAnythingV3Provider,
 )
-from mapping.depth_provider import DepthProvider
-from mapping.rgbd_mapper import attach_object_depths, main_coords
+from mapping.depth_provider import DepthProvider, main_coords
+from mapping.rgbd_mapper import attach_object_depths
 from pipeline import artifacts, cli
 from pipeline.provenance import write_run_config
 from utility.utility import logger

@@ -200,7 +200,7 @@ class DAMAnnotator(Annotator):
         dict
             One entry per object, keyed ``"mask_0"``, ``"mask_1"``, ... Each value
             holds ``"tag"``, ``"description"`` and ``"bbox"``, which is the shape
-            ``mapping.rgbd_mapper.main_coords`` expects.
+            ``mapping.depth_provider.main_coords`` expects.
 
         Raises
         ------
