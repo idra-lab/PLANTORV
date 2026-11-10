@@ -1,0 +1,61 @@
+# The Open3D environment.
+#
+# Open3D is not installed in the main environment at all: version 0.19 ships precompiled
+# PyTorch ops, and `open3d.ml.torch` raises unless the installed torch is 2.2.*:
+#
+#     open3d/ml/torch/__init__.py
+#     raise Exception('Version mismatch: Open3D needs PyTorch version 2.2.*, ...')
+#
+# The main environment has moved well past that: SAM 3 needs torch >= 2.3 (ultralytics
+# imports `torch.nn.attention`) and transformers 5 needs torch >= 2.5. Open3D 0.19 is the
+# newest release and nothing is built against a newer torch, so the two cannot be met at
+# once. This file freezes the old stack for the point-cloud work.
+#
+# Install into an environment of its own, never into .venv:
+#
+#     make install-o3dml
+#     .venv-o3dml/bin/python segment_pcd.py ...
+#     .venv-o3dml/bin/python cluster_pcd.py ...
+#
+# Both point-cloud scripts belong here now: segment_pcd.py because of the learned models
+# (RandLA-Net, PointTransformer), and cluster_pcd.py because plain Open3D is no longer in
+# the main environment either. The `mapping` package resolves its Open3D-backed helpers
+# lazily, so everything else -- the pipeline stages, the depth providers, the evaluation
+# -- runs in the main environment without it.
+#
+# Describe Anything (DAM) lives here too, for the same reason in the other direction: its
+# LLaVA-based code imports `no_init_weights` from `transformers.modeling_utils`, which
+# transformers 5 removed, and the main environment needs transformers 5 for its local
+# VLMs. The annotation stage only reads the segmentation artefacts from disk, so it runs
+# from this interpreter without touching the other stages:
+#
+#     .venv-o3dml/bin/python annotation.py --annotator dam ...
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+# The pin the whole file exists for. Do not raise it: it is what open3d.ml.torch checks.
+torch==2.2.2+cu121
+torchvision==0.17.2+cu121
+
+open3d==0.19.0
+numpy==1.26.4
+
+# Imported by segment_pcd.py and the mapping helpers it reuses.
+opencv-python==4.10.0.84
+scikit-image
+matplotlib
+pyyaml
+python-dotenv
+loguru
+
+# Describe Anything (DAM), the local annotator in scene_understanding/dam_annotator.py.
+# NVIDIA does not publish it on PyPI, so it is installed straight from the repository.
+# The package it installs is called `dam`.
+dam @ git+https://github.com/NVlabs/describe-anything
+
+# DAM asks only for transformers >= 4.41.2, but it cannot load under 5 (see above). 4.57
+# is the last 4.x release and still asks for no more than torch 2.2, which the pin above
+# must stay at.
+transformers>=4.41.2,<5
+
+tensorboard==2.16.2

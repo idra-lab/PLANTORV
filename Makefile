@@ -2,6 +2,7 @@ PYTHON ?= python3
 PIP ?= $(PYTHON) -m pip
 RUFF ?= ruff
 PYRIGHT ?= pyright
+PYTEST ?= $(PYTHON) -m pytest
 PRE_COMMIT ?= pre-commit
 SPHINX_BUILD ?= sphinx-build
 SPHINX_APIDOC ?= sphinx-apidoc
@@ -13,7 +14,7 @@ O3DML_VENV ?= .venv-o3dml
 # prefix every module with `plantorv.`, which is not an importable name.
 DOC_PACKAGES ?= segmentation scene_understanding mapping LLM utility aruco evaluation pipeline
 
-.PHONY: install install-dev install-o3dml format format-check lint typecheck check docs docs-api docs-serve
+.PHONY: install install-dev install-o3dml format format-check lint typecheck check test docs docs-api docs-serve clean
 
 # Runtime dependencies only - this is what the PBS cluster jobs need.
 install:
@@ -54,6 +55,9 @@ typecheck:
 	$(PYRIGHT)
 
 check: format-check lint typecheck
+
+test:
+	$(PYTEST) -q
 
 # Build the API documentation into docs/_build/html. Depends on docs-api, so the stubs are
 # generated rather than committed: they derive entirely from the package layout, and a stale

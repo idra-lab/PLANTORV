@@ -5,7 +5,7 @@
 {
   "include": [
     "../samgpt.py",
-    "../samdamcoords.py",
+    "../pipeline",
     "../segmentation",
     "../mapping",
     "../scene_understanding",
