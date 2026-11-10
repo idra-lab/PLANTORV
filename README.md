@@ -214,8 +214,8 @@ variables from the root `.env`. They share these flags:
 - `samgpt.py` - runs the three in a row into one `--output-dir`, for when nothing is being swapped.
 - `pipeline/` - what the stages share: `artifacts.py` defines the files they exchange, `cli.py` the options they have in common.
 - `segmentation/` - `SegmentationModel` base class, `SAMModel` (SAM 1, MobileSAM, SAM 2 and SAM 2.1) and `FastSAMModel`, all run through Ultralytics to produce a background mask and per-object crops. `SAM3Model` sits alongside them and works differently: a VLM names the things in the scene and SAM 3 segments those concepts, so its masks arrive already labelled.
-- `scene_understanding/` - the shared `Annotator` interface, remote `GPTAnnotator`, and local mask-based `DAMAnnotator`.
-- `LLM/` - backend-agnostic LLM layer (`BaseLLM`, one package per provider, YAML configs in `LLM/conf/`), plus `LLM/examples/SAM3/concept_prompts.yaml`, the phrasing examples used to steer SAM 3's concepts.
+- `scene_understanding/` - the shared `Annotator` interface, remote `GPTAnnotator`, local mask-based `DAMAnnotator`, and `ConceptInventory` (`inventory.py`), which asks the VLM for the concepts SAM 3 segments; its phrasing examples are in `scene_understanding/conf/concept_prompts.yaml`.
+- `LLM/` - backend-agnostic LLM layer (`BaseLLM`, one package per provider, YAML configs in `LLM/conf/`).
 - `mapping/` - RGB-D camera calibration (hardcoded Femto Mega intrinsics) and depth-to-color projection utilities.
 - `aruco/` - ArUco marker detection, pose estimation, camera/config YAML files, and marker generation.
 - `evaluation/` - matching, metrics, depth correlation, and result visualization.
@@ -490,15 +490,17 @@ masks that `individual_mask` then filters down with area, border and IoU heurist
 is asked for **concepts**: it takes short noun phrases and returns every region matching
 each one, already labelled with the phrase that found it. It has its own class,
 [segmentation/sam3_model.py](segmentation/sam3_model.py), which drives Ultralytics'
-`SAM3SemanticPredictor` and takes a VLM in its constructor — the VLM looks at the scene and
-decides what the phrases should be:
+`SAM3SemanticPredictor` and takes a `ConceptInventory`
+([scene_understanding/inventory.py](scene_understanding/inventory.py)) in its constructor —
+the inventory shows the scene to a VLM, which decides what the phrases should be:
 
 ```python
 from LLM.llm_factory import create_llm
+from scene_understanding.inventory import ConceptInventory
 from segmentation.sam3_model import SAM3Model
 
-sam = SAM3Model(create_llm("LLM/conf/azure_gpt52.yaml"), "models/sam/sam3.pt",
-                save_dir=..., device="cuda")
+inventory = ConceptInventory(create_llm("LLM/conf/azure_gpt52.yaml"))
+sam = SAM3Model(inventory, "models/sam/sam3.pt", save_dir=..., device="cuda")
 masks, bboxes, labels = sam.segment(image)   # labels[i] is the concept that found masks[i]
 ```
 
@@ -545,9 +547,10 @@ token is present.
 > has to settle *what counts as one thing*: `"lego block"` matches a single brick, a stack
 > of two, and the whole tower they form, and SAM 3 returns all of those, nested. Naming the
 > assembly instead — `"tall green tower"`, `"long blue object"` — lowers the number of masks
-> in the same frame. The prompt that steers the VLM lives in `sam3_model.py`, and the
-> good/bad phrasing examples it injects are in
-> [LLM/examples/SAM3/concept_prompts.yaml](LLM/examples/SAM3/concept_prompts.yaml).
+> in the same frame. The prompt that steers the VLM lives in
+> [scene_understanding/inventory.py](scene_understanding/inventory.py), and the good/bad
+> phrasing examples it injects are in
+> [scene_understanding/conf/concept_prompts.yaml](scene_understanding/conf/concept_prompts.yaml).
 >
 > As a safety net, `SAM3Model` merges masks that share a concept and touch, which puts a
 > row of bricks returned brick-by-brick back together. Tune it with `merge_gap` (measured

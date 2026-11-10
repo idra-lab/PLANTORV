@@ -15,11 +15,13 @@ Recognised keys::
                         SAM, conf/iou/imgsz for FastSAM and SAM 3).
     FILTERS             Overrides of the backend's DEFAULT_FILTERS.
 
-SAM 3 reads three more, since a VLM names the concepts it segments::
+SAM 3 reads more, since a VLM names the concepts it segments. The first three
+build its :class:`~scene_understanding.inventory.ConceptInventory`::
 
     LLM_CONFIG_FILE     The LLM YAML configuration of that VLM.
     EXAMPLES_FILE       Phrasing examples steering the concepts.
-    MERGE_GAP, TASK, CONCEPTS   Passed to SAM3Model as they are.
+    TASK                The task the robot has to carry out.
+    MERGE_GAP, CONCEPTS Passed to SAM3Model as they are.
 """
 
 from pathlib import Path
@@ -51,7 +53,9 @@ MODEL_ALIASES = {
 CHECKPOINT_MARKERS = (("fastsam", "fastsam"), ("sam3.pt", "sam3"))
 
 # Keys that are neither forwarded parameters nor filters, per backend.
-SAM3_CONSTRUCTOR_KEYS = ("MERGE_GAP", "TASK", "CONCEPTS", "EXAMPLES_FILE")
+SAM3_CONSTRUCTOR_KEYS = ("MERGE_GAP", "CONCEPTS")
+# The SAM 3 keys that configure the VLM inventory rather than SAM 3 itself.
+SAM3_INVENTORY_KEYS = ("TASK", "EXAMPLES_FILE")
 
 
 def normalize_model(model: str) -> str:
@@ -212,7 +216,7 @@ def create_segmenter(
 
     # Every backend takes its checkpoint first, under a name of its own
     # (``sam_checkpoint``, ``fastsam_checkpoint``, ``sam3_checkpoint``), so it is passed
-    # positionally. SAM 3 takes the VLM ahead of it.
+    # positionally. SAM 3 takes the VLM inventory ahead of it.
     positional: tuple = (checkpoint,)
 
     if model == "sam3":
@@ -221,7 +225,15 @@ def create_segmenter(
         llm_config = config.get("LLM_CONFIG_FILE")
         if not llm_config:
             raise ValueError(f"Missing LLM_CONFIG_FILE in {config_file}, required by SAM 3.")
-        positional = (create_llm(llm_config), checkpoint)
+        # Imported here: only SAM 3 needs the inventory, and the other backends should
+        # not pay for importing it.
+        from scene_understanding.inventory import ConceptInventory
+
+        inventory_kwargs = {
+            key.lower(): config[key] for key in SAM3_INVENTORY_KEYS if config.get(key) is not None
+        }
+        inventory = ConceptInventory(create_llm(llm_config), save_dir=save_dir, **inventory_kwargs)
+        positional = (inventory, checkpoint)
 
         for key in SAM3_CONSTRUCTOR_KEYS:
             if config.get(key) is not None:

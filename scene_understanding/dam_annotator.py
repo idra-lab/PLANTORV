@@ -19,7 +19,7 @@ import numpy as np
 from PIL import Image
 
 from scene_understanding.annotator import Annotator
-from segmentation.segmentation import binary_mask_to_pil
+from utility.masks import binary_mask_to_pil
 from utility.utility import logger
 
 # Where `scripts/install_models.py` puts the DAM checkpoint. A Hugging Face

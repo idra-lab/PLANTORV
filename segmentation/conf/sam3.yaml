@@ -3,7 +3,7 @@
 MODEL: "sam3"
 CHECKPOINT: "models/sam/sam3.pt"
 LLM_CONFIG_FILE: "LLM/conf/azure_gpt52.yaml"
-EXAMPLES_FILE: "LLM/examples/SAM3/concept_prompts.yaml"
+EXAMPLES_FILE: "scene_understanding/conf/concept_prompts.yaml"
 
 # Constructor arguments of SAM3Model. TASK and CONCEPTS are unset here: naming
 # concepts is the VLM's job unless CONCEPTS takes it away from it.

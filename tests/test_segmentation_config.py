@@ -1,4 +1,6 @@
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -102,11 +104,12 @@ def test_the_written_record_holds_the_stage_and_the_values(tmp_path: Path) -> No
     assert "RUN_AT" in written
 
 
-def test_sam3_receives_the_vlm_before_the_checkpoint(
+def test_sam3_receives_the_vlm_inventory_before_the_checkpoint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # SAM3Model takes `llm` as its first positional parameter, so passing the checkpoint
-    # positionally and the VLM by keyword binds the checkpoint to `llm` and raises.
+    # SAM3Model takes the inventory as its first positional parameter, so passing the
+    # checkpoint positionally and the inventory by keyword would bind the checkpoint
+    # to `inventory`. TASK and EXAMPLES_FILE configure the inventory, not SAM 3.
     recorded = {}
 
     class _FakeBackend:
@@ -115,9 +118,12 @@ def test_sam3_receives_the_vlm_before_the_checkpoint(
             recorded["kwargs"] = kwargs
 
     import segmentation.segmentation_factory as factory
+    from scene_understanding.inventory import ConceptInventory
 
     monkeypatch.setattr(factory, "resolve_class", lambda model: _FakeBackend)
-    monkeypatch.setattr(factory, "create_llm", lambda path: f"llm<{path}>")
+    monkeypatch.setattr(
+        factory, "create_llm", lambda path: SimpleNamespace(SUPPORTS_IMAGES=True, path=path)
+    )
 
     factory.create_segmenter(
         _config(
@@ -125,11 +131,19 @@ def test_sam3_receives_the_vlm_before_the_checkpoint(
             MODEL="sam3",
             CHECKPOINT="models/sam/sam3.pt",
             LLM_CONFIG_FILE="LLM/conf/azure_gpt52.yaml",
+            TASK="pick up the wrench",
+            EXAMPLES_FILE=None,
+            MERGE_GAP=3,
         )
     )
 
-    assert recorded["args"] == ("llm<LLM/conf/azure_gpt52.yaml>", "models/sam/sam3.pt")
-    assert "llm" not in recorded["kwargs"]
+    inventory, checkpoint = recorded["args"]
+    assert isinstance(inventory, ConceptInventory)
+    assert cast(Any, inventory.llm).path == "LLM/conf/azure_gpt52.yaml"
+    assert inventory.task == "pick up the wrench"
+    assert checkpoint == "models/sam/sam3.pt"
+    assert recorded["kwargs"]["merge_gap"] == 3
+    assert not {"llm", "inventory", "task", "examples_file"} & set(recorded["kwargs"])
 
 
 def test_the_other_backends_take_only_the_checkpoint(
