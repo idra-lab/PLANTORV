@@ -27,102 +27,14 @@ import argparse
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Optional, Union
 
 from PIL import Image
 
 from pipeline import artifacts, cli
 from pipeline.provenance import write_run_config
-from scene_understanding.annotator import Annotator
+from scene_understanding.annotator_factory import create_annotator, describe
 from utility.utility import logger
-
-
-def build_annotator(args: argparse.Namespace) -> Annotator:
-    """Build the annotator selected by ``--annotator``.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed command-line arguments.
-
-    Returns
-    -------
-    Annotator
-        The configured annotator.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the checkpoint or the configuration file is missing.
-    ValueError
-        If the LLM configuration does not describe a usable backend.
-    ImportError
-        If DAM is selected but the ``dam`` package is not installed.
-    """
-    if args.annotator == "dam":
-        # Imported here rather than at module scope so that a GPT run does not pay
-        # for a dependency tree it will not use.
-        from scene_understanding.dam_annotator import DAMAnnotator
-
-        return DAMAnnotator(
-            args.dam_model,
-            query=args.dam_query,
-            device=args.dam_device or args.device,
-            temperature=args.dam_temperature,
-            top_p=args.dam_top_p,
-            max_new_tokens=args.dam_max_new_tokens,
-        )
-
-    from scene_understanding.gpt_annotator import GPTAnnotator
-
-    # The YAML file selects the model, the endpoint, the credentials and the request
-    # parameters, so switching model means pointing --llm-config elsewhere.
-    return GPTAnnotator.from_config(args.llm_config)
-
-
-def describe(annotator: Annotator, args: argparse.Namespace) -> Dict[str, Any]:
-    """Describe the annotator, for the record written next to the run.
-
-    Reads the annotator rather than the arguments, so a value its constructor filled
-    in is part of the answer.
-
-    Parameters
-    ----------
-    annotator : Annotator
-        The annotator, as returned by :func:`build_annotator`.
-    args : argparse.Namespace
-        Parsed command-line arguments.
-
-    Returns
-    -------
-    Dict[str, Any]
-        The effective configuration.
-    """
-    described: Dict[str, Any] = {"ANNOTATOR": args.annotator}
-
-    llm = getattr(annotator, "llm", None)
-    if llm is not None:
-        described["LLM_CONFIG_FILE"] = llm.config_file
-        described["LLM_VERSION"] = llm.model
-        described["LLM_CONFIG"] = llm.request_params()
-        # The prompt decides the vocabulary of the tags as much as the model does.
-        described["PROMPT"] = getattr(annotator, "prompt", None)
-        return described
-
-    described.update(
-        {
-            "DAM_MODEL": getattr(annotator, "model_path", args.dam_model),
-            "DAM_CONFIG": {
-                "temperature": getattr(annotator, "temperature", args.dam_temperature),
-                "top_p": getattr(annotator, "top_p", args.dam_top_p),
-                "num_beams": getattr(annotator, "num_beams", None),
-                "max_new_tokens": getattr(annotator, "max_new_tokens", args.dam_max_new_tokens),
-            },
-            "QUERY": getattr(annotator, "query", args.dam_query),
-        }
-    )
-
-    return described
 
 
 def resolve_image(recorded: Path, fid: int, images_dir: Optional[str]) -> Path:
@@ -182,14 +94,27 @@ def run(
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     try:
-        annotator = build_annotator(args)
+        if args.annotator == "dam":
+            annotator = create_annotator(
+                "dam",
+                model_path=args.dam_model,
+                query=args.dam_query,
+                device=args.dam_device or args.device,
+                temperature=args.dam_temperature,
+                top_p=args.dam_top_p,
+                max_new_tokens=args.dam_max_new_tokens,
+            )
+        else:
+            annotator = create_annotator(args.annotator, llm_config_file=args.llm_config)
     except (FileNotFoundError, ValueError, ImportError) as error:
         logger.error(f"Unable to configure the annotator: {error}")
         sys.exit(1)
 
     # Written before the frames rather than after, so an interrupted run still says
     # what it was doing.
-    write_run_config(output_dir, "annotation", describe(annotator, args), device=args.device)
+    write_run_config(
+        output_dir, "annotation", describe(annotator, args.annotator), device=args.device
+    )
 
     for position, fid in enumerate(frame_ids):
         logger.info(f"Annotating frame {position + 1}/{len(frame_ids)}: {fid}")

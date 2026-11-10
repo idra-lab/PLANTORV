@@ -644,7 +644,7 @@ reprojected into the colour frame first.
 and the annotation dictionary, and adds three keys per object:
 
 ```python
-from mapping.depth_provider import main_coords
+from depth.depth_provider import main_coords
 
 image_dict = main_coords(image, depth_path, image_dict)
 # image_dict["mask_0"]["coord_center&depth"]    == [center_x, center_y, depth_mm]

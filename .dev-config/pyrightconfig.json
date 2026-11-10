@@ -7,6 +7,7 @@
     "../samgpt.py",
     "../pipeline",
     "../segmentation",
+    "../depth",
     "../mapping",
     "../scene_understanding",
     "../LLM",

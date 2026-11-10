@@ -2,9 +2,12 @@
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Tuple
 
 import numpy as np
 
+from depth.depth_anything import DepthAnythingV2Provider, DepthAnythingV3Provider
+from depth.depth_provider import DepthResult, SensorDepthProvider
 from mapping.camera_model import (
     CameraToWorldTransform,
     Distortion,
@@ -14,14 +17,19 @@ from mapping.camera_model import (
     rgb_calibration_for_size,
     scale_intrinsics,
 )
-from mapping.depth_anything import DepthAnythingV2Provider, DepthAnythingV3Provider
-from mapping.depth_provider import DepthResult, SensorDepthProvider
 from mapping.rgbd_mapper import (
     _mask_median_reference_pixel,
     attach_object_depths,
     backproject_pixel_to_camera_m,
 )
 from mapping.rgbd_pointcloud import create_point_cloud_from_aligned_depth
+
+
+def _calibration(width: int, height: int) -> Tuple[Intrinsics, Distortion]:
+    """Return the calibration of a frame size the tests know is calibrated."""
+    calibration = rgb_calibration_for_size(width, height)
+    assert calibration is not None, f"{width}x{height} has no calibration"
+    return calibration
 
 
 class _FakeMapper:
@@ -398,7 +406,7 @@ def test_objects_get_no_camera_point_without_a_calibrated_frame_size() -> None:
 
 
 def test_objects_get_a_camera_point_from_the_calibration_of_the_frame_size() -> None:
-    intrinsic, _ = rgb_calibration_for_size(640, 480)
+    intrinsic, _ = _calibration(640, 480)
     depth = np.full((480, 640), 1000.0, dtype=np.float32)
     centre_u = int(round(intrinsic.cx))
     centre_v = int(round(intrinsic.cy))
@@ -571,14 +579,14 @@ def test_intrinsics_refuse_a_size_of_another_aspect_ratio() -> None:
 
 
 def test_the_calibration_of_a_720p_frame_is_the_360p_one_scaled() -> None:
-    recorded, _ = rgb_calibration_for_size(640, 360)
-    scaled, distortion = rgb_calibration_for_size(1280, 720)
+    recorded, _ = _calibration(640, 360)
+    scaled, distortion = _calibration(1280, 720)
 
     assert scaled.fx == recorded.fx * 2.0
     assert scaled.fy == recorded.fy * 2.0
     assert (scaled.width, scaled.height) == (1280, 720)
     # Distortion acts on normalised coordinates, so it is the same at any frame size.
-    assert distortion is rgb_calibration_for_size(640, 360)[1]
+    assert distortion is _calibration(640, 360)[1]
 
 
 def test_a_frame_of_an_uncalibrated_aspect_ratio_has_no_calibration() -> None:
@@ -586,8 +594,8 @@ def test_a_frame_of_an_uncalibrated_aspect_ratio_has_no_calibration() -> None:
 
 
 def test_a_720p_frame_and_a_360p_frame_give_the_same_ray() -> None:
-    intrinsic_360, distortion = rgb_calibration_for_size(640, 360)
-    intrinsic_720, _ = rgb_calibration_for_size(1280, 720)
+    intrinsic_360, distortion = _calibration(640, 360)
+    intrinsic_720, _ = _calibration(1280, 720)
 
     coarse = backproject_pixel_to_camera_m(200, 100, 1000.0, intrinsic_360, distortion)
     fine = backproject_pixel_to_camera_m(400, 200, 1000.0, intrinsic_720, distortion)

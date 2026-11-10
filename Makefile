@@ -12,7 +12,7 @@ O3DML_VENV ?= .venv-o3dml
 # Packages the API documentation covers. sphinx-apidoc is run once per package: pointing
 # it at the project root instead would make the root itself a namespace package and
 # prefix every module with `plantorv.`, which is not an importable name.
-DOC_PACKAGES ?= segmentation scene_understanding mapping LLM utility aruco evaluation pipeline
+DOC_PACKAGES ?= segmentation scene_understanding depth mapping LLM utility aruco evaluation pipeline
 
 .PHONY: install install-dev install-o3dml format format-check lint typecheck check test docs docs-api docs-serve clean
 

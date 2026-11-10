@@ -9,11 +9,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from mapping.depth_anything import (
-    DEFAULT_FOCAL_LENGTH_PX,
-    DEFAULT_V3_MODEL_ID,
-    DepthAnythingV3Provider,
-)
+from depth.depth_anything import DEFAULT_FOCAL_LENGTH_PX, DEFAULT_V3_MODEL_ID
+from depth.depth_factory import create_depth_provider
 
 DEFAULT_IMAGE = Path("dataset/rgb/rgb_dataset_1.png")
 DEFAULT_OUTPUT = Path("output/monocular_depth_preview.png")
@@ -57,12 +54,14 @@ def main() -> int:
         raise FileNotFoundError(f"Could not read input image: {args.image}")
 
     started_at = time.perf_counter()
-    provider = DepthAnythingV3Provider(
+    provider = create_depth_provider(
+        "monocular",
         model_id=args.model,
         focal_length_px=args.focal_length_px,
         process_res=args.process_res,
         device=args.device,
     )
+    assert provider is not None  # only `sensor` returns None
     result = provider.estimate(image)
     elapsed_s = time.perf_counter() - started_at
 

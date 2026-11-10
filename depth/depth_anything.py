@@ -8,7 +8,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from mapping.depth_provider import DepthResult, _normalize_depth, _validate_color
+from depth.depth_provider import DepthResult, _normalize_depth, _validate_color
 
 DEFAULT_MODEL_ID = "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf"
 DEFAULT_V3_MODEL_ID = "depth-anything/da3metric-large"

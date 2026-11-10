@@ -28,7 +28,7 @@ depth-anything = [
 ]
 
 [tool.setuptools]
-packages = ["segmentation", "scene_understanding", "mapping", "aruco", "evaluation", "utility", "pipeline", "LLM"]
+packages = ["segmentation", "scene_understanding", "depth", "mapping", "aruco", "evaluation", "utility", "pipeline", "LLM"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -11,8 +11,8 @@ import unittest
 import cv2
 import numpy as np
 
+from depth import depth_provider as dp
 from mapping import camera_model as cm
-from mapping import depth_provider as dp
 from mapping import rgbd_mapper as rm
 
 

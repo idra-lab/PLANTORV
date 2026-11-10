@@ -14,16 +14,14 @@ from typing import Union
 
 import torch
 
+from depth.depth_anything import DEFAULT_FOCAL_LENGTH_PX
+from depth.depth_factory import DEPTH_SOURCES
 from LLM.llm_base import configure_env
-from mapping.depth_anything import DEFAULT_FOCAL_LENGTH_PX
 from mapping.rgbd_mapper import DEFAULT_DEPTH_ASSOCIATION, DEPTH_ASSOCIATIONS
+from scene_understanding.annotator_factory import ANNOTATORS
 from scene_understanding.dam_annotator import DAM_QUERY, DEFAULT_DAM_MODEL_PATH
 from scene_understanding.gpt_annotator import DEFAULT_LLM_CONFIG_FILE
 from utility.utility import logger
-
-# Values of `--depth-source` that replace the depth dataset with an inferred depth map.
-# `sensor` is the remaining value and reads the depth images from `--depth-dir`.
-ESTIMATED_DEPTH_SOURCES = ("depth-anything-v2", "monocular")
 
 # The segmentation configuration used when --segmenter-config is not given. It picks
 # the backend, its checkpoint, what is forwarded to it and the thresholds that decide
@@ -109,7 +107,7 @@ def add_annotation_arguments(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("annotation")
     group.add_argument(
         "--annotator",
-        choices=("gpt", "dam"),
+        choices=ANNOTATORS,
         default="gpt",
         help=(
             "Which annotator describes the objects: 'gpt' sends the crops to the remote "
@@ -194,7 +192,7 @@ def add_depth_arguments(parser: argparse.ArgumentParser) -> None:
     # from the RGB frame instead, which makes --depth-dir unused.
     group.add_argument(
         "--depth-source",
-        choices=("sensor", *ESTIMATED_DEPTH_SOURCES),
+        choices=DEPTH_SOURCES,
         default="sensor",
         help="Where depth comes from (default: %(default)s)",
     )

@@ -32,46 +32,12 @@ from typing import Any, Dict, Optional, Union
 import cv2
 from PIL import Image
 
-from mapping.depth_anything import (
-    DEFAULT_MODEL_ID,
-    DEFAULT_V3_MODEL_ID,
-    DepthAnythingV2Provider,
-    DepthAnythingV3Provider,
-)
-from mapping.depth_provider import DepthProvider, main_coords
+from depth.depth_factory import create_depth_provider
+from depth.depth_provider import DepthProvider, main_coords
 from mapping.rgbd_mapper import attach_object_depths
 from pipeline import artifacts, cli
 from pipeline.provenance import write_run_config
 from utility.utility import logger
-
-
-def build_depth_provider(args: argparse.Namespace) -> Optional[DepthProvider]:
-    """Build the monocular depth backend selected by ``--depth-source``.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed command-line arguments.
-
-    Returns
-    -------
-    DepthProvider or None
-        The provider to estimate depth with, or None for ``--depth-source sensor``,
-        in which case the depth images in ``--depth-dir`` are used instead.
-    """
-    if args.depth_source == "depth-anything-v2":
-        return DepthAnythingV2Provider(
-            model_id=args.depth_model or DEFAULT_MODEL_ID,
-            device=args.depth_device,
-        )
-    if args.depth_source == "monocular":
-        return DepthAnythingV3Provider(
-            model_id=args.depth_model or DEFAULT_V3_MODEL_ID,
-            focal_length_px=args.depth_focal_length_px,
-            process_res=args.depth_process_res,
-            device=args.depth_device,
-        )
-    return None
 
 
 def describe(provider: Optional[DepthProvider], args: argparse.Namespace) -> Dict[str, Any]:
@@ -172,7 +138,13 @@ def run(
 
     # Depth comes either from the dataset in `--depth-dir` or from a monocular
     # estimator, so only one of the two is prepared.
-    provider = build_depth_provider(args)
+    provider = create_depth_provider(
+        args.depth_source,
+        model_id=args.depth_model,
+        device=args.depth_device,
+        focal_length_px=args.depth_focal_length_px,
+        process_res=args.depth_process_res,
+    )
     if provider is None:
         depth_images = artifacts.index_by_frame(artifacts.list_images(args.depth_dir))
     else:
