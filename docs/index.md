@@ -9,7 +9,7 @@ The pipeline runs in stages, and the sections below follow that order.
 :maxdepth: 2
 :caption: Pipeline
 
-samgpt
+plantorv
 api/pipeline
 api/segmentation
 api/scene_understanding

@@ -3,7 +3,7 @@
 Each stage is its own program, but they agree on where the environment file is,
 which device they run on, and how a bad path is reported. The option groups below
 are the single definition of those flags: the stage scripts add the groups they
-need, and ``samgpt.py`` adds all of them to run the three in a row.
+need, and ``plantorv.py`` adds all of them to run the three in a row.
 """
 
 import argparse

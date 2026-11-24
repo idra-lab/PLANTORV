@@ -84,7 +84,7 @@ _ENV_DISABLED: bool = False
 def configure_env(env_path: Optional[Union[str, Path]] = None, load: bool = True) -> None:
     """Choose the environment file the LLM layer reads, for the rest of the process.
 
-    Lets an entry point propagate its own choice: ``samgpt.py --env-file other.env`` calls
+    Lets an entry point propagate its own choice: ``plantorv.py --env-file other.env`` calls
     this so the backends read ``other.env`` too, rather than silently falling back to the
     project root's ``.env`` and picking up credentials the caller meant to replace.
     ``--no-env-file`` calls it with ``load=False``, which honours "use the shell environment
@@ -110,7 +110,7 @@ def default_env_path() -> str:
     """Return the environment file path the LLM layer reads.
 
     Whatever :func:`configure_env` was given, or else the project root's ``.env``: ``LLM/``
-    sits one directory below the root, so this resolves to the same file ``samgpt.py``
+    sits one directory below the root, so this resolves to the same file ``plantorv.py``
     loads. One file rather than two means credentials cannot end up duplicated across them,
     or worse, disagreeing about which endpoint a key belongs to.
 

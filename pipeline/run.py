@@ -21,11 +21,11 @@ Examples
 --------
 Run everything over the dataset with the default models::
 
-    python3 samgpt.py --input-dir dataset/rgb --output-dir output
+    python3 plantorv.py --input-dir dataset/rgb --output-dir output
 
 Run everything with Describe Anything and estimated depth::
 
-    python3 samgpt.py --annotator dam --depth-source monocular --output-dir output_dam
+    python3 plantorv.py --annotator dam --depth-source monocular --output-dir output_dam
 
 Each stage writes what it was configured with next to what it produced, as
 ``segmentation_config.yaml``, ``annotation_config.yaml`` and ``depth_config.yaml``.
@@ -114,7 +114,7 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def run_cli() -> None:
-    """Entry point of ``python -m pipeline.run`` and of the ``samgpt.py`` wrapper."""
+    """Entry point of ``python -m pipeline.run`` and of the ``plantorv.py`` wrapper."""
     start_all = time.time()
     try:
         main(parse_arguments())

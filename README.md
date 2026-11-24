@@ -211,7 +211,7 @@ variables from the root `.env`. They share these flags:
 - `pipeline/segment.py` - first stage: segments every frame of `--input-dir` and writes the crops, boxes and masks of each object under `<output-dir>/output_segmentation`. The model, its checkpoint and its thresholds come from the YAML file of `--segmenter-config` (see [Segmentation configuration](#segmentation-configuration)).
 - `pipeline/annotate.py` - second stage: reads that directory and gives every object a tag and a description, with `--annotator gpt` (remote, chosen by `--llm-config`) or `--annotator dam` (local DAM-3B).
 - `pipeline/estimate_depth.py` - third stage: reads the same directory and gives every object a position and a distance, from the depth images of `--depth-dir` or from a monocular estimator.
-- `samgpt.py` - runs the three in a row into one `--output-dir`, for when nothing is being swapped.
+- `plantorv.py` - runs the three in a row into one `--output-dir`, for when nothing is being swapped.
 - `pipeline/` - what the stages share: `artifacts.py` defines the files they exchange, `cli.py` the options they have in common.
 - `segmentation/` - `SegmentationModel` base class, `SAMModel` (SAM 1, MobileSAM, SAM 2 and SAM 2.1) and `FastSAMModel`, all run through Ultralytics to produce a background mask and per-object crops. `SAM3Model` sits alongside them and works differently: a VLM names the things in the scene and SAM 3 segments those concepts, so its masks arrive already labelled.
 - `scene_understanding/` - the shared `Annotator` interface, remote `GPTAnnotator`, local mask-based `DAMAnnotator`, and `ConceptInventory` (`inventory.py`), which asks the VLM for the concepts SAM 3 segments; its phrasing examples are in `scene_understanding/conf/concept_prompts.yaml`.
@@ -796,7 +796,7 @@ python3 -m pipeline.annotate --input-dir output/output_segmentation --output-dir
 Run all three in a row when nothing is being swapped:
 
 ```bash
-python3 samgpt.py --input-dir dataset/rgb --output-dir output
+python3 plantorv.py --input-dir dataset/rgb --output-dir output
 ```
 
 Frames are read as numbered PNGs and identified by the number their name ends with, so
@@ -826,7 +826,7 @@ Shared options:
 | `--depth-focal-length-px` | `1138.1085` | Focal length used for Depth Anything 3 metric scaling |
 | `--depth-process-res` | `504` | Depth Anything 3 processing resolution |
 
-Every flag belongs to the stage that uses it, and `samgpt.py` accepts all of them.
+Every flag belongs to the stage that uses it, and `plantorv.py` accepts all of them.
 `pipeline/annotate.py` takes `--llm-config` (default: `LLM/conf/azure_gpt52.yaml`) for
 `--annotator gpt`, and `--dam-model`, `--dam-device`, `--dam-query`, `--dam-temperature`,
 `--dam-top-p` and `--dam-max-new-tokens` for `--annotator dam`. `pipeline/segment.py` takes
