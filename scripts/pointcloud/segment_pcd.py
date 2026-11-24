@@ -113,14 +113,15 @@ def load_rgbd(
 
 
 def camera_to_z_up(points: np.ndarray) -> np.ndarray:
-    """
-    Convert a conventional optical camera frame
+    """Convert a conventional optical camera frame to a gravity-oriented one.
+
+    The optical frame is
 
         x -> right
         y -> down
         z -> forward
 
-    to a gravity-oriented frame
+    and the gravity-oriented frame
 
         x -> forward
         y -> left
@@ -142,10 +143,8 @@ def create_semantic_pipeline(
     config_path: Path,
     checkpoint_path: Path,
     device: str,
-):
-    """
-    Construct an Open3D-ML semantic segmentation pipeline from a config.
-    """
+) -> Any:
+    """Construct an Open3D-ML semantic segmentation pipeline from a config."""
     if not config_path.exists():
         raise FileNotFoundError(f"Model config does not exist: {config_path}")
 
@@ -287,14 +286,15 @@ def _enable_pointtransformer_small_cloud_knn() -> None:
 
         return indices, distances.to(output_device)
 
-    module.knn_batch = knn_batch
-    module._plantorv_pads_small_knn_results = True
+    # Patching the installed Open3D-ML module in place; pyright sees a plain ModuleType.
+    module.knn_batch = knn_batch  # pyright: ignore[reportAttributeAccessIssue]
+    module._plantorv_pads_small_knn_results = True  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def prepare_semantic_input(
     point_cloud: o3d.geometry.PointCloud,
     *,
-    model,
+    model: Any,
     use_z_up: bool,
 ) -> dict[str, np.ndarray | None]:
     """
@@ -439,10 +439,10 @@ def _normalize_semantic_result(
 
 
 def run_semantic_segmentation(
-    pipeline,
+    pipeline: Any,
     point_cloud: o3d.geometry.PointCloud,
     *,
-    model,
+    model: Any,
     use_z_up: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compatibility wrapper around :class:`Open3DSemanticSegmenter`."""
@@ -451,11 +451,8 @@ def run_semantic_segmentation(
     return result.labels, result.confidence
 
 
-def get_label_names(cfg) -> dict[int, str]:
-    """
-    Obtain the semantic class names from the dataset associated with
-    the selected Open3D-ML configuration.
-    """
+def get_label_names(cfg: Any) -> dict[int, str]:
+    """Obtain the semantic class names of the selected Open3D-ML configuration's dataset."""
     try:
         Dataset = _ml3d.utils.get_module(
             "dataset",
@@ -485,9 +482,7 @@ def print_semantic_statistics(
 
 
 def semantic_palette(num_classes: int) -> np.ndarray:
-    """
-    Produce deterministic, visually separated RGB colours.
-    """
+    """Produce deterministic, visually separated RGB colours."""
     palette = np.zeros((num_classes, 3), dtype=np.float64)
 
     golden_ratio = 0.618033988749895
@@ -526,11 +521,9 @@ def point_values_to_image(
     *,
     depth_trunc_m: float,
     fill_value: int | float,
-    dtype,
+    dtype: Any,
 ) -> np.ndarray:
-    """
-    Project values associated with point-cloud points back into the
-    aligned depth-image layout.
+    """Project values associated with point-cloud points back into the aligned depth image.
 
     Assumes RGBDPointCloudGenerator preserves row-major valid-depth
     ordering when constructing the Open3D point cloud.
@@ -705,7 +698,7 @@ def main() -> None:
     )
 
     if not args.no_visualize:
-        o3d.visualization.draw_geometries(
+        o3d.visualization.draw_geometries(  # pyright: ignore[reportAttributeAccessIssue]  # open3d stubs omit its lazily loaded submodule
             [semantic_cloud],
             window_name="Open3D semantic segmentation",
         )

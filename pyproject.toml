@@ -32,8 +32,8 @@ packages = ["segmentation", "scene_understanding", "depth", "mapping", "aruco", 
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# segment_pcd.py is a top-level script, not part of an installed package, so the
-# repo root has to be importable for tests that exercise it.
+# scripts/ is not part of an installed package, so the repo root has to be importable
+# for the tests that import its tools.
 pythonpath = ["."]
 
 # Linter/type-checker settings live in .dev-config/ to keep this file focused on packaging. 

@@ -10,8 +10,8 @@ Covers:
 - FastSAM (Ultralytics' YOLOv8-seg, used through FastSAMModel);
 - SAM 3 (gated, requires a Hugging Face token);
 - DAM-3B (Describe Anything, used through ``scene_understanding/dam_annotator.py``);
-- RandLA-Net trained on S3DIS (Open3D-ML, used through ``segment_pcd.py``);
-- PointTransformer trained on S3DIS (Open3D-ML, used through ``segment_pcd.py``, GPU only).
+- RandLA-Net trained on S3DIS (Open3D-ML, used through ``scripts/pointcloud/segment_pcd.py``);
+- PointTransformer trained on S3DIS (Open3D-ML, used through ``scripts/pointcloud/segment_pcd.py``, GPU only).
 
 Ultralytics also downloads its own checkpoints on first use, so this script is
 mainly useful for four cases:
@@ -33,7 +33,7 @@ Every checkpoint is saved under the name Ultralytics needs, because
 ``SAM_CHECKPOINTS`` there for the full list. Meta distributes the same weights
 as ``.pth``; the extension is only a naming convention, so saving them as
 ``.pt`` changes nothing about the contents. The Open3D-ML checkpoints are the
-exception: ``segment_pcd.py`` is given their path explicitly, so they keep the
+exception: ``scripts/pointcloud/segment_pcd.py`` is given their path explicitly, so they keep the
 upstream file name, and ``dam_3b``, which keeps the layout its own loader
 expects and so is saved as a directory rather than as a single file.
 
@@ -289,29 +289,29 @@ MODELS["dam_3b"] = Model(
     description="DAM-3B (region captioning, ~7.1 GB in 19 files, used via DAMAnnotator) [from NVIDIA]",
 )
 
-# Open3D-ML point-cloud semantic segmentation, used through `segment_pcd.py` rather
+# Open3D-ML point-cloud semantic segmentation, used through `scripts/pointcloud/segment_pcd.py` rather
 # than through any of the SAM wrappers. The name encodes the training run, and
-# `segment_pcd.py` takes the path explicitly, so it is kept exactly as published.
+# `scripts/pointcloud/segment_pcd.py` takes the path explicitly, so it is kept exactly as published.
 MODELS["randlanet_s3dis"] = Model(
     key="randlanet_s3dis",
     filename="randlanet_s3dis_202201071330utc.pth",
     url=f"{OPEN3D_ZOO_URL}/randlanet_s3dis_202201071330utc.pth",
     subdir="randla_net",
     description=(
-        "RandLA-Net, 13 S3DIS indoor classes (~57 MB, used via segment_pcd.py) [from Open3D-ML]"
+        "RandLA-Net, 13 S3DIS indoor classes (~57 MB, used via scripts/pointcloud/segment_pcd.py) [from Open3D-ML]"
     ),
     config="randlanet_s3dis.yml",
 )
-# Same 13 S3DIS classes, served through the same `segment_pcd.py` interface. Open3D
+# Same 13 S3DIS classes, served through the same `scripts/pointcloud/segment_pcd.py` interface. Open3D
 # 0.19 runs PointTransformer's KNN and furthest-point sampling only on CUDA, so this
-# one needs `--device gpu`; `segment_pcd.py` rejects `--device cpu` up front.
+# one needs `--device gpu`; `scripts/pointcloud/segment_pcd.py` rejects `--device cpu` up front.
 MODELS["pointtransformer_s3dis"] = Model(
     key="pointtransformer_s3dis",
     filename="pointtransformer_s3dis_202109241350utc.pth",
     url=f"{OPEN3D_ZOO_URL}/pointtransformer_s3dis_202109241350utc.pth",
     subdir="point_transformer",
     description=(
-        "PointTransformer, 13 S3DIS indoor classes (~60 MB, GPU only, used via segment_pcd.py) "
+        "PointTransformer, 13 S3DIS indoor classes (~60 MB, GPU only, used via scripts/pointcloud/segment_pcd.py) "
         "[from Open3D-ML]"
     ),
     config="pointtransformer_s3dis.yml",

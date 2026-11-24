@@ -121,7 +121,7 @@ def main() -> None:
     )
 
     if not args.no_visualize:
-        o3d.visualization.draw_geometries([segmentation.visualized_cloud])
+        o3d.visualization.draw_geometries([segmentation.visualized_cloud])  # pyright: ignore[reportAttributeAccessIssue]  # open3d stubs omit its lazily loaded submodule
 
 
 def write_outputs(
@@ -142,9 +142,7 @@ def write_outputs(
     if cluster_output is not None:
         cluster_output.parent.mkdir(parents=True, exist_ok=True)
         if not o3d.io.write_point_cloud(str(cluster_output), segmentation_cloud):
-            raise RuntimeError(
-                f"Open3D could not write cluster cloud: {cluster_output}"
-            )
+            raise RuntimeError(f"Open3D could not write cluster cloud: {cluster_output}")
         print(f"Wrote {cluster_output}")
 
     if labels_output is not None:

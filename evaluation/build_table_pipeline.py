@@ -39,7 +39,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .metrics import BOOTSTRAP_CONFIDENCE, BOOTSTRAP_RESAMPLES, bootstrap_interval
+from .metrics import BOOTSTRAP_CONFIDENCE, BOOTSTRAP_RESAMPLES, bootstrap_interval, finite_values
 
 DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent.parent / "results"
 
@@ -150,12 +150,6 @@ def _resolve(name: str, table: dict[str, str], what: str) -> str:
     if key not in table:
         raise KeyError(f"unknown {what} {name!r}; known: {', '.join(sorted(table))}")
     return table[key]
-
-
-def finite_values(values: Iterable[float]) -> np.ndarray:
-    """Return the finite values of a sequence as a float array."""
-    array = pd.to_numeric(pd.Series(values, dtype=object), errors="coerce").to_numpy(dtype=float)
-    return array[np.isfinite(array)]
 
 
 def sample_variance(values: Iterable[float]) -> float | None:
@@ -478,7 +472,7 @@ def confidence_interval_style(args: argparse.Namespace) -> str | None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").partition("\n")[0])
     parser.add_argument(
         "--results-dir",
         type=Path,

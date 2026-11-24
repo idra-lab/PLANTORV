@@ -48,7 +48,7 @@ Run from the repository root in `.venv`.
 
 ```bash
 python3 scripts/install_models.py pointtransformer_s3dis   # or randlanet_s3dis
-python3 segment_pcd.py \
+python3 -m scripts.pointcloud.segment_pcd \
   dataset/rgb/rgb_dataset_1.png \
   dataset/depth/depth_dataset_1.png \
   --config models/point_transformer/pointtransformer_s3dis.yml \
@@ -62,7 +62,7 @@ python3 segment_pcd.py \
 
 For RandLA-Net, swap in `models/randla_net/randlanet_s3dis.yml` and
 `randlanet_s3dis_202201071330utc.pth`; it also runs with `--device cpu`. The other flags
-are described under *Point-cloud semantic segmentation* in the [main README](README.md).
+are described under *Point-cloud semantic segmentation* in the [main README](../../README.md).
 
 Before trusting these results, read [known problem 4](#known-problems): the z-up rotation
 in this script turns the cloud upside down.
@@ -141,9 +141,9 @@ Pointcept can't read PNGs. It reads one folder of `.npy` arrays per scene.
 `segment_pcd.py`. Run in `.venv` from the repository root:
 
 ```bash
-python3 export_pointcept_scenes.py dataset                  # 151 frames, ~36 s
-python3 export_pointcept_scenes.py dataset_rw               # 4 frames
-python3 export_pointcept_scenes.py dataset --frames 1 85 --split smoke   # a quick subset
+python3 -m scripts.pointcloud.export_pointcept_scenes dataset                  # 151 frames, ~36 s
+python3 -m scripts.pointcloud.export_pointcept_scenes dataset_rw               # 4 frames
+python3 -m scripts.pointcloud.export_pointcept_scenes dataset --frames 1 85 --split smoke   # a quick subset
 ```
 
 The dataset folder must contain `rgb/` and `depth/`. Images are paired by the trailing
@@ -180,8 +180,8 @@ Run in the conda env from the **repository root**:
 
 ```bash
 conda activate pointcept-torch2.5.0-cu12.4
-PYTHONNOUSERSITE=1 python segment_pointcept_scenes.py dataset      # 151 frames
-PYTHONNOUSERSITE=1 python segment_pointcept_scenes.py dataset_rw   # 4 frames
+PYTHONNOUSERSITE=1 python -m scripts.pointcloud.segment_pointcept_scenes dataset      # 151 frames
+PYTHONNOUSERSITE=1 python -m scripts.pointcloud.segment_pointcept_scenes dataset_rw   # 4 frames
 ```
 
 `segment_pointcept_scenes.py` works the way Pointcept's own validation does: it keeps one
@@ -229,7 +229,7 @@ python tools/test.py --config-file configs/plantorv/semseg-pt-v3m1-0-rpe-s3dis.p
 ```
 
 The config
-[`configs/plantorv/semseg-pt-v3m1-0-rpe-s3dis.py`](models/Pointcept/configs/plantorv/semseg-pt-v3m1-0-rpe-s3dis.py)
+[`configs/plantorv/semseg-pt-v3m1-0-rpe-s3dis.py`](../../models/Pointcept/configs/plantorv/semseg-pt-v3m1-0-rpe-s3dis.py)
 inherits the S3DIS PTv3 config unchanged and replaces only the test dataset.
 
 What to expect:
@@ -245,7 +245,7 @@ test writes only `<save_path>/result/frame_XXXX_pred.npy`. To get the same outpu
 those without running the model again, run from the repository root:
 
 ```bash
-PYTHONNOUSERSITE=1 python segment_pointcept_scenes.py dataset \
+PYTHONNOUSERSITE=1 python -m scripts.pointcloud.segment_pointcept_scenes dataset \
   --predictions models/Pointcept/exp/plantorv/semseg-pt-v3m1-0-rpe-s3dis/result \
   --output results/pointcept/dataset_fulltest
 ```
@@ -316,9 +316,9 @@ The label image is in the **aligned depth grid** (`aligned_shape`, 640×360 for
 
 | Path                                                               | What it is                                             |
 |--------------------------------------------------------------------|--------------------------------------------------------|
-| `segment_pcd.py`                                                   | Route A: RGB-D pair → Open3D-ML segmentation           |
-| `export_pointcept_scenes.py`                                       | Route B: RGB-D dataset → Pointcept scene folders        |
-| `segment_pointcept_scenes.py`                                      | Route B: fast single-pass run, or outputs from existing predictions |
+| `scripts/pointcloud/segment_pcd.py`                                | Route A: RGB-D pair → Open3D-ML segmentation           |
+| `scripts/pointcloud/export_pointcept_scenes.py`                    | Route B: RGB-D dataset → Pointcept scene folders        |
+| `scripts/pointcloud/segment_pointcept_scenes.py`                   | Route B: fast single-pass run, or outputs from existing predictions |
 | `results/pointcept/<split>/`                                       | Route B outputs of `segment_pointcept_scenes.py`        |
 | `mapping/rgbd_pointcloud.py`                                       | point-cloud generator shared by both routes            |
 | `models/point_transformer/`, `models/randla_net/`                  | Route A weights and configs                            |

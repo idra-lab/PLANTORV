@@ -8,7 +8,7 @@ import numpy as np
 import open3d as o3d
 import torch
 
-from segment_pcd import (
+from scripts.pointcloud.segment_pcd import (
     Open3DSemanticSegmenter,
     _enable_pointtransformer_device_batching,
     _enable_pointtransformer_small_cloud_knn,
@@ -48,6 +48,7 @@ class PointCloudSegmentationTest(unittest.TestCase):
             return_distances=False,
         )
 
+        assert isinstance(indices, torch.Tensor)  # return_distances=False gives the indices only
         self.assertEqual(indices.shape, (5, 16))
         self.assertTrue(torch.all(indices >= 0))
         self.assertTrue(torch.all(indices < len(points)))
@@ -97,16 +98,18 @@ class PointCloudSegmentationTest(unittest.TestCase):
         model = SimpleNamespace(cfg=SimpleNamespace(in_channels=6))
 
         data = prepare_semantic_input(_cloud(), model=model, use_z_up=True)
+        point, feat, label = data["point"], data["feat"], data["label"]
+        assert point is not None and feat is not None and label is not None
 
         np.testing.assert_array_equal(
-            data["point"],
+            point,
             [[3.0, -1.0, -2.0], [6.0, -4.0, -5.0]],
         )
         np.testing.assert_allclose(
-            data["feat"],
+            feat,
             [[255.0, 0.0, 127.5], [0.0, 255.0, 63.75]],
         )
-        np.testing.assert_array_equal(data["label"], [0, 0])
+        np.testing.assert_array_equal(label, [0, 0])
 
     def test_segmenter_rejects_malformed_model_scores(self) -> None:
         model = SimpleNamespace(cfg=SimpleNamespace(in_channels=6))

@@ -142,8 +142,8 @@ for the point-cloud work:
 
 ```bash
 make install-o3dml
-.venv-o3dml/bin/python segment_pcd.py --model randlanet ...
-.venv-o3dml/bin/python cluster_pcd.py ...
+.venv-o3dml/bin/python -m scripts.pointcloud.segment_pcd --model randlanet ...
+.venv-o3dml/bin/python -m scripts.pointcloud.cluster_pcd ...
 ```
 
 Open3D is not installed in `.venv` at all, so both point-cloud scripts live there. The
@@ -902,7 +902,7 @@ python3 -m pipeline.estimate_depth --depth-source monocular
 For a quick model smoke test on a single image, run:
 
 ```bash
-python3 monocular_depth.py [path/to/image.png]
+python3 -m scripts.monocular_depth [path/to/image.png]
 ```
 
 The test prints depth statistics and saves a colorized preview to
@@ -923,7 +923,7 @@ the raw depth frame to the RGB camera before passing both images and the calibra
 RGB intrinsics to Open3D:
 
 ```bash
-python3 cluster_pcd.py \
+python3 -m scripts.pointcloud.cluster_pcd \
   dataset/rgb/rgb_dataset_1.png \
   dataset/depth/depth_dataset_1.png \
   --output results/scene_1.ply \
@@ -941,9 +941,9 @@ numbered from `0`, unclustered/background pixels are `-1`, and planes start at `
 #### Point-cloud semantic segmentation
 
 For a step-by-step guide covering both this Open3D-ML route and the Pointcept PTv3 route,
-see [README_pointcloud_segmentation.md](README_pointcloud_segmentation.md).
+see [scripts/pointcloud/README.md](scripts/pointcloud/README.md).
 
-`segment_pcd.py` selects the Open3D-ML architecture from `model.name` in the
+`scripts/pointcloud/segment_pcd.py` selects the Open3D-ML architecture from `model.name` in the
 configuration file. The same interface therefore works with either RandLA-Net
 or PointTransformer; no model-specific command-line flag is needed. Model files are not
 checked in under `models/`.
@@ -953,7 +953,7 @@ run CPU or GPU inference:
 
 ```bash
 python3 scripts/install_models.py randlanet_s3dis
-python3 segment_pcd.py \
+python3 -m scripts.pointcloud.segment_pcd \
   dataset/rgb/rgb_dataset_1.png \
   dataset/depth/depth_dataset_1.png \
   --config models/randla_net/randlanet_s3dis.yml \
@@ -969,7 +969,7 @@ the same way, into `models/point_transformer/`, and needs `--device gpu`:
 
 ```bash
 python3 scripts/install_models.py pointtransformer_s3dis
-python3 segment_pcd.py \
+python3 -m scripts.pointcloud.segment_pcd \
   dataset/rgb/rgb_dataset_1.png \
   dataset/depth/depth_dataset_1.png \
   --config models/point_transformer/pointtransformer_s3dis.yml \

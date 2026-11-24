@@ -23,13 +23,13 @@ install:
 
 # The Open3D-ML environment, in a virtualenv of its own. Open3D 0.19 only loads its
 # PyTorch ops under torch 2.2.*, which the main environment left behind for SAM 3, so
-# the learned point-cloud models of segment_pcd.py live here instead. See
+# the learned point-cloud models of scripts/pointcloud/segment_pcd.py live here instead. See
 # requirements-o3dml.txt.
 install-o3dml:
 	$(PYTHON) -m venv $(O3DML_VENV)
 	$(O3DML_VENV)/bin/pip install --upgrade pip
 	$(O3DML_VENV)/bin/pip install -r requirements-o3dml.txt
-	@echo "Run the learned point-cloud models with $(O3DML_VENV)/bin/python segment_pcd.py"
+	@echo "Run the learned point-cloud models with $(O3DML_VENV)/bin/python -m scripts.pointcloud.segment_pcd"
 
 # Runtime + dev tooling (ruff, pyright, pre-commit), plus the git hook.
 # pip has no way to pull an extra automatically, so `make install-dev` is the

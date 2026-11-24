@@ -14,11 +14,11 @@
 # Install into an environment of its own, never into .venv:
 #
 #     make install-o3dml
-#     .venv-o3dml/bin/python segment_pcd.py ...
-#     .venv-o3dml/bin/python cluster_pcd.py ...
+#     .venv-o3dml/bin/python -m scripts.pointcloud.segment_pcd ...
+#     .venv-o3dml/bin/python -m scripts.pointcloud.cluster_pcd ...
 #
-# Both point-cloud scripts belong here now: segment_pcd.py because of the learned models
-# (RandLA-Net, PointTransformer), and cluster_pcd.py because plain Open3D is no longer in
+# Both point-cloud scripts belong here now: scripts/pointcloud/segment_pcd.py because of the learned models
+# (RandLA-Net, PointTransformer), and scripts/pointcloud/cluster_pcd.py because plain Open3D is no longer in
 # the main environment either. The `mapping` package resolves its Open3D-backed helpers
 # lazily, so everything else -- the pipeline stages, the depth providers, the evaluation
 # -- runs in the main environment without it.
@@ -40,7 +40,7 @@ torchvision==0.17.2+cu121
 open3d==0.19.0
 numpy==1.26.4
 
-# Imported by segment_pcd.py and the mapping helpers it reuses.
+# Imported by scripts/pointcloud/segment_pcd.py and the mapping helpers it reuses.
 opencv-python==4.10.0.84
 scikit-image
 matplotlib
