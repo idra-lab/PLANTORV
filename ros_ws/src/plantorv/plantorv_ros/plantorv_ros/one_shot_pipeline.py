@@ -90,17 +90,17 @@ class OneShotPipelineNode(Node):
         # Pipeline
         self.declare_parameter(
             "pipeline_script",
-            "/path/to/project/samgpt.py",
+            "/path/to/project/plantorv.py",
         )
         self.declare_parameter(
             "output_dir",
-            "/tmp/samgpt_ros_run",
+            "/tmp/plantorv_ros_run",
         )
 
         # Appended to the pipeline command as they are, so the models
-        # of a run are chosen the same way as on samgpt.py's own
+        # of a run are chosen the same way as on plantorv.py's own
         # command line: ["--annotator", "gpt", "--llm-config",
-        # "LLM/conf/azure_gpt54.yaml"]. The stage flags are samgpt.py's
+        # "LLM/conf/azure_gpt54.yaml"]. The stage flags are plantorv.py's
         # and are not repeated here, so a caller picking a segmenter or
         # an annotator needs no change to this node.
         #

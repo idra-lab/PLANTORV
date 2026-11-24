@@ -29,4 +29,4 @@ else
     exit 1
 fi
 
-python3 -u samgpt.py
+python3 -u plantorv.py

@@ -4,9 +4,10 @@
 // Without it Pyright silently analyzes 0 files and still exits 0.
 {
   "include": [
-    "../samgpt.py",
-    "../samdamcoords.py",
+    "../plantorv.py",
+    "../pipeline",
     "../segmentation",
+    "../depth",
     "../mapping",
     "../scene_understanding",
     "../LLM",

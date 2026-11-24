@@ -408,9 +408,7 @@ def load_camera_to_world_transform(
     try:
         import yaml
     except ImportError as error:  # pragma: no cover - ROS installs PyYAML.
-        raise RuntimeError(
-            "PyYAML is required to read the camera-to-world transform"
-        ) from error
+        raise RuntimeError("PyYAML is required to read the camera-to-world transform") from error
 
     with configured.open() as handle:
         document = yaml.safe_load(handle) or {}
@@ -429,14 +427,10 @@ def load_camera_to_world_transform(
             dtype=np.float64,
         )
     except (KeyError, TypeError, ValueError) as error:
-        raise ValueError(
-            f"{configured} is not a camera-to-world transform: {error}"
-        ) from error
+        raise ValueError(f"{configured} is not a camera-to-world transform: {error}") from error
 
     if target_frame != "world":
-        raise ValueError(
-            f"{configured} targets '{target_frame}', expected 'world'"
-        )
+        raise ValueError(f"{configured} targets '{target_frame}', expected 'world'")
     if not np.isfinite(translation).all() or not np.isfinite(rotation).all():
         raise ValueError(f"{configured} contains non-finite transform values")
 
@@ -472,3 +466,44 @@ def point_camera_to_world_m(
     )
     world = rotation @ point + transform.translation
     return [float(value) for value in world]
+
+
+def backproject_pixel_to_camera_m(
+    u: int,
+    v: int,
+    depth_mm: float,
+    intrinsic: Intrinsics,
+    distortion: Distortion,
+) -> list:
+    """Back-project one RGB pixel and its depth into the colour camera frame.
+
+    The pixel is undistorted to normalised image coordinates and scaled by the
+    axial depth, so the result is the 3D point of the colour camera's optical
+    frame: x to the right of the image, y down it, z along the optical axis.
+
+    Parameters
+    ----------
+    u : int
+        Column of the pixel in the RGB frame.
+    v : int
+        Row of the pixel in the RGB frame.
+    depth_mm : float
+        Axial depth at that pixel, in millimetres.
+    intrinsic : Intrinsics
+        Colour intrinsics of the frame the pixel belongs to.
+    distortion : Distortion
+        Colour distortion coefficients of the same frame.
+
+    Returns
+    -------
+    list
+        ``[x, y, z]`` in metres, in the colour camera frame.
+    """
+    x_n, y_n = _undistort_pixels_to_normalized(
+        np.asarray([float(u)], dtype=np.float64),
+        np.asarray([float(v)], dtype=np.float64),
+        intrinsic,
+        distortion,
+    )
+    z_m = float(depth_mm) / 1000.0
+    return [float(x_n[0]) * z_m, float(y_n[0]) * z_m, z_m]

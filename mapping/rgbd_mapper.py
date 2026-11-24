@@ -1,9 +1,7 @@
 from pathlib import Path
 from typing import Optional, Sequence, Tuple, Union
 
-import cv2
 import numpy as np
-from PIL import Image
 
 from mapping.camera_model import (
     _HARDCODED_CALIBRATIONS,
@@ -15,6 +13,7 @@ from mapping.camera_model import (
     Intrinsics,
     _project_to_pixels,
     _undistort_pixels_to_normalized,
+    backproject_pixel_to_camera_m,
     load_camera_to_world_transform,
     point_camera_to_world_m,
     rgb_calibration_for_size,
@@ -281,28 +280,7 @@ class RGBDMapper:
             The depth in millimeters at the specified RGB pixel, or None if no valid depth is found within the specified neighborhood.
         """
         aligned = self.align_depth_to_color(depth_image, depth_unit_scale=depth_unit_scale)
-
-        h, w = aligned.shape
-        if rgb_u < 0 or rgb_u >= w or rgb_v < 0 or rgb_v >= h:
-            return None
-
-        d = float(aligned[rgb_v, rgb_u])
-        if d > 0.0:
-            return d
-
-        if neighborhood <= 0:
-            return None
-
-        u0 = max(0, rgb_u - neighborhood)
-        u1 = min(w - 1, rgb_u + neighborhood)
-        v0 = max(0, rgb_v - neighborhood)
-        v1 = min(h - 1, rgb_v + neighborhood)
-
-        patch = aligned[v0 : v1 + 1, u0 : u1 + 1]
-        nonzero = patch[patch > 0.0]
-        if nonzero.size == 0:
-            return None
-        return float(np.min(nonzero))
+        return _find_depth_at_rgb(aligned, rgb_u, rgb_v, neighborhood)
 
 
 def attach_object_depths(
@@ -480,9 +458,7 @@ def attach_object_depths(
                 calibration[1],
             )
             if world_transform is not None:
-                point_world_m = point_camera_to_world_m(
-                    point_camera_m, world_transform
-                )
+                point_world_m = point_camera_to_world_m(point_camera_m, world_transform)
 
         dict_objects[mask_id]["coord_center&depth"] = [cx, cy, depth_mm]
         dict_objects[mask_id]["object_depth_mm"] = depth_mm
@@ -492,47 +468,6 @@ def attach_object_depths(
         dict_objects[mask_id]["object_point_pixel"] = [reference_pixel[0], reference_pixel[1]]
 
     return dict_objects
-
-
-def backproject_pixel_to_camera_m(
-    u: int,
-    v: int,
-    depth_mm: float,
-    intrinsic: Intrinsics,
-    distortion: Distortion,
-) -> list:
-    """Back-project one RGB pixel and its depth into the colour camera frame.
-
-    The pixel is undistorted to normalised image coordinates and scaled by the
-    axial depth, so the result is the 3D point of the colour camera's optical
-    frame: x to the right of the image, y down it, z along the optical axis.
-
-    Parameters
-    ----------
-    u : int
-        Column of the pixel in the RGB frame.
-    v : int
-        Row of the pixel in the RGB frame.
-    depth_mm : float
-        Axial depth at that pixel, in millimetres.
-    intrinsic : Intrinsics
-        Colour intrinsics of the frame the pixel belongs to.
-    distortion : Distortion
-        Colour distortion coefficients of the same frame.
-
-    Returns
-    -------
-    list
-        ``[x, y, z]`` in metres, in the colour camera frame.
-    """
-    x_n, y_n = _undistort_pixels_to_normalized(
-        np.asarray([float(u)], dtype=np.float64),
-        np.asarray([float(v)], dtype=np.float64),
-        intrinsic,
-        distortion,
-    )
-    z_m = float(depth_mm) / 1000.0
-    return [float(x_n[0]) * z_m, float(y_n[0]) * z_m, z_m]
 
 
 def _mask_median_reference_pixel(
@@ -718,94 +653,3 @@ def _find_depth_at_rgb(
     patch = aligned_depth_mm[v0 : v1 + 1, u0 : u1 + 1]
     valid = patch[np.isfinite(patch) & (patch > 0.0)]
     return None if valid.size == 0 else float(np.min(valid))
-
-
-def main_coords(
-    image_path: Union[str, Path, Image.Image, np.ndarray],
-    depth_path: Union[str, Path, Image.Image, np.ndarray],
-    dict_objects: dict,
-    *,
-    masks: Optional[Sequence[np.ndarray]] = None,
-    association: str = DEFAULT_DEPTH_ASSOCIATION,
-    camera_to_world_transform: Optional[CameraToWorldTransform] = None,
-    camera_to_world_file: Optional[Union[str, Path]] = None,
-) -> dict:
-    """
-    Given the paths to an RGB image and a depth image, along with a dictionary of objects containing their bounding boxes, this function aligns the depth image to the RGB image and retrieves the depth information for each object.
-
-    Parameters
-    ----------
-    image_path : Union[str, Path, Image.Image, np.ndarray]
-        The file path to the RGB image, or the image itself as a PIL Image or NumPy array.
-    depth_path : Union[str, Path, Image.Image, np.ndarray]
-        The file path to the depth image.
-    dict_objects : dict
-        A dictionary where each key is an object identifier and each value is another dictionary containing at least a "bbox" key with the bounding box coordinates [x_min, y_min, width, height].
-    masks : Sequence[np.ndarray] or None
-        One binary mask per object, in the same order as the objects, as left in
-        ``SegmentationModel.last_masks``. Required by the "mask-median" association
-        and ignored by "bbox-center".
-    association : str
-        Which depth-association strategy to use; see :func:`attach_object_depths`.
-    camera_to_world_transform : CameraToWorldTransform or None
-        Optional already-loaded transform from the colour camera optical frame
-        into ``world``.
-    camera_to_world_file : str or Path or None
-        Optional YAML file written by ``save_camera_world_transform``. It is
-        used when ``camera_to_world_transform`` is not supplied.
-
-    Returns
-    -------
-    dict
-        The input dictionary of objects, updated for each object with "coord_center&depth"
-        (a list [center_x, center_y, depth_mm]), "object_depth_mm", "depth_association",
-        "object_point_camera_m" (a list [x, y, z] in metres in the colour camera frame) and
-        "object_point_world_m" (the same coordinates in world, when a saved
-        camera-to-world transform is available), and "object_point_pixel" (the
-        pixel that point was back-projected through).
-        Under "mask-median" the centre is only the object's image-space reference centre:
-        the depth is estimated over the mask rather than sampled at that pixel.
-    """
-    if isinstance(image_path, str) or isinstance(image_path, Path):
-        if isinstance(image_path, str):
-            image_path = Path(image_path)
-        rgb = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
-    elif isinstance(image_path, Image.Image):
-        rgb = cv2.cvtColor(np.array(image_path), cv2.COLOR_RGB2BGR)
-    elif isinstance(image_path, np.ndarray):
-        if image_path.ndim == 3 and image_path.shape[2] == 3:
-            rgb = cv2.cvtColor(image_path, cv2.COLOR_RGB2BGR)
-        else:
-            raise ValueError("NumPy array must be a 3-channel RGB image")
-    else:
-        raise TypeError("image_path must be a str, Path, PIL.Image.Image, or np.ndarray")
-
-    if isinstance(depth_path, str) or isinstance(depth_path, Path):
-        if isinstance(depth_path, str):
-            depth_path = Path(depth_path)
-        depth = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)  # si es PNG de depth visual
-    elif isinstance(depth_path, Image.Image):
-        depth = np.array(depth_path)
-    elif isinstance(depth_path, np.ndarray):
-        depth = depth_path
-    else:
-        raise TypeError("depth_path must be a str, Path, PIL.Image.Image, or np.ndarray")
-
-    if rgb is None:
-        raise ValueError(f"Failed to read RGB image from {image_path}")
-    if depth is None:
-        raise ValueError(f"Failed to read depth image from {depth_path}")
-
-    # Local import avoids a module cycle: providers reuse RGBDMapper itself.
-    from mapping.depth_provider import SensorDepthProvider
-
-    provider = SensorDepthProvider.from_frames(rgb, depth, depth_unit_scale=1.0)
-    result = provider.estimate(rgb, depth)
-    return attach_object_depths(
-        dict_objects,
-        result.depth_mm,
-        masks=masks,
-        association=association,
-        camera_to_world_transform=camera_to_world_transform,
-        camera_to_world_file=camera_to_world_file,
-    )

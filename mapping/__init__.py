@@ -3,7 +3,7 @@
 The point-cloud helpers need Open3D, which the main environment does not install: its
 precompiled PyTorch ops pin torch to 2.2.*, and the rest of the project has moved past
 that (see requirements-o3dml.txt). They are therefore resolved on first use rather than
-at import, so that importing anything from this package -- the depth providers, the
+at import, so that importing anything from this package -- the camera model, the
 RGB-D mapper -- costs nothing and works without Open3D.
 
 Reaching one of them in an environment that has no Open3D raises ImportError naming the
@@ -13,8 +13,6 @@ environment to use, rather than failing at the import of an unrelated module.
 import importlib
 from typing import TYPE_CHECKING, Any
 
-from mapping.depth_anything import DepthAnythingV2Provider, DepthAnythingV3Provider
-from mapping.depth_provider import DepthProvider, DepthResult, SensorDepthProvider
 from mapping.rgbd_mapper import attach_object_depths
 
 if TYPE_CHECKING:
@@ -44,14 +42,9 @@ _OPEN3D_EXPORTS = {
 }
 
 __all__ = [
-    "DepthAnythingV2Provider",
-    "DepthAnythingV3Provider",
-    "DepthProvider",
-    "DepthResult",
     "GeometricSegmentation",
     "RGBDPointCloud",
     "RGBDPointCloudGenerator",
-    "SensorDepthProvider",
     "attach_object_depths",
     "compare_label_images",
     "create_aligned_point_cloud",

@@ -64,7 +64,7 @@ autodoc_mock_imports = [
 ]
 
 # Render a default as it is written in the source rather than as its value. Without this,
-# `prompt: str = SCENE_INVENTORY_PROMPT` inlines the whole prompt and `SAM3Model.__init__`
+# `prompt: str = SCENE_INVENTORY_PROMPT` inlines the whole prompt and `ConceptInventory.__init__`
 # comes out as a 3000-character signature.
 autodoc_preserve_defaults = True
 

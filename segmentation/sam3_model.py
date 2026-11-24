@@ -9,61 +9,49 @@ attributed to the phrase that found it.
 
 That inverts the pipeline. The heuristics exist to compensate for masks having no
 semantics, so most of them have nothing left to do here; what matters instead is
-the quality of the phrases. This class therefore owns both halves:
+the quality of the phrases. The work comes in two halves:
 
-1. A VLM (any :class:`~LLM.llm_base.BaseLLM` that accepts images) is shown the
-   scene and asked for the things in it, as phrases SAM 3 can ground. When a task
-   is configured it is also asked which of those the task needs.
+1. A VLM is shown the scene and asked for the things in it, as phrases SAM 3 can
+   ground. That is :class:`scene_understanding.inventory.ConceptInventory`, which
+   owns the prompt and the phrasing examples.
 2. Those phrases are passed to Ultralytics' ``SAM3SemanticPredictor``, and the
-   masks come back labelled with the concept that produced them.
+   masks come back labelled with the concept that produced them. That is this
+   class, which takes the inventory as its first argument.
 
 The labels are the point: :meth:`SAM3Model.segment` returns them alongside the
 masks, so the annotator downstream no longer has to work out *what* each crop is
 and can spend its call on describing it instead.
 
-Only the whole-scene inventory prompt lives here. Describing a mask once it has
-been cut out is a separate job and stays in
-``scene_understanding/gpt_annotator.py``.
+The debug dumps and the HTML viewer live in :mod:`segmentation.sam3_report`.
 
 Requires ``ultralytics >= 8.3.237`` and the gated ``sam3.pt`` checkpoint; see
 ``scripts/install_models.py`` for how to obtain it.
 """
 
-import base64
 import gc
-import html
-import json
 import tempfile
 import time
 import webbrowser
 from collections import Counter
-from datetime import datetime
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union, cast
 
 import cv2
 import numpy as np
 import torch
-import yaml
 from PIL import Image
 from ultralytics.models.sam import SAM3SemanticPredictor
 
-from LLM.llm_base import BaseLLM
-from LLM.llm_factory import create_llm
-from segmentation.segmentation import SegmentationModel, binary_mask_to_pil
+from scene_understanding.inventory import DEFAULT_EXAMPLES_FILE, ConceptInventory
+from segmentation import sam3_report
+from segmentation.segmentation import SegmentationModel
+from utility.masks import binary_mask_to_pil
 from utility.utility import logger
 
 # The only checkpoint SAM 3 ships. Kept as a tuple for symmetry with
 # `SAM_CHECKPOINTS` and `FASTSAM_CHECKPOINTS`, and because the check below is a
 # suffix match, so a local path such as "models/sam/sam3.pt" works too.
 SAM3_CHECKPOINTS = ("sam3.pt",)
-
-# Few-shot pairs steering how the VLM phrases the concepts. Data rather than
-# code, so the phrasing can be tuned without touching this file.
-DEFAULT_EXAMPLES_FILE = (
-    Path(__file__).resolve().parent.parent / "LLM" / "examples" / "SAM3" / "concept_prompts.yaml"
-)
 
 # Detection score below which an instance is dropped. SAM 3 answers every phrase
 # it is given, including phrases for things that are not in the scene, so this is
@@ -97,126 +85,6 @@ DEFAULT_MAX_REFINEMENTS = 0
 # cannot tell a row of bricks from two separate towers that happen to touch.
 DEFAULT_MERGE_GAP = 5
 
-# Thickness of the mask outlines in the debug overlay.
-OUTLINE_WIDTH = 3
-
-# Longest side, in pixels, of the images embedded in the HTML view. The page
-# carries them base64-encoded so that it stays a single self-contained file that
-# can be copied off a cluster node, which makes their size the page's size.
-VIEW_OVERLAY_MAX = 1600
-VIEW_CROP_MAX = 360
-
-# Styling for the page written by `SAM3Model.visualize`. Kept out of the builder
-# so that the braces of the CSS do not have to be escaped inside an f-string.
-VIEWER_CSS = """
-body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-       margin: 0; padding: 24px; background: #14161a; color: #e6e8ec; }
-h1 { font-size: 19px; margin: 0 0 8px; font-weight: 600; }
-p.meta { color: #9aa1ac; font-size: 13px; margin: 0 0 4px; }
-p.meta b { color: #e6e8ec; font-weight: 600; }
-p.missing b { color: #f0a868; }
-img.overlay { width: 100%; border-radius: 8px; display: block; margin: 20px 0; }
-.grid { display: grid; gap: 16px;
-        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
-figure { margin: 0; background: #1c1f25; border: 1px solid #2a2f38;
-         border-radius: 8px; padding: 10px; }
-figure img { width: 100%; display: block; background: #000; border-radius: 4px; }
-figcaption { font-size: 12px; margin-top: 8px; }
-figcaption b { display: block; font-size: 13px; margin-bottom: 2px; }
-figcaption span { color: #9aa1ac; }
-.swatch { display: inline-block; width: 9px; height: 9px;
-          border-radius: 2px; margin-right: 6px; }
-"""
-
-# STAGE 1 PROMPT: SCENE INVENTORY.
-#
-# Asks for the noun phrases SAM 3 is prompted with, rather than for a description
-# of anything. `%%EXAMPLES%%` is replaced by the pairs rendered from
-# `DEFAULT_EXAMPLES_FILE`, and `%%TASK%%` by the task the robot has to carry out.
-SCENE_INVENTORY_PROMPT = """You will receive one image of a robotic workspace.
-
-List the things visible in it as short noun phrases. Those phrases are passed to
-a concept segmentation model (SAM3), which finds the things you name and nothing 
-else: whatever you leave out is not segmented and does not reach the rest of the
-pipeline.
-
-Name each thing at the granularity the work happens at: the whole object or
-assembly, never the pieces it is built from. If several identical pieces are put
-together into one structure, name the structure. Do not name a part of something
-you have already named.
-
-Make each phrase specific enough that only one kind of thing in the scene can
-match it, and specific enough to settle what counts as *one* of them. Colour,
-size and overall shape are what to use for that.
-
-Never make a phrase specific by saying where a thing is, which one of them you
-mean, or how many there are. Every region matching a phrase is returned
-automatically, so position and order single out nothing and ground against
-nothing. The same goes for what a thing happens to be doing right now, which will
-have changed by the next frame.
-
-%%EXAMPLES%%
-
-What to leave out:
-- The work surface, the walls, the floor, and anything else that is scenery
-  rather than a thing in the scene.
-
-%%TASK%%
-
-Return ONLY raw JSON.
-Do not use markdown code fences.
-Do not write ```json.
-{
-"objects": ["string"],
-"task_relevant": ["string"]
-}
-
-- "objects" lists every visible thing that is not background, whether or not a
-  task was given.
-- "task_relevant" lists the objects needed to carry out the task, copied
-  verbatim from "objects". Do not rephrase them, and do not name anything that is
-  not already in "objects". Leave it empty when no task was given. 
-"""
-
-# Rendered into `%%TASK%%` when no task is configured.
-NO_TASK_NOTE = 'No task is given, so leave "task_relevant" empty.'
-
-# REFINEMENT PROMPT.
-#
-# Sent when a phrase from the inventory matched several regions at once, which is
-# the symptom of it not having settled what counts as one thing. `%%AMBIGUOUS%%`
-# is replaced by the offending phrases and how many regions each matched, and
-# `%%EXAMPLES%%` by the same pairs the inventory prompt uses.
-REFINEMENT_PROMPT = """You named the things in this workspace earlier, and some of
-those phrases turned out to be ambiguous.
-
-Each phrase below matched several separate regions of the image, which means it
-did not settle what counts as one thing:
-
-%%AMBIGUOUS%%
-
-A phrase does that when it names a part rather than a whole. "lego block" matches
-a single brick, a stack of two bricks, and the whole tower they are built into,
-and nothing in the phrase says which of those was meant.
-
-Replace each of them with one or more phrases that each name a whole object or
-assembly, specific enough that only one kind of thing in the scene can match.
-Use colour, size and overall shape. Do not say where a thing is, which one of
-them you mean, or how many there are.
-
-%%EXAMPLES%%
-
-Return ONLY raw JSON.
-Do not use markdown code fences.
-Do not write ```json.
-{
-"replacements": {"the ambiguous phrase": ["a narrower phrase", "another one"]}
-}
-
-Every ambiguous phrase must appear as a key. Give at least one replacement for
-each, and several when the phrase was covering several different structures.
-"""
-
 
 class SAM3Model(SegmentationModel):
     """Segment a scene by concept, using a VLM to decide what the concepts are.
@@ -224,16 +92,17 @@ class SAM3Model(SegmentationModel):
     The VLM runs first and names the things in the image; SAM 3 then segments
     exactly those. Both steps are hidden behind :meth:`segment`::
 
-        model = SAM3Model(llm, "models/sam/sam3.pt", task="pick up the wrench")
+        inventory = ConceptInventory(llm, task="pick up the wrench")
+        model = SAM3Model(inventory, "models/sam/sam3.pt")
         masks, bboxes, labels = model.segment(image)
 
     Pass ``concepts=`` to the constructor, or call :meth:`set_concepts`, to skip
-    the VLM entirely and segment a fixed vocabulary.
+    the VLM entirely and segment a fixed vocabulary; the inventory may then be None.
 
     Attributes
     ----------
-    llm : BaseLLM
-        Backend asked for the scene inventory. Must accept images.
+    inventory : ConceptInventory or None
+        Asks the VLM for the scene inventory. None when only fixed concepts are used.
     concepts : list[str] or None
         Phrases SAM 3 is prompted with. ``None`` until the VLM has been asked, or
         for as long as it is asked afresh for every image.
@@ -247,29 +116,24 @@ class SAM3Model(SegmentationModel):
 
     def __init__(
         self,
-        llm: BaseLLM,
+        inventory: Optional[ConceptInventory],
         sam3_checkpoint: Union[str, Path] = "sam3.pt",
         device: str = "cuda",
         save_dir: Optional[Union[str, Path]] = None,
         debug_masks: bool = False,
-        task: Optional[str] = None,
         concepts: Optional[Sequence[str]] = None,
         merge_gap: int = DEFAULT_MERGE_GAP,
         max_refinements: int = DEFAULT_MAX_REFINEMENTS,
-        prompt: str = SCENE_INVENTORY_PROMPT,
-        refinement_prompt: str = REFINEMENT_PROMPT,
-        examples_file: Optional[Union[str, Path]] = DEFAULT_EXAMPLES_FILE,
         filters: Optional[Mapping[str, float]] = None,
         **predict_kwargs: Any,
     ) -> None:
-        """Initialize the SAM 3 model and the VLM that feeds it.
+        """Initialize the SAM 3 model.
 
         Parameters
         ----------
-        llm : BaseLLM
-            Backend used to name the things in the scene. It must support images,
-            which is the case for the Azure OpenAI, OpenAI, Anthropic, Gemini and
-            GLM backends.
+        inventory : ConceptInventory or None
+            Asks the VLM what is in each scene. None is only allowed together with
+            ``concepts``.
         sam3_checkpoint : str or Path
             Checkpoint to load. Either ``"sam3.pt"`` or a path to a local file
             whose name ends with it. Unlike the SAM 2 and FastSAM checkpoints this
@@ -284,11 +148,6 @@ class SAM3Model(SegmentationModel):
             If True, dump every mask under ``save_dir/debug/``, after touching
             regions of one concept have been merged but before any refinement.
             Requires ``save_dir``. Default is False.
-        task : str or None
-            The task the robot has to carry out. When given, the VLM also reports
-            which objects it needs, in :attr:`task_relevant`. It never restricts
-            what gets segmented: the full inventory is always returned, because an
-            object irrelevant to the task can still be an obstacle.
         concepts : sequence of str or None
             Fixed phrases to segment. When given, the VLM is never called, and no
             refinement is attempted either: an explicit list is taken at its word.
@@ -301,18 +160,9 @@ class SAM3Model(SegmentationModel):
             Kept for the parked refinement loop at the end of this file, which
             ``segment`` does not currently call. Setting it above zero warns and
             otherwise does nothing. Default is :data:`DEFAULT_MAX_REFINEMENTS`.
-        prompt : str
-            Instructions sent with the scene image. Defaults to
-            :data:`SCENE_INVENTORY_PROMPT`.
-        refinement_prompt : str
-            Instructions sent when narrowing an ambiguous phrase. Defaults to
-            :data:`REFINEMENT_PROMPT`.
         filters : Mapping[str, float] or None
             Overrides of :attr:`DEFAULT_FILTERS`. SAM 3 declares none: it segments what
             it was asked for, so there is nothing to filter by size or overlap.
-        examples_file : str or Path or None
-            YAML file of good/bad phrasing pairs rendered into the prompt. None
-            leaves the examples section empty.
         predict_kwargs : dict
             Additional overrides for the Ultralytics predictor, e.g. ``conf``,
             ``iou`` or ``imgsz``. Check the documentation of
@@ -321,9 +171,9 @@ class SAM3Model(SegmentationModel):
         Raises
         ------
         ValueError
-            If ``sam3_checkpoint`` is not a SAM 3 checkpoint, if the backend does
-            not support images, or if ``debug_masks`` is set without a
-            ``save_dir``.
+            If ``sam3_checkpoint`` is not a SAM 3 checkpoint, if neither an
+            inventory nor concepts are given, or if ``debug_masks`` is set without
+            a ``save_dir``.
         """
         super().__init__(save_dir=save_dir, filters=filters)
 
@@ -343,20 +193,14 @@ class SAM3Model(SegmentationModel):
                 "use FastSAMModel."
             )
 
-        if not llm.SUPPORTS_IMAGES:
-            raise ValueError(
-                f"{type(llm).__name__} does not support images and cannot name the things in a "
-                "scene it cannot see."
-            )
+        if inventory is None and concepts is None:
+            raise ValueError("SAM3Model needs a ConceptInventory unless fixed concepts are given.")
 
         if debug_masks and self.save_dir is None:
             raise ValueError("debug_masks=True requires save_dir to be set.")
         self.debug_masks = debug_masks
 
-        self.llm = llm
-        self.task = task
-        self.prompt = prompt
-        self.refinement_prompt = refinement_prompt
+        self.inventory = inventory
         self.merge_gap = max(0, int(merge_gap))
         self.max_refinements = max(0, int(max_refinements))
         if self.max_refinements:
@@ -366,7 +210,6 @@ class SAM3Model(SegmentationModel):
             )
         self.concepts: Optional[List[str]] = list(concepts) if concepts is not None else None
         self.task_relevant: List[str] = []
-        self.examples = self._render_examples(examples_file)
 
         predict_kwargs.setdefault("conf", DEFAULT_CONF)
         predict_kwargs.setdefault("iou", DEFAULT_IOU)
@@ -398,6 +241,8 @@ class SAM3Model(SegmentationModel):
         llm_config_file: Union[str, Path],
         sam3_checkpoint: Union[str, Path] = "sam3.pt",
         llm_overrides: Optional[Dict[str, Any]] = None,
+        task: Optional[str] = None,
+        examples_file: Optional[Union[str, Path]] = DEFAULT_EXAMPLES_FILE,
         **kwargs: Any,
     ) -> "SAM3Model":
         """Build a SAM3Model from an LLM YAML configuration file.
@@ -414,8 +259,12 @@ class SAM3Model(SegmentationModel):
             Checkpoint to load.
         llm_overrides : dict or None
             Forwarded to the backend's ``from_config``, e.g. ``{"params": {"seed": 7}}``.
+        task : str or None
+            The task the robot has to carry out; see :class:`ConceptInventory`.
+        examples_file : str or Path or None
+            Phrasing pairs rendered into the inventory prompt.
         kwargs : dict
-            Forwarded to :meth:`__init__`, e.g. ``save_dir`` or ``task``.
+            Forwarded to :meth:`__init__`, e.g. ``save_dir``.
 
         Returns
         -------
@@ -429,64 +278,24 @@ class SAM3Model(SegmentationModel):
         ValueError
             If the selected backend does not support images.
         """
-        llm = create_llm(llm_config_file, **(llm_overrides or {}))
-        return cls(llm, sam3_checkpoint, **kwargs)
-
-    ## Concepts ########################################################################################################
-
-    @staticmethod
-    def _render_examples(examples_file: Optional[Union[str, Path]]) -> str:
-        """Render the few-shot phrasing pairs as the text injected in the prompt.
-
-        Parameters
-        ----------
-        examples_file : str or Path or None
-            YAML file holding a ``pairs`` list of ``good``/``bad``/``why``
-            mappings. None renders nothing.
-
-        Returns
-        -------
-        str
-            The rendered block, or the empty string when there is nothing to show.
-        """
-        if examples_file is None:
-            return ""
-
-        path = Path(examples_file)
-        if not path.is_file():
-            logger.warning(f"Concept examples file not found: {path}. Continuing without examples.")
-            return ""
-
-        with open(path) as handle:
-            content = yaml.safe_load(handle) or {}
-
-        pairs = content.get("pairs") or []
-        if not pairs:
-            logger.warning(f"No pairs in {path}. Continuing without examples.")
-            return ""
-
-        lines = ["Phrases that work, next to phrasings of the same thing that do not:"]
-        for pair in pairs:
-            lines.append(f'\n  yes: "{pair["good"]}"')
-            lines.append(f'  no:  "{pair["bad"]}"')
-            lines.append(f"       ({pair['why']})")
-
-        return "\n".join(lines)
-
-    def build_prompt(self) -> str:
-        """Return the scene inventory prompt with its sentinels filled in.
-
-        Returns
-        -------
-        str
-            :attr:`prompt` with the examples and the task substituted.
-        """
-        task_note = (
-            f"The robot has to carry out the following task:\n{self.task}"
-            if self.task
-            else NO_TASK_NOTE
+        inventory = ConceptInventory.from_config(
+            llm_config_file,
+            llm_overrides,
+            task=task,
+            examples_file=examples_file,
+            save_dir=kwargs.get("save_dir"),
         )
-        return self.prompt.replace("%%EXAMPLES%%", self.examples).replace("%%TASK%%", task_note)
+        return cls(inventory, sam3_checkpoint, **kwargs)
+
+    @property
+    def llm(self) -> Any:
+        """The inventory's VLM, or None without an inventory."""
+        return self.inventory.llm if self.inventory is not None else None
+
+    @property
+    def task(self) -> Optional[str]:
+        """The inventory's task, or None without an inventory."""
+        return self.inventory.task if self.inventory is not None else None
 
     def effective_params(self) -> Dict[str, Any]:
         """Return the arguments forwarded to the SAM 3 predictor.
@@ -509,98 +318,6 @@ class SAM3Model(SegmentationModel):
         self.concepts = list(concepts)
         self._invalidate()
         logger.debug(f"Concepts set manually: {self.concepts}")
-
-    def concepts_for(self, image: Image.Image) -> Tuple[List[str], List[str]]:
-        """Ask the VLM what is in the scene.
-
-        Parameters
-        ----------
-        image : PIL.Image.Image
-            The whole scene.
-
-        Returns
-        -------
-        objects : list[str]
-            Every visible thing that is not background.
-        task_relevant : list[str]
-            The subset of ``objects`` the task needs, empty when no task is set.
-        """
-        start = time.time()
-        prompt = self.build_prompt()
-        success, raw = self.llm.query(prompt, images=[image])
-
-        if self.save_dir is not None:
-            stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            with open(Path(self.save_dir) / f"sent_query_{stamp}.txt", "w") as handle:
-                handle.write(prompt)
-
-        objects, task_relevant = self._parse_inventory(success, raw)
-
-        logger.debug(f"Scene inventory obtained in {time.time() - start}s")
-        logger.info(f"Concepts: {objects}")
-        if task_relevant:
-            logger.info(f"Task-relevant: {task_relevant}")
-
-        return objects, task_relevant
-
-    @staticmethod
-    def _parse_inventory(success: bool, raw: str) -> Tuple[List[str], List[str]]:
-        """Turn the VLM answer into the two concept lists.
-
-        A malformed answer is logged and treated as an empty scene rather than
-        raised: one unusable answer should cost one frame, not the whole run.
-
-        Parameters
-        ----------
-        success : bool
-            Whether the query reached the model.
-        raw : str
-            The raw answer of the model.
-
-        Returns
-        -------
-        objects : list[str]
-            Phrases under the ``objects`` key, deduplicated and stripped.
-        task_relevant : list[str]
-            Phrases under the ``task_relevant`` key, restricted to those that also
-            appear in ``objects``.
-        """
-        if not success or not raw:
-            logger.error("No response for the scene inventory. Segmenting nothing.")
-            return [], []
-
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.error(f"Error decoding the scene inventory JSON: {raw}")
-            return [], []
-
-        if not isinstance(parsed, dict):
-            logger.error(f"Unexpected scene inventory payload: {raw}")
-            return [], []
-
-        def clean(key: str) -> List[str]:
-            values = parsed.get(key) or []
-            if not isinstance(values, list):
-                logger.error(f"Scene inventory field {key!r} is not a list: {values!r}")
-                return []
-            # dict.fromkeys rather than set(): duplicated phrases would each be
-            # sent to SAM 3 and produce the same masks twice, and the order the
-            # VLM chose is worth keeping in the logs.
-            return list(dict.fromkeys(str(v).strip() for v in values if str(v).strip()))
-
-        objects = clean("objects")
-        task_relevant = clean("task_relevant")
-
-        # The prompt asks for task_relevant to be copied verbatim out of objects.
-        # When it is not, the phrase was never segmented, so flagging it as
-        # task-relevant would point at masks that do not exist.
-        unknown = [phrase for phrase in task_relevant if phrase not in objects]
-        if unknown:
-            logger.warning(f"Dropping task-relevant phrases absent from the inventory: {unknown}")
-            task_relevant = [phrase for phrase in task_relevant if phrase in objects]
-
-        return objects, task_relevant
 
     ## Segmentation ####################################################################################################
 
@@ -683,7 +400,8 @@ class SAM3Model(SegmentationModel):
 
         concepts = self.concepts
         if concepts is None:
-            concepts, self.task_relevant = self.concepts_for(image_pil)
+            assert self.inventory is not None  # enforced by __init__
+            concepts, self.task_relevant = self.inventory.concepts_for(image_pil)
 
         if not concepts:
             logger.warning(f"No concepts to segment for image {idx + 1}.")
@@ -931,256 +649,11 @@ class SAM3Model(SegmentationModel):
         masks, bboxes, labels = self._merge_adjacent(masks, bboxes, labels)
 
         if self.debug_masks and tag is not None:
-            self._dump_masks(image, masks, bboxes, labels, tag)
+            sam3_report.dump_masks(cast(Path, self.save_dir), image, masks, bboxes, labels, tag)
 
         return masks, bboxes, labels
 
-    @staticmethod
-    def _slug(label: str) -> str:
-        """Return a concept label usable in a file name.
-
-        Parameters
-        ----------
-        label : str
-            The concept.
-
-        Returns
-        -------
-        str
-            The label with everything but letters and digits replaced by
-            underscores, so that a phrase containing a slash or a space cannot
-            turn into a nested path.
-        """
-        return "".join(c if c.isalnum() else "_" for c in label)
-
-    @staticmethod
-    def _colours(count: int) -> List[np.ndarray]:
-        """Return one distinct RGB colour per mask.
-
-        Parameters
-        ----------
-        count : int
-            How many colours are needed.
-
-        Returns
-        -------
-        list[numpy.ndarray]
-            Colours spread over the hue circle in fixed steps, which keeps
-            neighbouring masks visually distinct.
-        """
-        return [
-            cv2.cvtColor(
-                np.array([[[int(180 * i / max(count, 1)), 255, 255]]], dtype=np.uint8),
-                cv2.COLOR_HSV2RGB,
-            )[0, 0].astype(np.uint16)
-            for i in range(count)
-        ]
-
-    @classmethod
-    def _overlay(cls, image: np.ndarray, masks: np.ndarray, labels: List[str]) -> np.ndarray:
-        """Draw every mask on the image as a coloured outline with its concept.
-
-        Outlines only, never a fill. Colour is what the concept phrases are built
-        on, and a fill repaints the objects in a hue picked per mask index rather
-        than per object, which makes the one question worth asking of the picture
-        - did "yellow structure" land on something yellow? - unanswerable.
-
-        Parameters
-        ----------
-        image : numpy.ndarray
-            RGB image with shape ``(H, W, 3)``.
-        masks : numpy.ndarray
-            Boolean masks with shape ``(N, H, W)``.
-        labels : list[str]
-            The concept each mask was found by.
-
-        Returns
-        -------
-        numpy.ndarray
-            A copy of ``image`` with the outlines and labels drawn on it.
-        """
-        overlay = image.copy()
-        colours = cls._colours(len(masks))
-
-        for mask, colour in zip(masks, colours):
-            contours, _ = cv2.findContours(
-                mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-            )
-            cv2.drawContours(overlay, contours, -1, colour.tolist(), OUTLINE_WIDTH)
-
-        # Labels go on after every outline, so that an outline drawn later cannot
-        # run through the text of a mask drawn earlier.
-        for i, mask in enumerate(masks):
-            ys, xs = np.nonzero(mask)
-            if len(xs) == 0:
-                continue
-            cv2.putText(
-                overlay,
-                f"{i}:{labels[i]}",
-                (int(xs.mean()), int(ys.mean())),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 255, 255),
-                2,
-                cv2.LINE_AA,
-            )
-
-        return overlay
-
-    def _dump_masks(
-        self,
-        image: np.ndarray,
-        masks: np.ndarray,
-        bboxes: List[List[int]],
-        labels: List[str],
-        tag: str,
-    ) -> None:
-        """Write the masks of one prediction to ``save_dir/debug/`` for inspection.
-
-        Produces one colour-coded overlay of all masks at once, one binary PNG per
-        mask named after the concept that found it, and a log line per mask, so a
-        concept the VLM never named can be told apart from one SAM 3 could not
-        find.
-
-        Parameters
-        ----------
-        image : numpy.ndarray
-            RGB image the masks were generated from, shape ``(H, W, 3)``.
-        masks : numpy.ndarray
-            Boolean masks with shape ``(N, H, W)``.
-        bboxes : list[list[int]]
-            One box per mask as ``[x_min, y_min, width, height]``.
-        labels : list[str]
-            The concept each mask was found by.
-        tag : str
-            Sub-directory name, e.g. ``"image_1"``.
-        """
-        debug_dir = Path(cast(Path, self.save_dir)) / "debug" / tag
-        debug_dir.mkdir(parents=True, exist_ok=True)
-
-        H, W = image.shape[:2]
-
-        logger.debug(f"[{tag}] SAM 3 returned {len(masks)} masks")
-        for i, mask in enumerate(masks):
-            area_pct = np.sum(mask) * 100 / (H * W)
-            logger.debug(
-                f"[{tag}]   mask {i:03d}: {labels[i]!r} area {area_pct:6.2f}% bbox {bboxes[i]}"
-            )
-            binary_mask_to_pil(mask.astype(np.uint8)).save(
-                debug_dir / f"mask_{i:03d}_{self._slug(labels[i])}.png"
-            )
-
-        Image.fromarray(self._overlay(image, masks, labels)).save(
-            debug_dir.parent / f"{tag}_all_masks.png"
-        )
-        logger.debug(f"[{tag}] wrote overlay and {len(masks)} masks to {debug_dir}")
-
     ## Visualisation ###################################################################################################
-
-    @staticmethod
-    def _data_uri(array: np.ndarray, max_side: int) -> str:
-        """Encode an image as a PNG ``data:`` URI, downscaled to fit.
-
-        Parameters
-        ----------
-        array : numpy.ndarray
-            RGB image with shape ``(H, W, 3)``.
-        max_side : int
-            Longest side the image is shrunk to before encoding.
-
-        Returns
-        -------
-        str
-            The image as ``data:image/png;base64,...``.
-        """
-        img = Image.fromarray(array.astype(np.uint8))
-        img.thumbnail((max_side, max_side))
-        buffer = BytesIO()
-        img.save(buffer, format="PNG")
-        return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
-
-    def _render_view(
-        self,
-        image: np.ndarray,
-        masks: np.ndarray,
-        bboxes: List[List[int]],
-        labels: List[str],
-        idx: int,
-    ) -> str:
-        """Build the self-contained HTML page showing one segmentation.
-
-        Parameters
-        ----------
-        image : numpy.ndarray
-            RGB image the masks were produced from, shape ``(H, W, 3)``.
-        masks : numpy.ndarray
-            Boolean masks with shape ``(N, H, W)``.
-        bboxes : list[list[int]]
-            One box per mask as ``[x_min, y_min, width, height]``.
-        labels : list[str]
-            The concept each mask was found by.
-        idx : int
-            Image index, shown in the heading.
-
-        Returns
-        -------
-        str
-            The complete HTML document.
-        """
-        height, width = image.shape[:2]
-        colours = self._colours(len(masks))
-
-        header = [
-            f"<h1>image {idx + 1} &mdash; {len(masks)} masks "
-            f"from {len(self.last_concepts)} concepts</h1>"
-        ]
-        if self.task:
-            header.append(f"<p class='meta'>task: <b>{html.escape(self.task)}</b></p>")
-        if self.task_relevant:
-            relevant = ", ".join(html.escape(c) for c in self.task_relevant)
-            header.append(f"<p class='meta'>task-relevant: <b>{relevant}</b></p>")
-
-        # A phrase that matched nothing is invisible in the picture, and is
-        # exactly what a badly chosen concept looks like, so it is named here.
-        missing = [c for c in self.last_concepts if c not in set(labels)]
-        if missing:
-            names = ", ".join(html.escape(c) for c in missing)
-            header.append(f"<p class='meta missing'>found nothing for: <b>{names}</b></p>")
-
-        cards = []
-        for i, (mask, colour) in enumerate(zip(masks, colours)):
-            ys, xs = np.nonzero(mask)
-            if len(xs) == 0:
-                continue
-            top, bottom = int(ys.min()), int(ys.max()) + 1
-            left, right = int(xs.min()), int(xs.max()) + 1
-
-            # Deliberately not `_crop`: that boosts contrast for the annotator,
-            # which shifts the colours this page exists to let you check.
-            cut = image[top:bottom, left:right] * mask[top:bottom, left:right, None]
-
-            swatch = "#{:02x}{:02x}{:02x}".format(*(int(c) for c in colour))
-            area = mask.sum() * 100 / (height * width)
-            cards.append(
-                "<figure>"
-                f"<img src='{self._data_uri(cut, VIEW_CROP_MAX)}'>"
-                f"<figcaption><b><span class='swatch' style='background:{swatch}'></span>"
-                f"{i}: {html.escape(labels[i])}</b>"
-                f"<span>{area:.2f}% of frame &middot; bbox {bboxes[i]}</span>"
-                "</figcaption></figure>"
-            )
-
-        overlay = self._data_uri(self._overlay(image, masks, labels), VIEW_OVERLAY_MAX)
-        return (
-            "<!doctype html><html><head><meta charset='utf-8'>"
-            f"<title>SAM 3 &mdash; image {idx + 1}</title>"
-            f"<style>{VIEWER_CSS}</style></head><body>"
-            + "".join(header)
-            + f"<img class='overlay' src='{overlay}'>"
-            + "<div class='grid'>"
-            + "".join(cards)
-            + "</div></body></html>"
-        )
 
     def visualize(
         self,
@@ -1227,7 +700,17 @@ class SAM3Model(SegmentationModel):
         destination.parent.mkdir(parents=True, exist_ok=True)
 
         destination.write_text(
-            self._render_view(image_np, masks, bboxes, labels, idx), encoding="utf-8"
+            sam3_report.render_view(
+                image_np,
+                masks,
+                bboxes,
+                labels,
+                idx,
+                concepts=self.last_concepts,
+                task=self.task,
+                task_relevant=self.task_relevant,
+            ),
+            encoding="utf-8",
         )
         logger.info(f"Wrote the mask view for image {idx + 1} to {destination}")
 
@@ -1404,7 +887,8 @@ class SAM3Model(SegmentationModel):
 
     def close(self) -> None:
         """Release the VLM connection."""
-        self.llm.close()
+        if self.inventory is not None:
+            self.inventory.close()
 
     ## Parked: concept refinement ######################################################################################
     #
@@ -1413,6 +897,9 @@ class SAM3Model(SegmentationModel):
     # case it was built for, and the loop had a habit of answering an ambiguous
     # phrase with synonyms of it rather than with distinct objects, which grew the
     # concept list without improving the masks.
+    #
+    # The VLM half of the loop (`ConceptInventory.narrow`, `REFINEMENT_PROMPT`) moved
+    # to scene_understanding/inventory.py with the rest of the inventory.
     #
     # Kept because splitting a concept into genuine sub-concepts is still worth
     # trying. To wire it back in, restore this at the end of `segment`, before the
@@ -1504,94 +991,6 @@ class SAM3Model(SegmentationModel):
             rewritten.extend(replacements.get(concept, [concept]))
         return list(dict.fromkeys(rewritten))
 
-    def _narrow(self, image: Image.Image, ambiguous: Dict[str, int]) -> Dict[str, List[str]]:
-        """Ask the VLM to replace ambiguous phrases with narrower ones.
-
-        Parameters
-        ----------
-        image : PIL.Image.Image
-            The whole scene, shown again so the replacements describe what is
-            actually there.
-        ambiguous : dict[str, int]
-            Phrases that matched several regions, and how many each matched.
-
-        Returns
-        -------
-        dict[str, list[str]]
-            Mapping from each ambiguous phrase to its replacements. Empty when the
-            answer was unusable.
-        """
-        listing = "\n".join(
-            f'- "{concept}" matched {count} separate regions'
-            for concept, count in ambiguous.items()
-        )
-        message = self.refinement_prompt.replace("%%AMBIGUOUS%%", listing).replace(
-            "%%EXAMPLES%%", self.examples
-        )
-
-        success, raw = self.llm.query(message, images=[image])
-        return self._parse_replacements(success, raw, ambiguous)
-
-    @staticmethod
-    def _parse_replacements(
-        success: bool, raw: str, ambiguous: Dict[str, int]
-    ) -> Dict[str, List[str]]:
-        """Turn the VLM answer into a mapping of phrase to narrower phrases.
-
-        Parameters
-        ----------
-        success : bool
-            Whether the query reached the model.
-        raw : str
-            The raw answer of the model.
-        ambiguous : dict[str, int]
-            The phrases that were asked about, used to reject replacements for
-            anything else.
-
-        Returns
-        -------
-        dict[str, list[str]]
-            The usable replacements, possibly empty.
-        """
-        if not success or not raw:
-            logger.error("No response for the refinement query.")
-            return {}
-
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.error(f"Error decoding the refinement JSON: {raw}")
-            return {}
-
-        proposed = parsed.get("replacements") if isinstance(parsed, dict) else None
-        if not isinstance(proposed, dict):
-            logger.error(f"Unexpected refinement payload: {raw}")
-            return {}
-
-        replacements: Dict[str, List[str]] = {}
-        for phrase, values in proposed.items():
-            if phrase not in ambiguous:
-                logger.warning(f"Ignoring a replacement for {phrase!r}, which was not ambiguous.")
-                continue
-
-            values = [values] if isinstance(values, str) else values
-            if not isinstance(values, list):
-                logger.warning(f"Replacements for {phrase!r} are not a list: {values!r}")
-                continue
-
-            # A replacement identical to the phrase it replaces is what an
-            # unhelpful answer looks like, and would loop until the budget runs
-            # out without changing anything.
-            cleaned = list(
-                dict.fromkeys(
-                    str(v).strip() for v in values if str(v).strip() and str(v).strip() != phrase
-                )
-            )
-            if cleaned:
-                replacements[phrase] = cleaned
-
-        return replacements
-
     def _refine(
         self,
         image_pil: Image.Image,
@@ -1644,7 +1043,8 @@ class SAM3Model(SegmentationModel):
                 + ", ".join(f"{c!r} ({n} regions)" for c, n in ambiguous.items())
             )
 
-            replacements = self._narrow(image_pil, ambiguous)
+            assert self.inventory is not None  # refinement only runs on VLM concepts
+            replacements = self.inventory.narrow(image_pil, ambiguous)
             if not replacements:
                 logger.warning("No usable replacement was proposed; keeping the current phrases.")
                 break

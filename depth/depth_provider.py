@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol
+from pathlib import Path
+from typing import Any, Mapping, Optional, Protocol, Sequence, Union
 
 import cv2
 import numpy as np
+from PIL import Image
 
-from mapping.rgbd_mapper import RGBDMapper
+from mapping.camera_model import CameraToWorldTransform
+from mapping.rgbd_mapper import DEFAULT_DEPTH_ASSOCIATION, RGBDMapper, attach_object_depths
 
 
 @dataclass(frozen=True)
@@ -167,3 +170,91 @@ def _validate_color(color_bgr: np.ndarray) -> None:
 def _validate_raw_depth(depth_raw: np.ndarray) -> None:
     if depth_raw.ndim != 2:
         raise ValueError("depth_raw must be a single-channel image")
+
+
+def main_coords(
+    image_path: Union[str, Path, Image.Image, np.ndarray],
+    depth_path: Union[str, Path, Image.Image, np.ndarray],
+    dict_objects: dict,
+    *,
+    masks: Optional[Sequence[np.ndarray]] = None,
+    association: str = DEFAULT_DEPTH_ASSOCIATION,
+    camera_to_world_transform: Optional[CameraToWorldTransform] = None,
+    camera_to_world_file: Optional[Union[str, Path]] = None,
+) -> dict:
+    """
+    Given the paths to an RGB image and a depth image, along with a dictionary of objects containing their bounding boxes, this function aligns the depth image to the RGB image and retrieves the depth information for each object.
+
+    Parameters
+    ----------
+    image_path : Union[str, Path, Image.Image, np.ndarray]
+        The file path to the RGB image, or the image itself as a PIL Image or NumPy array.
+    depth_path : Union[str, Path, Image.Image, np.ndarray]
+        The file path to the depth image.
+    dict_objects : dict
+        A dictionary where each key is an object identifier and each value is another dictionary containing at least a "bbox" key with the bounding box coordinates [x_min, y_min, width, height].
+    masks : Sequence[np.ndarray] or None
+        One binary mask per object, in the same order as the objects, as left in
+        ``SegmentationModel.last_masks``. Required by the "mask-median" association
+        and ignored by "bbox-center".
+    association : str
+        Which depth-association strategy to use; see :func:`attach_object_depths`.
+    camera_to_world_transform : CameraToWorldTransform or None
+        Optional already-loaded transform from the colour camera optical frame
+        into ``world``.
+    camera_to_world_file : str or Path or None
+        Optional YAML file written by ``save_camera_world_transform``. It is
+        used when ``camera_to_world_transform`` is not supplied.
+
+    Returns
+    -------
+    dict
+        The input dictionary of objects, updated for each object with "coord_center&depth"
+        (a list [center_x, center_y, depth_mm]), "object_depth_mm", "depth_association",
+        "object_point_camera_m" (a list [x, y, z] in metres in the colour camera frame) and
+        "object_point_world_m" (the same coordinates in world, when a saved
+        camera-to-world transform is available), and "object_point_pixel" (the
+        pixel that point was back-projected through).
+        Under "mask-median" the centre is only the object's image-space reference centre:
+        the depth is estimated over the mask rather than sampled at that pixel.
+    """
+    if isinstance(image_path, str) or isinstance(image_path, Path):
+        if isinstance(image_path, str):
+            image_path = Path(image_path)
+        rgb = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    elif isinstance(image_path, Image.Image):
+        rgb = cv2.cvtColor(np.array(image_path), cv2.COLOR_RGB2BGR)
+    elif isinstance(image_path, np.ndarray):
+        if image_path.ndim == 3 and image_path.shape[2] == 3:
+            rgb = cv2.cvtColor(image_path, cv2.COLOR_RGB2BGR)
+        else:
+            raise ValueError("NumPy array must be a 3-channel RGB image")
+    else:
+        raise TypeError("image_path must be a str, Path, PIL.Image.Image, or np.ndarray")
+
+    if isinstance(depth_path, str) or isinstance(depth_path, Path):
+        if isinstance(depth_path, str):
+            depth_path = Path(depth_path)
+        depth = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)  # si es PNG de depth visual
+    elif isinstance(depth_path, Image.Image):
+        depth = np.array(depth_path)
+    elif isinstance(depth_path, np.ndarray):
+        depth = depth_path
+    else:
+        raise TypeError("depth_path must be a str, Path, PIL.Image.Image, or np.ndarray")
+
+    if rgb is None:
+        raise ValueError(f"Failed to read RGB image from {image_path}")
+    if depth is None:
+        raise ValueError(f"Failed to read depth image from {depth_path}")
+
+    provider = SensorDepthProvider.from_frames(rgb, depth, depth_unit_scale=1.0)
+    result = provider.estimate(rgb, depth)
+    return attach_object_depths(
+        dict_objects,
+        result.depth_mm,
+        masks=masks,
+        association=association,
+        camera_to_world_transform=camera_to_world_transform,
+        camera_to_world_file=camera_to_world_file,
+    )

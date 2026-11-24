@@ -1,6 +1,6 @@
 """VLM-only baseline: one model call replaces the whole segmentation pipeline.
 
-The normal pipeline (``samgpt.py``) segments a frame with SAM, crops every object,
+The normal pipeline (``plantorv.py``) segments a frame with SAM, crops every object,
 annotates each crop with a vision LLM, and reads the depth of each object centre from
 the depth sensor. This script asks a single vision LLM, once per frame, to do all of
 that at the same time: to list the objects it sees, to place a bounding box around each

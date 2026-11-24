@@ -10,7 +10,8 @@ from skimage.morphology import dilation, disk, erosion, remove_small_objects
 from ultralytics.models.sam import Predictor as SAMPredictor
 from ultralytics.models.sam import SAM2Predictor
 
-from segmentation.segmentation import SegmentationModel, binary_mask_to_pil
+from segmentation.segmentation import SegmentationModel
+from utility.masks import binary_mask_to_pil
 from utility.utility import logger
 
 # Checkpoint names Ultralytics knows how to build a SAM model from. `build_sam`

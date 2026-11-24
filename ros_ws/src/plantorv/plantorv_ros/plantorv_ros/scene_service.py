@@ -128,12 +128,12 @@ def find_plantorv_root(explicit: Optional[str] = None) -> Path:
     Returns
     -------
     Path
-        Directory holding ``samgpt.py``.
+        Directory holding ``plantorv.py``.
 
     Raises
     ------
     FileNotFoundError
-        If no candidate holds ``samgpt.py``. The service is useless without it,
+        If no candidate holds ``plantorv.py``. The service is useless without it,
         so this is raised at start-up rather than on the first capture.
     """
     candidates: List[Path] = []
@@ -149,12 +149,12 @@ def find_plantorv_root(explicit: Optional[str] = None) -> Path:
     candidates.extend(Path(__file__).resolve().parents)
 
     for candidate in candidates:
-        if (candidate / "samgpt.py").is_file():
+        if (candidate / "plantorv.py").is_file():
             return candidate.resolve()
 
     raise FileNotFoundError(
         "Could not find the plantorv checkout: none of the candidates holds "
-        "samgpt.py. Pass --plantorv-root, or set PLANTORV_ROOT."
+        "plantorv.py. Pass --plantorv-root, or set PLANTORV_ROOT."
     )
 
 
@@ -468,7 +468,7 @@ class SceneCapturer:
                     **(overrides or {}),
                     "start_camera": bool(start_camera),
                     "run_pipeline": bool(run_pipeline),
-                    "pipeline_script": str(self.root / "samgpt.py"),
+                    "pipeline_script": str(self.root / "plantorv.py"),
                     "output_dir": str(output_dir),
                     # Never an empty array: ROS cannot infer the type of one, so
                     # the parameter would arrive uninitialized rather than empty
@@ -527,7 +527,7 @@ class SceneCapturer:
         """Return the argv that runs the pipeline over an existing run.
 
         The frames are already on disk, so this needs neither ROS nor the
-        camera: it is the same ``samgpt.py`` call the node would have made.
+        camera: it is the same ``plantorv.py`` call the node would have made.
 
         Parameters
         ----------
@@ -543,7 +543,7 @@ class SceneCapturer:
         """
         return [
             self.python_executable,
-            str(self.root / "samgpt.py"),
+            str(self.root / "plantorv.py"),
             "--input-dir",
             str(output_dir / RGB_FRAME.parent),
             "--depth-dir",
@@ -941,7 +941,7 @@ class SceneCapturer:
         has_ros = shutil.which("ros2") is not None
 
         return {
-            "ok": has_ros and (self.root / "samgpt.py").is_file(),
+            "ok": has_ros and (self.root / "plantorv.py").is_file(),
             "ros2_available": has_ros,
             "plantorv_root": str(self.root),
             "runs_dir": str(self.runs_dir),
@@ -1136,7 +1136,7 @@ def parse_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--plantorv-root",
-        help="The plantorv checkout holding samgpt.py. Found from this file when unset",
+        help="The plantorv checkout holding plantorv.py. Found from this file when unset",
     )
     parser.add_argument(
         "--runs-dir",

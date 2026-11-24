@@ -3,7 +3,7 @@
 Each stage is its own program, but they agree on where the environment file is,
 which device they run on, and how a bad path is reported. The option groups below
 are the single definition of those flags: the stage scripts add the groups they
-need, and ``samgpt.py`` adds all of them to run the three in a row.
+need, and ``plantorv.py`` adds all of them to run the three in a row.
 """
 
 import argparse
@@ -14,16 +14,14 @@ from typing import Union
 
 import torch
 
+from depth.depth_anything import DEFAULT_FOCAL_LENGTH_PX
+from depth.depth_factory import DEPTH_SOURCES
 from LLM.llm_base import configure_env
-from mapping.depth_anything import DEFAULT_FOCAL_LENGTH_PX
 from mapping.rgbd_mapper import DEFAULT_DEPTH_ASSOCIATION, DEPTH_ASSOCIATIONS
+from scene_understanding.annotator_factory import ANNOTATORS
 from scene_understanding.dam_annotator import DAM_QUERY, DEFAULT_DAM_MODEL_PATH
 from scene_understanding.gpt_annotator import DEFAULT_LLM_CONFIG_FILE
 from utility.utility import logger
-
-# Values of `--depth-source` that replace the depth dataset with an inferred depth map.
-# `sensor` is the remaining value and reads the depth images from `--depth-dir`.
-ESTIMATED_DEPTH_SOURCES = ("depth-anything-v2", "monocular")
 
 # The segmentation configuration used when --segmenter-config is not given. It picks
 # the backend, its checkpoint, what is forwarded to it and the thresholds that decide
@@ -109,7 +107,7 @@ def add_annotation_arguments(parser: argparse.ArgumentParser) -> None:
     group = parser.add_argument_group("annotation")
     group.add_argument(
         "--annotator",
-        choices=("gpt", "dam"),
+        choices=ANNOTATORS,
         default="gpt",
         help=(
             "Which annotator describes the objects: 'gpt' sends the crops to the remote "
@@ -194,7 +192,7 @@ def add_depth_arguments(parser: argparse.ArgumentParser) -> None:
     # from the RGB frame instead, which makes --depth-dir unused.
     group.add_argument(
         "--depth-source",
-        choices=("sensor", *ESTIMATED_DEPTH_SOURCES),
+        choices=DEPTH_SOURCES,
         default="sensor",
         help="Where depth comes from (default: %(default)s)",
     )
@@ -311,3 +309,44 @@ def setup(args: argparse.Namespace) -> None:
 
         os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
         torch.cuda.empty_cache()
+
+
+def validate_annotation_arguments(args: argparse.Namespace) -> None:
+    """Check the annotation options before any model is loaded, exiting on a bad one.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments, with the options of
+        :func:`add_annotation_arguments`.
+    """
+    if args.annotator == "gpt":
+        require_file(args.llm_config, "LLM configuration file")
+        return
+
+    from scene_understanding.dam_annotator import looks_like_repo_id
+
+    if not looks_like_repo_id(args.dam_model) and not Path(args.dam_model).exists():
+        logger.error(
+            f"DAM checkpoint does not exist: {args.dam_model}. Download it with "
+            "`python3 scripts/install_models.py dam_3b`."
+        )
+        sys.exit(1)
+    if "<image>" not in args.dam_query:
+        logger.error("--dam-query must contain the <image> token DAM substitutes the region into.")
+        sys.exit(1)
+
+
+def validate_depth_arguments(args: argparse.Namespace) -> None:
+    """Check the depth options, exiting on a bad one.
+
+    ``--depth-dir`` is only checked for the sensor backend: the estimators never read
+    it, so requiring it would force a depth dataset to exist for a run that ignores it.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed command-line arguments, with the options of :func:`add_depth_arguments`.
+    """
+    if args.depth_source == "sensor":
+        require_dir(args.depth_dir, "Depth images directory")

@@ -4,8 +4,8 @@ set -euo pipefail
 
 SEG_MODELS=("fastsam-s" "sam21-l" "sam1-h") # This must correspond to the names in the segmentation/conf folder
 LLM_MODELS=("azure_gpt54") # This must correspond to the names in the LLM/conf folder
-DEPTH_METHODS=("sensor" "monocular") # These are the --depth-source values, `python3 depth_estimation.py --help`.
-DEPTH_ASSOCIATION_METHODS=("mask-median" "bbox-center") # These are the methods to associate the depth with the segmentation mask, `python3 depth_estimation.py --help`.
+DEPTH_METHODS=("sensor" "monocular") # These are the --depth-source values, `python3 -m pipeline.estimate_depth --help`.
+DEPTH_ASSOCIATION_METHODS=("mask-median" "bbox-center") # These are the methods to associate the depth with the segmentation mask, `python3 -m pipeline.estimate_depth --help`.
 
 source .venv/bin/activate
 
@@ -71,7 +71,7 @@ for SEG_MODEL in "${SEG_MODELS[@]}"; do
     echo "Running segmentation with model: ${SEG_MODEL}"
     SEG_DIR=results_seg/output_segmentation_${SEG_MODEL}
     run_timed "segmentation ${SEG_MODEL}" ${SEG_DIR}/segmentation.log \
-        python3 segmentation.py \
+        python3 -m pipeline.segment \
             --segmenter-config segmentation/conf/${SEG_MODEL}.yaml \
             --input-dir dataset/rgb \
             --output-dir ${SEG_DIR}
@@ -86,7 +86,7 @@ for SEG_MODEL in "${SEG_MODELS[@]}"; do
         ANNOTATION_DIR=results/results_${SEG_MODEL}_${LLM_MODEL}/annotations
         # The log sits inside annotations/, so the copy below carries it into every run directory.
         run_timed "annotation ${SEG_MODEL} ${LLM_MODEL}" ${ANNOTATION_DIR}/annotation.log \
-            python3 annotation.py \
+            python3 -m pipeline.annotate \
                 --llm-config LLM/conf/${LLM_MODEL}.yaml \
                 --input-dir results_seg/output_segmentation_${SEG_MODEL}/output_segmentation \
                 --output-dir ${ANNOTATION_DIR}
@@ -107,7 +107,7 @@ for SEG_MODEL in "${SEG_MODELS[@]}"; do
                 RUN_DIR=results/results_${SEG_MODEL}_${LLM_MODEL}_${DEPTH_METHOD}_${DEPTH_ASSOCIATION_METHOD}
                 run_timed "depth ${SEG_MODEL} ${LLM_MODEL} ${DEPTH_METHOD} ${DEPTH_ASSOCIATION_METHOD}" \
                     ${RUN_DIR}/annotations/depth_estimation.log \
-                    python3 depth_estimation.py \
+                    python3 -m pipeline.estimate_depth \
                         --input-dir results/output_segmentation_${SEG_MODEL}/output_segmentation \
                         --output-dir ${RUN_DIR}/annotations \
                         --depth-source ${DEPTH_METHOD} \

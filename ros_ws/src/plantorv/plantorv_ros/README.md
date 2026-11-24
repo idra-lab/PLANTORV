@@ -2,7 +2,7 @@
 
 ROS 2 wrapper around the SAM/GPT pipeline: capture one synchronized
 RGB-D pair plus a point cloud from the camera, write them to disk, and
-run the existing `samgpt.py` pipeline on them.
+run the existing `plantorv.py` pipeline on them.
 
 Orbbec ROS 2 driver: https://github.com/orbbec/OrbbecSDK_ROS2/tree/v2-main
 
@@ -16,7 +16,7 @@ Over USB, which is the default:
 
 ```
 ros2 launch plantorv_ros one_shot_pipeline.launch.py \
-    pipeline_script:=/home/enrico/Projects/plantorv/samgpt.py \
+    pipeline_script:=/home/enrico/Projects/plantorv/plantorv.py \
     output_dir:=/home/enrico/Projects/plantorv/output_ros
 ```
 
@@ -26,7 +26,7 @@ Over Ethernet:
 ros2 launch plantorv_ros one_shot_pipeline.launch.py \
     use_network:=true \
     net_device_ip:=192.168.1.10 \
-    pipeline_script:=/home/enrico/Projects/plantorv/samgpt.py \
+    pipeline_script:=/home/enrico/Projects/plantorv/plantorv.py \
     output_dir:=/home/enrico/Projects/plantorv/output_ros
 ```
 
@@ -86,7 +86,7 @@ The node starts the camera itself, so this is the whole thing:
 
 ```
 ros2 run plantorv_ros one_shot_pipeline \
-    -p pipeline_script:=/home/enrico/Projects/plantorv/samgpt.py \
+    -p pipeline_script:=/home/enrico/Projects/plantorv/plantorv.py \
     -p output_dir:=/home/enrico/Projects/plantorv/output_ros
 ```
 
@@ -99,7 +99,7 @@ untouched, which is how the transport is chosen:
 ros2 run plantorv_ros one_shot_pipeline \
     --ros-args \
     -p "camera_launch_arguments:=['use_network:=true', 'net_device_ip:=192.168.1.10']" \
-    -p pipeline_script:=/home/enrico/Projects/plantorv/samgpt.py
+    -p pipeline_script:=/home/enrico/Projects/plantorv/plantorv.py
 ```
 
 A camera that is already publishing `rgb_topic` is used as it is, and no
@@ -152,7 +152,7 @@ ros2 run plantorv_ros one_shot_pipeline \
     -p rgb_topic:=/camera/color/image_raw \
     -p depth_topic:=/camera/depth/image_raw \
     -p pointcloud_topic:=/camera/depth_registered/points \
-    -p pipeline_script:=/home/enrico/Projects/plantorv/samgpt.py \
+    -p pipeline_script:=/home/enrico/Projects/plantorv/plantorv.py \
     -p output_dir:=/home/enrico/Projects/plantorv/output_ros
 ```
 

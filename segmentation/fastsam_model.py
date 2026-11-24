@@ -16,7 +16,8 @@ from skimage import measure
 from skimage.morphology import dilation, disk, erosion, remove_small_objects
 from ultralytics import FastSAM
 
-from segmentation.segmentation import SegmentationModel, binary_mask_to_pil
+from segmentation.segmentation import SegmentationModel
+from utility.masks import binary_mask_to_pil
 from utility.utility import logger
 
 # FastSAM checkpoints published by Ultralytics.

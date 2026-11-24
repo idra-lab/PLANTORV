@@ -18,9 +18,9 @@ Outputs, per frame, in ``--output``:
 
 plus ``summary.csv`` with the share of points per class for every frame.
 
-Run in the Pointcept conda env from the plantorv root, after export_pointcept_scenes.py:
+Run in the Pointcept conda env from the plantorv root, after scripts/pointcloud/export_pointcept_scenes.py:
 
-    PYTHONNOUSERSITE=1 python segment_pointcept_scenes.py dataset
+    PYTHONNOUSERSITE=1 python -m scripts.pointcloud.segment_pointcept_scenes dataset
 """
 
 from __future__ import annotations

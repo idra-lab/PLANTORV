@@ -88,9 +88,9 @@ the remote scene annotator uses the same layer.
 - Python 3.10, 3.11, or 3.12
 - An NVIDIA GPU with CUDA is the default. The remote-LLM pipeline supports
   `--device cpu`, but DAM generation and PointTransformer inference require CUDA.
-- For `annotation.py --annotator gpt`: an Azure OpenAI resource with a vision-capable chat
+- For `pipeline/annotate.py --annotator gpt`: an Azure OpenAI resource with a vision-capable chat
   deployment, or another image-capable backend from [LLM Backbone](#llm-backbone)
-- For `annotation.py --annotator dam`: the local DAM-3B checkpoint (no remote LLM
+- For `pipeline/annotate.py --annotator dam`: the local DAM-3B checkpoint (no remote LLM
   credentials needed)
 - For SAM 3 only: a Hugging Face account with approved access to the gated weights (see
   [Getting the weights](#getting-the-weights))
@@ -142,8 +142,8 @@ for the point-cloud work:
 
 ```bash
 make install-o3dml
-.venv-o3dml/bin/python segment_pcd.py --model randlanet ...
-.venv-o3dml/bin/python cluster_pcd.py ...
+.venv-o3dml/bin/python -m scripts.pointcloud.segment_pcd --model randlanet ...
+.venv-o3dml/bin/python -m scripts.pointcloud.cluster_pcd ...
 ```
 
 Open3D is not installed in `.venv` at all, so both point-cloud scripts live there. The
@@ -208,14 +208,14 @@ variables from the root `.env`. They share these flags:
 
 ## Code Structure
 
-- `segmentation.py` - first stage: segments every frame of `--input-dir` and writes the crops, boxes and masks of each object under `<output-dir>/output_segmentation`. The model, its checkpoint and its thresholds come from the YAML file of `--segmenter-config` (see [Segmentation configuration](#segmentation-configuration)).
-- `annotation.py` - second stage: reads that directory and gives every object a tag and a description, with `--annotator gpt` (remote, chosen by `--llm-config`) or `--annotator dam` (local DAM-3B).
-- `depth_estimation.py` - third stage: reads the same directory and gives every object a position and a distance, from the depth images of `--depth-dir` or from a monocular estimator.
-- `samgpt.py` - runs the three in a row into one `--output-dir`, for when nothing is being swapped.
+- `pipeline/segment.py` - first stage: segments every frame of `--input-dir` and writes the crops, boxes and masks of each object under `<output-dir>/output_segmentation`. The model, its checkpoint and its thresholds come from the YAML file of `--segmenter-config` (see [Segmentation configuration](#segmentation-configuration)).
+- `pipeline/annotate.py` - second stage: reads that directory and gives every object a tag and a description, with `--annotator gpt` (remote, chosen by `--llm-config`) or `--annotator dam` (local DAM-3B).
+- `pipeline/estimate_depth.py` - third stage: reads the same directory and gives every object a position and a distance, from the depth images of `--depth-dir` or from a monocular estimator.
+- `plantorv.py` - runs the three in a row into one `--output-dir`, for when nothing is being swapped.
 - `pipeline/` - what the stages share: `artifacts.py` defines the files they exchange, `cli.py` the options they have in common.
 - `segmentation/` - `SegmentationModel` base class, `SAMModel` (SAM 1, MobileSAM, SAM 2 and SAM 2.1) and `FastSAMModel`, all run through Ultralytics to produce a background mask and per-object crops. `SAM3Model` sits alongside them and works differently: a VLM names the things in the scene and SAM 3 segments those concepts, so its masks arrive already labelled.
-- `scene_understanding/` - the shared `Annotator` interface, remote `GPTAnnotator`, and local mask-based `DAMAnnotator`.
-- `LLM/` - backend-agnostic LLM layer (`BaseLLM`, one package per provider, YAML configs in `LLM/conf/`), plus `LLM/examples/SAM3/concept_prompts.yaml`, the phrasing examples used to steer SAM 3's concepts.
+- `scene_understanding/` - the shared `Annotator` interface, remote `GPTAnnotator`, local mask-based `DAMAnnotator`, and `ConceptInventory` (`inventory.py`), which asks the VLM for the concepts SAM 3 segments; its phrasing examples are in `scene_understanding/conf/concept_prompts.yaml`.
+- `LLM/` - backend-agnostic LLM layer (`BaseLLM`, one package per provider, YAML configs in `LLM/conf/`).
 - `mapping/` - RGB-D camera calibration (hardcoded Femto Mega intrinsics) and depth-to-color projection utilities.
 - `aruco/` - ArUco marker detection, pose estimation, camera/config YAML files, and marker generation.
 - `evaluation/` - matching, metrics, depth correlation, and result visualization.
@@ -299,7 +299,7 @@ live in configuration, and switching model or provider is a matter of pointing
 `--llm-config` somewhere else:
 
 ```bash
-python3 annotation.py --llm-config LLM/conf/gemini_2-0_flash.yaml
+python3 -m pipeline.annotate --llm-config LLM/conf/gemini_2-0_flash.yaml
 ```
 
 ## Segmentation
@@ -307,7 +307,7 @@ python3 annotation.py --llm-config LLM/conf/gemini_2-0_flash.yaml
 Every segmentation model implements `SegmentationModel`
 ([segmentation/segmentation.py](segmentation/segmentation.py)), which is two calls:
 `obtain_bg` returns the background-masked frame plus its binary mask, and `individual_mask`
-returns one cropped RGB image and bounding box per object. `segmentation.py` calls them in
+returns one cropped RGB image and bounding box per object. `pipeline/segment.py` calls them in
 that order, so the models are interchangeable from the pipeline's point of view.
 
 `SAM3Model` also implements them, but its real interface is `segment`, which additionally
@@ -320,7 +320,7 @@ Which model runs, and everything that decides what it produces, comes from a YAM
 means pointing `--segmenter-config` at another file:
 
 ```bash
-python3 segmentation.py --segmenter-config segmentation/conf/fastsam-s.yaml
+python3 -m pipeline.segment --segmenter-config segmentation/conf/fastsam-s.yaml
 ```
 
 | key | meaning |
@@ -362,7 +362,7 @@ FILTERS:
 Every run writes `segmentation_config.yaml` into its `output_segmentation/` directory: the
 values actually used, read back from the built model, so the defaults neither the file nor
 the command line set are in it too. Nothing reads that file back — it is there so two runs
-can be told apart. `annotation.py` and `depth_estimation.py` write the same kind of record,
+can be told apart. `pipeline/annotate.py` and `pipeline/estimate_depth.py` write the same kind of record,
 as `annotation_config.yaml` and `depth_config.yaml`, next to the JSON they produce.
 
 ### Install script
@@ -490,19 +490,21 @@ masks that `individual_mask` then filters down with area, border and IoU heurist
 is asked for **concepts**: it takes short noun phrases and returns every region matching
 each one, already labelled with the phrase that found it. It has its own class,
 [segmentation/sam3_model.py](segmentation/sam3_model.py), which drives Ultralytics'
-`SAM3SemanticPredictor` and takes a VLM in its constructor — the VLM looks at the scene and
-decides what the phrases should be:
+`SAM3SemanticPredictor` and takes a `ConceptInventory`
+([scene_understanding/inventory.py](scene_understanding/inventory.py)) in its constructor —
+the inventory shows the scene to a VLM, which decides what the phrases should be:
 
 ```python
 from LLM.llm_factory import create_llm
+from scene_understanding.inventory import ConceptInventory
 from segmentation.sam3_model import SAM3Model
 
-sam = SAM3Model(create_llm("LLM/conf/azure_gpt52.yaml"), "models/sam/sam3.pt",
-                save_dir=..., device="cuda")
+inventory = ConceptInventory(create_llm("LLM/conf/azure_gpt52.yaml"))
+sam = SAM3Model(inventory, "models/sam/sam3.pt", save_dir=..., device="cuda")
 masks, bboxes, labels = sam.segment(image)   # labels[i] is the concept that found masks[i]
 ```
 
-`obtain_bg` and `individual_mask` still work, so `segmentation.py` runs unchanged, but they throw
+`obtain_bg` and `individual_mask` still work, so `pipeline/segment.py` runs unchanged, but they throw
 the labels away — `segment` is the real interface. SAM 3 needs **`ultralytics >= 8.4.114`**;
 the feature landed in 8.3.237, but `SAM3SemanticPredictor` crashed on every call until
 8.4.114. `requirements.txt` pins the working floor.
@@ -545,9 +547,10 @@ token is present.
 > has to settle *what counts as one thing*: `"lego block"` matches a single brick, a stack
 > of two, and the whole tower they form, and SAM 3 returns all of those, nested. Naming the
 > assembly instead — `"tall green tower"`, `"long blue object"` — lowers the number of masks
-> in the same frame. The prompt that steers the VLM lives in `sam3_model.py`, and the
-> good/bad phrasing examples it injects are in
-> [LLM/examples/SAM3/concept_prompts.yaml](LLM/examples/SAM3/concept_prompts.yaml).
+> in the same frame. The prompt that steers the VLM lives in
+> [scene_understanding/inventory.py](scene_understanding/inventory.py), and the good/bad
+> phrasing examples it injects are in
+> [scene_understanding/conf/concept_prompts.yaml](scene_understanding/conf/concept_prompts.yaml).
 >
 > As a safety net, `SAM3Model` merges masks that share a concept and touch, which puts a
 > row of bricks returned brick-by-brick back together. Tune it with `merge_gap` (measured
@@ -600,7 +603,7 @@ so one bad answer costs one object rather than the whole run. The backend is wha
 Run this path with:
 
 ```bash
-python3 annotation.py --input-dir output/output_segmentation --output-dir output
+python3 -m pipeline.annotate --input-dir output/output_segmentation --output-dir output
 ```
 
 ### Local Describe Anything
@@ -612,8 +615,8 @@ then annotate a segmentation run with it:
 
 ```bash
 python3 scripts/install_models.py mobile_sam dam_3b
-python3 segmentation.py --segmenter-config segmentation/conf/mobile_sam.yaml --output-dir output
-python3 annotation.py --annotator dam --input-dir output/output_segmentation --output-dir output
+python3 -m pipeline.segment --segmenter-config segmentation/conf/mobile_sam.yaml --output-dir output
+python3 -m pipeline.annotate --annotator dam --input-dir output/output_segmentation --output-dir output
 ```
 
 DAM-3B occupies about 7.1 GB on disk and its generation path requires CUDA. Segmenting with
@@ -644,7 +647,7 @@ reprojected into the colour frame first.
 and the annotation dictionary, and adds three keys per object:
 
 ```python
-from mapping.rgbd_mapper import main_coords
+from depth.depth_provider import main_coords
 
 image_dict = main_coords(image, depth_path, image_dict)
 # image_dict["mask_0"]["coord_center&depth"]    == [center_x, center_y, depth_mm]
@@ -737,11 +740,11 @@ default is neither of the calibrated colour focal lengths, so a monocular `z` is
 own focal rather than on the calibration the back-projection uses.
 
 The masks come from `SegmentationModel.last_masks`, which `individual_mask` fills in the same
-order as the crops and boxes it returns; `segmentation.py` stores them next to the crops, and
-`depth_estimation.py` reads them back and passes them along whichever `--depth-source` is in
+order as the crops and boxes it returns; `pipeline/segment.py` stores them next to the crops, and
+`pipeline/estimate_depth.py` reads them back and passes them along whichever `--depth-source` is in
 use. A mask whose shape differs from the aligned depth image is an error rather than
 something to resize. The enriched objects are written to `<output-dir>/output_img<N>.json`,
-alongside the tags and descriptions `annotation.py` puts there.
+alongside the tags and descriptions `pipeline/annotate.py` puts there.
 
 ```python
 from mapping.rgbd_mapper import attach_object_depths
@@ -777,23 +780,23 @@ whole flow, the defaults it captures with, and its HTTP reference.
 The pipeline is three scripts, each reading what the previous one left on disk:
 
 ```bash
-python3 segmentation.py     --input-dir dataset/rgb --output-dir output
-python3 annotation.py       --input-dir output/output_segmentation --output-dir output
-python3 depth_estimation.py --input-dir output/output_segmentation --output-dir output
+python3 -m pipeline.segment        --input-dir dataset/rgb --output-dir output
+python3 -m pipeline.annotate       --input-dir output/output_segmentation --output-dir output
+python3 -m pipeline.estimate_depth --input-dir output/output_segmentation --output-dir output
 ```
 
 Segmenting is the expensive step and only the first script does it, so trying another
 annotator or another depth backend costs one run of that stage alone:
 
 ```bash
-python3 annotation.py --input-dir output/output_segmentation --output-dir output \
+python3 -m pipeline.annotate --input-dir output/output_segmentation --output-dir output \
     --llm-config LLM/conf/azure_claude-opus46.yaml
 ```
 
 Run all three in a row when nothing is being swapped:
 
 ```bash
-python3 samgpt.py --input-dir dataset/rgb --output-dir output
+python3 plantorv.py --input-dir dataset/rgb --output-dir output
 ```
 
 Frames are read as numbered PNGs and identified by the number their name ends with, so
@@ -823,10 +826,10 @@ Shared options:
 | `--depth-focal-length-px` | `1138.1085` | Focal length used for Depth Anything 3 metric scaling |
 | `--depth-process-res` | `504` | Depth Anything 3 processing resolution |
 
-Every flag belongs to the stage that uses it, and `samgpt.py` accepts all of them.
-`annotation.py` takes `--llm-config` (default: `LLM/conf/azure_gpt52.yaml`) for
+Every flag belongs to the stage that uses it, and `plantorv.py` accepts all of them.
+`pipeline/annotate.py` takes `--llm-config` (default: `LLM/conf/azure_gpt52.yaml`) for
 `--annotator gpt`, and `--dam-model`, `--dam-device`, `--dam-query`, `--dam-temperature`,
-`--dam-top-p` and `--dam-max-new-tokens` for `--annotator dam`. `segmentation.py` takes
+`--dam-top-p` and `--dam-max-new-tokens` for `--annotator dam`. `pipeline/segment.py` takes
 `--segmenter-config`; run any script with `--help` for the exact defaults.
 
 Every stage writes what it was configured with next to what it produced --
@@ -837,7 +840,7 @@ two runs can be told apart. See [Segmentation configuration](#segmentation-confi
 Inspect what the segmentation model is producing before filtering:
 
 ```bash
-python3 segmentation.py --debug-masks
+python3 -m pipeline.segment --debug-masks
 ```
 
 This writes overlays and individual masks under
@@ -852,9 +855,9 @@ Choose how each object gets its single depth value. The strategy is independent 
 `--depth-source`, so any combination of the two works:
 
 ```bash
-python3 depth_estimation.py --depth-source sensor --depth-association bbox-center
-python3 depth_estimation.py --depth-source sensor --depth-association mask-median
-python3 depth_estimation.py --depth-source depth-anything-v2 --depth-association mask-median
+python3 -m pipeline.estimate_depth --depth-source sensor --depth-association bbox-center
+python3 -m pipeline.estimate_depth --depth-source sensor --depth-association mask-median
+python3 -m pipeline.estimate_depth --depth-source depth-anything-v2 --depth-association mask-median
 ```
 
 `bbox-center` is the default and reproduces earlier results; `mask-median` takes the median
@@ -866,7 +869,7 @@ Use the indoor metric Depth Anything V2 backend instead of camera depth:
 
 ```bash
 python3 -m pip install -e ".[depth-anything]"
-python3 depth_estimation.py --depth-source depth-anything-v2
+python3 -m pipeline.estimate_depth --depth-source depth-anything-v2
 ```
 
 The default checkpoint is
@@ -893,13 +896,13 @@ python3 -m pip install -e models/depth-anything-3
 Then run the Depth Anything 3 monocular metric path:
 
 ```bash
-python3 depth_estimation.py --depth-source monocular
+python3 -m pipeline.estimate_depth --depth-source monocular
 ```
 
 For a quick model smoke test on a single image, run:
 
 ```bash
-python3 monocular_depth.py [path/to/image.png]
+python3 -m scripts.monocular_depth [path/to/image.png]
 ```
 
 The test prints depth statistics and saves a colorized preview to
@@ -920,7 +923,7 @@ the raw depth frame to the RGB camera before passing both images and the calibra
 RGB intrinsics to Open3D:
 
 ```bash
-python3 cluster_pcd.py \
+python3 -m scripts.pointcloud.cluster_pcd \
   dataset/rgb/rgb_dataset_1.png \
   dataset/depth/depth_dataset_1.png \
   --output results/scene_1.ply \
@@ -938,9 +941,9 @@ numbered from `0`, unclustered/background pixels are `-1`, and planes start at `
 #### Point-cloud semantic segmentation
 
 For a step-by-step guide covering both this Open3D-ML route and the Pointcept PTv3 route,
-see [README_pointcloud_segmentation.md](README_pointcloud_segmentation.md).
+see [scripts/pointcloud/README.md](scripts/pointcloud/README.md).
 
-`segment_pcd.py` selects the Open3D-ML architecture from `model.name` in the
+`scripts/pointcloud/segment_pcd.py` selects the Open3D-ML architecture from `model.name` in the
 configuration file. The same interface therefore works with either RandLA-Net
 or PointTransformer; no model-specific command-line flag is needed. Model files are not
 checked in under `models/`.
@@ -950,7 +953,7 @@ run CPU or GPU inference:
 
 ```bash
 python3 scripts/install_models.py randlanet_s3dis
-python3 segment_pcd.py \
+python3 -m scripts.pointcloud.segment_pcd \
   dataset/rgb/rgb_dataset_1.png \
   dataset/depth/depth_dataset_1.png \
   --config models/randla_net/randlanet_s3dis.yml \
@@ -966,7 +969,7 @@ the same way, into `models/point_transformer/`, and needs `--device gpu`:
 
 ```bash
 python3 scripts/install_models.py pointtransformer_s3dis
-python3 segment_pcd.py \
+python3 -m scripts.pointcloud.segment_pcd \
   dataset/rgb/rgb_dataset_1.png \
   dataset/depth/depth_dataset_1.png \
   --config models/point_transformer/pointtransformer_s3dis.yml \

@@ -97,7 +97,7 @@ def generate_launch_description():
         # ------------------------------------------------------------------
         DeclareLaunchArgument(
             'pipeline_script',
-            default_value=os.path.expanduser('~/Projects/plantorv/samgpt.py'),
+            default_value=os.path.expanduser('~/Projects/plantorv/plantorv.py'),
         ),
         DeclareLaunchArgument(
             'output_dir',

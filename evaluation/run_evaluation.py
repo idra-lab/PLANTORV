@@ -665,7 +665,7 @@ def run(
             f"({'exists' if seg_dir.is_dir() else 'MISSING'})\n"
             f"  aruco dir:      {aruco_dir} "
             f"({'exists' if aruco_dir.is_dir() else 'MISSING'})\n"
-            f"Run the segmentation pipeline (samgpt.py --output-dir {seg_dir}) and the "
+            f"Run the segmentation pipeline (plantorv.py --output-dir {seg_dir}) and the "
             f"ArUco detector (aruco/aruco_detector.py --out_dir {aruco_dir}) before "
             f"evaluating."
         )
@@ -690,7 +690,7 @@ def parse_args() -> argparse.Namespace:
         default=SEG_DIR,
         help=(
             "Directory containing the segmentation output JSON files written by "
-            f"samgpt.py (default: {SEG_DIR})."
+            f"plantorv.py (default: {SEG_DIR})."
         ),
     )
     parser.add_argument(
